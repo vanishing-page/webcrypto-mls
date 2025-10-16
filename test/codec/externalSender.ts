@@ -1,0 +1,24 @@
+import { test } from '@substrate-system/tapzero'
+import type { ExternalSender } from '../../src/externalSender.js'
+import { encodeExternalSender, decodeExternalSender } from '../../src/externalSender.js'
+import { createRoundtripTest } from './roundtrip.js'
+
+const basic: ExternalSender = {
+    signaturePublicKey: new Uint8Array([1, 2, 3]),
+    credential: { credentialType: 'basic', identity: new Uint8Array([4, 5, 6]) },
+}
+
+const x509: ExternalSender = {
+    signaturePublicKey: new Uint8Array([7, 8, 9, 10, 11]),
+    credential: { credentialType: 'x509', certificates: [new Uint8Array([12, 13]), new Uint8Array([14, 15, 16])] },
+}
+
+const roundtrip = createRoundtripTest(encodeExternalSender, decodeExternalSender)
+
+test('externalSender roundtrip basic', (t) => {
+    roundtrip(t, basic, 'should roundtrip basic external sender')
+})
+
+test('externalSender roundtrip x509', (t) => {
+    roundtrip(t, x509, 'should roundtrip x509 external sender')
+})
