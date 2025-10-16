@@ -39,7 +39,9 @@
     "postversion": "git push --follow-tags && npm publish",
     "prepublishOnly": "npm run build"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@substrate-system/one-webcrypto": "^1.1.3"
+  },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.2",
     "@substrate-system/debug": "^0.9.24",
