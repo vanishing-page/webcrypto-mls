@@ -1,11 +1,8 @@
 {
-  "private": true,
-  "type": "module",
+  "name": "@substrate-system/webcrypto-mls",
   "version": "0.0.0",
-  "main": "dist/index.js",
-  "files": [
-    "./dist/*"
-  ],
+  "description": "browsers + MLS",
+  "type": "module",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -22,6 +19,15 @@
       ]
     }
   },
+  "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
+  "directories": {
+    "example": "example",
+    "test": "test"
+  },
+  "files": [
+    "./dist/*"
+  ],
   "scripts": {
     "lint": "eslint \"./**/*.{ts,js}\"",
     "test": "npm run test:node",
@@ -70,6 +76,21 @@
     "typedoc": "^0.28.9",
     "typescript": "^5.9.2",
     "vite": "^7.0.6"
+  },
+  "keywords": [
+    "webcrypto",
+    "MLS",
+    "browser",
+    "cryptography",
+    "encryption"
+  ],
+  "homepage": "https://github.com/substrate-system/webcrypto-mls",
+  "bugs": {
+    "url": "https://github.com/substrate-system/webcrypto-mls/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/substrate-system/webcrypto-mls.git"
   },
   "author": "nichoth <nichoth@nichoth.com> (https://nichoth.com)",
   "license": "SEE LICENSE IN LICENSE"
