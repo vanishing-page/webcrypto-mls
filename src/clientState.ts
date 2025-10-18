@@ -98,20 +98,6 @@ import { defaultClientConfig } from './clientConfig.js'
 import { decodeExternalSender } from './externalSender.js'
 import { arraysEqual } from './util/array.js'
 
-export interface ClientState {
-  groupContext: GroupContext
-  keySchedule: KeySchedule
-  secretTree: SecretTree
-  ratchetTree: RatchetTree
-  privatePath: PrivateKeyPath
-  signaturePrivateKey: Uint8Array
-  unappliedProposals: UnappliedProposals
-  confirmationTag: Uint8Array
-  historicalReceiverData: Map<bigint, EpochReceiverData>
-  groupActiveState: GroupActiveState
-  clientConfig: ClientConfig
-}
-
 export type GroupActiveState =
   | { kind: 'active' }
   | { kind: 'suspendedPendingReinit'; reinit: Reinit }
@@ -126,6 +112,20 @@ export interface EpochReceiverData {
   ratchetTree: RatchetTree
   senderDataSecret: Uint8Array
   groupContext: GroupContext
+}
+
+export interface ClientState {
+  groupContext: GroupContext
+  keySchedule: KeySchedule
+  secretTree: SecretTree
+  ratchetTree: RatchetTree
+  privatePath: PrivateKeyPath
+  signaturePrivateKey: Uint8Array
+  unappliedProposals: UnappliedProposals
+  confirmationTag: Uint8Array
+  historicalReceiverData: Map<bigint, EpochReceiverData>
+  groupActiveState: GroupActiveState
+  clientConfig: ClientConfig
 }
 
 export function checkCanSendApplicationMessages (state: ClientState): void {
@@ -538,6 +538,11 @@ function validateRemove (remove: Remove, tree: RatchetTree): MlsError | undefine
     if (tree[leafToNodeIndex(toLeafIndex(remove.removed))] === undefined) { return new ValidationError('Tried to remove empty leaf node') }
 }
 
+export type ApplyProposalsData =
+  | { kind: 'memberCommit'; addedLeafNodes: [LeafIndex, KeyPackage][]; extensions: Extension[] }
+  | { kind: 'externalCommit'; externalInitSecret: Uint8Array; newMemberLeafIndex: LeafIndex }
+  | { kind: 'reinit'; reinit: Reinit }
+
 export interface ApplyProposalsResult {
   tree: RatchetTree
   pskSecret: Uint8Array
@@ -547,11 +552,6 @@ export interface ApplyProposalsResult {
   selfRemoved: boolean
   allProposals: ProposalWithSender[]
 }
-
-export type ApplyProposalsData =
-  | { kind: 'memberCommit'; addedLeafNodes: [LeafIndex, KeyPackage][]; extensions: Extension[] }
-  | { kind: 'externalCommit'; externalInitSecret: Uint8Array; newMemberLeafIndex: LeafIndex }
-  | { kind: 'reinit'; reinit: Reinit }
 
 export async function applyProposals (
     state: ClientState,

@@ -6,8 +6,6 @@ import { decodeVarLenData, decodeVarLenType, encodeVarLenData, encodeVarLenType 
 import type { CredentialTypeName } from './credentialType.js'
 import { decodeCredentialType, encodeCredentialType } from './credentialType.js'
 
-export type Credential = CredentialBasic | CredentialX509
-
 export interface CredentialBasic {
   credentialType: 'basic'
   identity: Uint8Array
@@ -16,6 +14,8 @@ export interface CredentialX509 {
   credentialType: 'x509'
   certificates: Uint8Array[]
 }
+
+export type Credential = CredentialBasic | CredentialX509
 
 export interface CredentialCustom {
   credentialType: CredentialTypeName

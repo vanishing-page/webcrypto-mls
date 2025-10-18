@@ -13,7 +13,7 @@ import type { Encoder } from '../../src/codec/tlsEncoder.js'
 import type { Decoder } from '../../src/codec/tlsDecoder.js'
 import { decodeUint64, decodeUint8, encodeUint64, encodeUint8 } from '../../src/codec/number.js'
 import { decodeOptional, encodeOptional } from '../../src/codec/optional.js'
-import { CodecError } from '../../src/mlsError.js'
+import { CodecError as _CodecError } from '../../src/mlsError.js'
 
 const varLenRoundtrip = createRoundtripTest(encodeVarLenData, decodeVarLenData)
 

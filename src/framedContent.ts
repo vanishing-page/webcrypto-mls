@@ -32,7 +32,18 @@ import {
     encodeSender
 } from './sender.js'
 
-export type FramedContentInfo = FramedContentApplicationData | FramedContentProposalData | FramedContentCommitData
+// Type definitions used before defined - moved to top
+type SenderInfoMember = { senderType: 'member'; context: GroupContext }
+type SenderInfoNewMemberCommit = { senderType: 'new_member_commit'; context: GroupContext }
+type SenderInfoExternal = { senderType: 'external' }
+type SenderInfoNewMemberProposal = { senderType: 'new_member_proposal' }
+type SenderInfo = SenderInfoMember | SenderInfoNewMemberCommit | SenderInfoExternal | SenderInfoNewMemberProposal
+
+type FramedContentAuthDataContentCommit = { contentType: 'commit'; confirmationTag: Uint8Array }
+type FramedContentAuthDataContentApplicationOrProposal = { contentType: Exclude<ContentTypeName, 'commit'> }
+type FramedContentAuthDataContent =
+  | FramedContentAuthDataContentCommit
+  | FramedContentAuthDataContentApplicationOrProposal
 
 export interface FramedContentApplicationData {
   contentType: 'application'
@@ -46,6 +57,8 @@ export interface FramedContentCommitData {
   contentType: 'commit'
   commit: Commit
 }
+
+export type FramedContentInfo = FramedContentApplicationData | FramedContentProposalData | FramedContentCommitData
 
 export const encodeFramedContentApplicationData: Encoder<FramedContentApplicationData> = contramapEncoders(
     [encodeContentType, encodeVarLenData],
@@ -102,11 +115,6 @@ export const decodeFramedContentInfo: Decoder<FramedContentInfo> = flatMapDecode
     },
 )
 
-export function toTbs (content: FramedContent, wireformat: WireformatName, context: GroupContext): FramedContentTBS {
-    return { protocolVersion: context.version, wireformat, content, senderType: content.sender.senderType, context }
-}
-
-export type FramedContent = FramedContentData & FramedContentInfo
 export interface FramedContentData {
   groupId: Uint8Array
   epoch: bigint
@@ -114,15 +122,29 @@ export interface FramedContentData {
   authenticatedData: Uint8Array
 }
 
+export type FramedContent = FramedContentData & FramedContentInfo
 export type FramedContentMember = FramedContent & { sender: SenderMember }
 export type FramedContentNewMemberCommit = FramedContent & { sender: SenderNewMemberCommit }
-
 export type FramedContentExternal = FramedContent & { sender: SenderExternal }
 export type FramedContentNewMemberProposal = FramedContent & { sender: SenderNewMemberProposal }
-
 export type FramedContentCommit = FramedContentData & FramedContentCommitData
 export type FramedContentApplicationOrProposal = FramedContentData &
   (FramedContentApplicationData | FramedContentProposalData)
+
+export type FramedContentTBS = {
+  protocolVersion: ProtocolVersionName
+  wireformat: WireformatName
+  content: FramedContent
+} & SenderInfo
+
+export type FramedContentTBSCommit = FramedContentTBS & { content: FramedContentCommit }
+export type FramedContentTBSApplicationOrProposal = FramedContentTBS & { content: FramedContentApplicationOrProposal }
+export type FramedContentTBSExternal = FramedContentTBS &
+  (SenderInfoExternal | SenderInfoNewMemberCommit | SenderInfoNewMemberProposal)
+
+export function toTbs (content: FramedContent, wireformat: WireformatName, context: GroupContext): FramedContentTBS {
+    return { protocolVersion: context.version, wireformat, content, senderType: content.sender.senderType, context }
+}
 
 export const encodeFramedContent: Encoder<FramedContent> = contramapEncoders(
     [encodeVarLenData, encodeUint64, encodeSender, encodeVarLenData, encodeFramedContentInfo],
@@ -140,12 +162,6 @@ export const decodeFramedContent: Decoder<FramedContent> = mapDecoders(
     }),
 )
 
-type SenderInfo = SenderInfoMember | SenderInfoNewMemberCommit | SenderInfoExternal | SenderInfoNewMemberProposal
-type SenderInfoMember = { senderType: 'member'; context: GroupContext }
-type SenderInfoNewMemberCommit = { senderType: 'new_member_commit'; context: GroupContext }
-type SenderInfoExternal = { senderType: 'external' }
-type SenderInfoNewMemberProposal = { senderType: 'new_member_proposal' }
-
 export const encodeSenderInfo: Encoder<SenderInfo> = (info) => {
     switch (info.senderType) {
         case 'member':
@@ -157,32 +173,16 @@ export const encodeSenderInfo: Encoder<SenderInfo> = (info) => {
     }
 }
 
-export type FramedContentTBS = {
-  protocolVersion: ProtocolVersionName
-  wireformat: WireformatName
-  content: FramedContent
-} & SenderInfo
-
-export type FramedContentTBSCommit = FramedContentTBS & { content: FramedContentCommit }
-export type FramedContentTBSApplicationOrProposal = FramedContentTBS & { content: FramedContentApplicationOrProposal }
-export type FramedContentTBSExternal = FramedContentTBS &
-  (SenderInfoExternal | SenderInfoNewMemberCommit | SenderInfoNewMemberProposal)
-
 export const encodeFramedContentTBS: Encoder<FramedContentTBS> = contramapEncoders(
     [encodeProtocolVersion, encodeWireformat, encodeFramedContent, encodeSenderInfo],
     (f) => [f.protocolVersion, f.wireformat, f.content, f] as const,
 )
 
-export type FramedContentAuthData = FramedContentAuthDataCommit | FramedContentAuthDataApplicationOrProposal
 export type FramedContentAuthDataCommit = { signature: Uint8Array } & FramedContentAuthDataContentCommit
 export type FramedContentAuthDataApplicationOrProposal = {
   signature: Uint8Array
 } & FramedContentAuthDataContentApplicationOrProposal
-type FramedContentAuthDataContent =
-  | FramedContentAuthDataContentCommit
-  | FramedContentAuthDataContentApplicationOrProposal
-type FramedContentAuthDataContentCommit = { contentType: 'commit'; confirmationTag: Uint8Array }
-type FramedContentAuthDataContentApplicationOrProposal = { contentType: Exclude<ContentTypeName, 'commit'> }
+export type FramedContentAuthData = FramedContentAuthDataCommit | FramedContentAuthDataApplicationOrProposal
 
 const encodeFramedContentAuthDataContent: Encoder<FramedContentAuthDataContent> = (authData) => {
     switch (authData.contentType) {

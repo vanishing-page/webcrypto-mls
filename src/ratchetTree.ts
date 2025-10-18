@@ -31,9 +31,12 @@ import { encodeLeafNode, decodeLeafNode } from './leafNode.js'
 import { constantTimeEqual } from './util/constantTimeCompare.js'
 import { InternalError, ValidationError } from './mlsError.js'
 
-export type Node = NodeParent | NodeLeaf
+// Type definitions used before defined - moved to top
 type NodeParent = { nodeType: 'parent'; parent: ParentNode }
 type NodeLeaf = { nodeType: 'leaf'; leaf: LeafNode }
+export type Node = NodeParent | NodeLeaf
+
+export type RatchetTree = (Node | undefined)[]
 
 export const encodeNode: Encoder<Node> = (node) => {
     switch (node.nodeType) {
@@ -70,8 +73,6 @@ export function getHpkePublicKey (n: Node): Uint8Array {
             return n.leaf.hpkePublicKey
     }
 }
-
-export type RatchetTree = (Node | undefined)[]
 
 export function extendRatchetTree (tree: RatchetTree): RatchetTree {
     const lastIndex = tree.length - 1
@@ -299,7 +300,7 @@ export function traverseToRoot<T> (
 ): [T, NodeIndex] | undefined {
     const rootIndex = root(leafWidth(tree.length))
     let currentIndex = leafToNodeIndex(leafIndex)
-    while (currentIndex != rootIndex) {
+    while (currentIndex !== rootIndex) {
         currentIndex = parent(currentIndex, leafWidth(tree.length))
         const currentNode = tree[currentIndex]
         if (currentNode !== undefined) {

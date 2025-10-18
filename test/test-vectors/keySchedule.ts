@@ -15,6 +15,35 @@ import json from '../../test_vectors/key-schedule.json'
 
 import { initializeEpoch, mlsExporter } from '../../src/keySchedule.js'
 
+// Type definitions used before defined - moved to top
+type Exporter = {
+  context: string
+  label: string
+  length: number
+  secret: string
+}
+
+type Epoch = {
+  commit_secret: string
+  confirmation_key: string
+  confirmed_transcript_hash: string
+  encryption_secret: string
+  epoch_authenticator: string
+  exporter: Exporter
+  exporter_secret: string
+  external_pub: string
+  external_secret: string
+  group_context: string
+  init_secret: string
+  joiner_secret: string
+  membership_key: string
+  psk_secret: string
+  resumption_psk: string
+  sender_data_secret: string
+  tree_hash: string
+  welcome_secret: string
+}
+
 for (const [index, x] of json.entries()) {
     test(`key-schedule test vectors ${index}`, async (t) => {
         const cipherSuite = x.cipher_suite as CiphersuiteId
@@ -25,10 +54,10 @@ for (const [index, x] of json.entries()) {
 
 async function testKeySchedule (
     t: any,
-    group_id: string,
-    initial_init_secret: string,
+    groupId: string,
+    initialInitSecret: string,
     epochs: Epoch[],
-    cipher_suite: CiphersuiteId,
+    cipherSuite: CiphersuiteId,
     impl: CiphersuiteImpl,
 ) {
     await epochs.reduce(
@@ -37,8 +66,8 @@ async function testKeySchedule (
 
             const gc: GroupContext = {
                 version: 'mls10',
-                cipherSuite: getCiphersuiteNameFromId(cipher_suite),
-                groupId: hexToBytes(group_id),
+                cipherSuite: getCiphersuiteNameFromId(cipherSuite),
+                groupId: hexToBytes(groupId),
                 epoch: BigInt(index),
                 treeHash: hexToBytes(epoch.tree_hash),
                 confirmedTranscriptHash: hexToBytes(epoch.confirmed_transcript_hash),
@@ -84,34 +113,6 @@ async function testKeySchedule (
 
             return keySchedule.initSecret
         },
-        Promise.resolve(hexToBytes(initial_init_secret)),
+        Promise.resolve(hexToBytes(initialInitSecret)),
     )
-}
-
-type Epoch = {
-  commit_secret: string
-  confirmation_key: string
-  confirmed_transcript_hash: string
-  encryption_secret: string
-  epoch_authenticator: string
-  exporter: Exporter
-  exporter_secret: string
-  external_pub: string
-  external_secret: string
-  group_context: string
-  init_secret: string
-  joiner_secret: string
-  membership_key: string
-  psk_secret: string
-  resumption_psk: string
-  sender_data_secret: string
-  tree_hash: string
-  welcome_secret: string
-}
-
-type Exporter = {
-  context: string
-  label: string
-  length: number
-  secret: string
 }

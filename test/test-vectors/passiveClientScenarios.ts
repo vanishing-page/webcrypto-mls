@@ -15,6 +15,31 @@ import { joinGroup, makePskIndex } from '../../src/clientState.js'
 import { processPrivateMessage, processPublicMessage } from '../../src/processMessages.js'
 import { bytesToBase64 } from '../../src/util/byteArray.js'
 
+// Type definitions used before defined - moved to top
+type ExternalPsk = {
+  psk_id: string
+  psk: string
+}
+
+type Epoch = {
+  proposals: string[]
+  commit: string
+  epoch_authenticator: string
+}
+
+type MlsGroupState = {
+  cipher_suite: number
+  external_psks: ExternalPsk[]
+  key_package: string
+  signature_priv: string
+  encryption_priv: string
+  init_priv: string
+  welcome: string
+  ratchet_tree: string | null
+  initial_epoch_authenticator: string
+  epochs: Epoch[]
+}
+
 for (const [index, x] of jsonCommit.map((x, index) => [index, x] as [number, typeof x])) {
     test(`passive-client-handling-commit test vectors ${index}`, async (t) => {
         const impl = await getCiphersuiteImpl(getCiphersuiteFromId(x.cipher_suite as CiphersuiteId))
@@ -110,28 +135,4 @@ async function verifyKeys (t: any, data: MlsGroupState, kp: KeyPackage, impl: Ci
     const sig = await signatureKeysMatch(kp.leafNode.signaturePublicKey, hexToBytes(data.signature_priv), impl.signature)
     t.ok(sig, 'signature keys should match')
     hexToBytes(data.init_priv)
-}
-
-type MlsGroupState = {
-  cipher_suite: number
-  external_psks: ExternalPsk[]
-  key_package: string
-  signature_priv: string
-  encryption_priv: string
-  init_priv: string
-  welcome: string
-  ratchet_tree: string | null
-  initial_epoch_authenticator: string
-  epochs: Epoch[]
-}
-
-type ExternalPsk = {
-  psk_id: string
-  psk: string
-}
-
-type Epoch = {
-  proposals: string[]
-  commit: string
-  epoch_authenticator: string
 }

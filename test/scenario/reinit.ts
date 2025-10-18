@@ -14,7 +14,7 @@ import { checkHpkeKeysMatch } from '../crypto/keyMatch.js'
 import { getRandomElement, testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/defaultCapabilities.js'
-import { UsageError } from '../../src/mlsError.js'
+import { UsageError as _UsageError } from '../../src/mlsError.js'
 
 for (const cs of Object.keys(ciphersuites)) {
     test('Reinit ' + cs, async (t) => {

@@ -1,5 +1,5 @@
 import { test } from '@substrate-system/tapzero'
-import type { Hpke } from '../../src/crypto/hpke.js'
+import type { Hpke as _Hpke } from '../../src/crypto/hpke.js'
 import { makeHpke as defaultMakeHpke } from '../../src/crypto/implementation/default/makeHpke.js'
 import { makeHpke as nobleMakeHpke } from '../../src/crypto/implementation/noble/makeHpke.js'
 import { CryptoError } from '../../src/mlsError.js'

@@ -13,7 +13,7 @@ import type { Capabilities } from '../../src/capabilities.js'
 import type { Extension } from '../../src/extension.js'
 import type { RequiredCapabilities } from '../../src/requiredCapabilities.js'
 import { encodeRequiredCapabilities } from '../../src/requiredCapabilities.js'
-import { ValidationError } from '../../src/mlsError.js'
+import { ValidationError as _ValidationError } from '../../src/mlsError.js'
 
 for (const cs of Object.keys(ciphersuites)) {
     test('Required Capabilities extension ' + cs, async (t) => {

@@ -23,9 +23,14 @@ import { getSignaturePublicKeyFromLeafIndex } from './ratchetTree.js'
 import type { SenderTypeName } from './sender.js'
 import { toLeafIndex } from './treemath.js'
 
-type PublicMessageInfo = PublicMessageInfoMember | PublicMessageInfoMemberOther
+// Type definitions used before defined - moved to top
 type PublicMessageInfoMember = { senderType: 'member'; membershipTag: Uint8Array }
 type PublicMessageInfoMemberOther = { senderType: Exclude<SenderTypeName, 'member'> }
+type PublicMessageInfo = PublicMessageInfoMember | PublicMessageInfoMemberOther
+
+export type PublicMessage = { content: FramedContent; auth: FramedContentAuthData } & PublicMessageInfo
+export type MemberPublicMessage = PublicMessage & PublicMessageInfoMember
+export type ExternalPublicMessage = PublicMessage & PublicMessageInfoMemberOther
 
 export const encodePublicMessageInfo: Encoder<PublicMessageInfo> = (info) => {
     switch (info.senderType) {
@@ -51,10 +56,6 @@ export function decodePublicMessageInfo (senderType: SenderTypeName): Decoder<Pu
             return succeedDecoder({ senderType })
     }
 }
-
-export type PublicMessage = { content: FramedContent; auth: FramedContentAuthData } & PublicMessageInfo
-export type MemberPublicMessage = PublicMessage & PublicMessageInfoMember
-export type ExternalPublicMessage = PublicMessage & PublicMessageInfoMemberOther
 
 export const encodePublicMessage: Encoder<PublicMessage> = contramapEncoders(
     [encodeFramedContent, encodeFramedContentAuthData, encodePublicMessageInfo],

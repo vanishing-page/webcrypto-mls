@@ -10,7 +10,7 @@ export function encodeOptional<T> (encodeT: Encoder<T>): Encoder<T | undefined> 
 export function decodeOptional<T> (decodeT: Decoder<T>): Decoder<T | undefined> {
     return (b, offset) => {
         const presenceOctet = decodeUint8(b, offset)?.[0]
-        if (presenceOctet == 1) {
+        if (presenceOctet === 1) {
             const result = decodeT(b, offset + 1)
             return result === undefined ? undefined : [result[0], result[1] + 1]
         } else {

@@ -10,15 +10,6 @@ import { mapDecoderOption } from '../codec/tlsDecoder.js'
 import { openEnumNumberEncoder, openEnumNumberToKey, reverseMap } from '../util/enumHelpers.js'
 import type { Rng } from './rng.js'
 
-export interface CiphersuiteImpl {
-  hash: Hash
-  hpke: Hpke
-  signature: Signature
-  kdf: Kdf
-  rng: Rng
-  name: CiphersuiteName
-}
-
 export const ciphersuites = {
     MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519: 1,
     MLS_128_DHKEMP256_AES128GCM_SHA256_P256: 2,
@@ -43,6 +34,22 @@ export const ciphersuites = {
 
 export type CiphersuiteName = keyof typeof ciphersuites
 export type CiphersuiteId = (typeof ciphersuites)[CiphersuiteName]
+
+export type Ciphersuite = {
+  hash: HashAlgorithm
+  hpke: HpkeAlgorithm
+  signature: SignatureAlgorithm
+  name: CiphersuiteName
+}
+
+export interface CiphersuiteImpl {
+  hash: Hash
+  hpke: Hpke
+  signature: Signature
+  kdf: Kdf
+  rng: Rng
+  name: CiphersuiteName
+}
 
 export const encodeCiphersuite: Encoder<CiphersuiteName> = contramapEncoder(
     encodeUint16,
@@ -259,10 +266,3 @@ const ciphersuiteValues: Record<CiphersuiteId, Ciphersuite> = {
         name: 'MLS_256_XWING_CHACHA20POLY1305_SHA512_MLDSA87',
     },
 } as const
-
-export type Ciphersuite = {
-  hash: HashAlgorithm
-  hpke: HpkeAlgorithm
-  signature: SignatureAlgorithm
-  name: CiphersuiteName
-}

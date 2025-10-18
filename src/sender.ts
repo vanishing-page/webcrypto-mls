@@ -24,12 +24,11 @@ export const encodeSenderType: Encoder<SenderTypeName> = contramapEncoder(encode
 
 export const decodeSenderType: Decoder<SenderTypeName> = mapDecoderOption(decodeUint8, enumNumberToKey(senderTypes))
 
+// Type definitions used before defined - moved to top
 export interface SenderMember {
   senderType: 'member'
   leafIndex: number
 }
-
-export type SenderNonMember = SenderExternal | SenderNewMemberProposal | SenderNewMemberCommit
 
 export interface SenderExternal {
   senderType: 'external'
@@ -42,7 +41,17 @@ export interface SenderNewMemberCommit {
   senderType: 'new_member_commit'
 }
 
+export type SenderNonMember = SenderExternal | SenderNewMemberProposal | SenderNewMemberCommit
+
 export type Sender = SenderMember | SenderNonMember
+
+export type ReuseGuard = Uint8Array & { length: 4 }
+
+export interface SenderData {
+  leafIndex: number
+  generation: number
+  reuseGuard: ReuseGuard
+}
 
 export const encodeSender: Encoder<Sender> = (s) => {
     switch (s.senderType) {
@@ -94,14 +103,6 @@ export const decodeSender: Decoder<Sender> = flatMapDecoder(decodeSenderType, (s
 export function getSenderLeafNodeIndex (sender: Sender): number | undefined {
     return sender.senderType === 'member' ? sender.leafIndex : undefined
 }
-
-export interface SenderData {
-  leafIndex: number
-  generation: number
-  reuseGuard: ReuseGuard
-}
-
-export type ReuseGuard = Uint8Array & { length: 4 }
 
 export const encodeReuseGuard: Encoder<ReuseGuard> = (g) => g
 

@@ -35,6 +35,20 @@ import {
     expandSenderDataNonce
 } from './sender.js'
 
+// Type definitions used before defined - moved to top
+export type PrivateMessageContentApplication = FramedContentApplicationData & {
+  auth: FramedContentAuthDataApplicationOrProposal
+}
+export type PrivateMessageContentProposal = FramedContentProposalData & {
+  auth: FramedContentAuthDataApplicationOrProposal
+}
+export type PrivateMessageContentCommit = FramedContentCommitData & { auth: FramedContentAuthDataCommit }
+
+export type PrivateMessageContent =
+  | PrivateMessageContentApplication
+  | PrivateMessageContentProposal
+  | PrivateMessageContentCommit
+
 export interface PrivateMessage {
   groupId: Uint8Array
   epoch: bigint
@@ -83,19 +97,6 @@ export const decodePrivateContentAAD: Decoder<PrivateContentAAD> = mapDecoders(
         authenticatedData,
     }),
 )
-
-export type PrivateMessageContent =
-  | PrivateMessageContentApplication
-  | PrivateMessageContentProposal
-  | PrivateMessageContentCommit
-
-export type PrivateMessageContentApplication = FramedContentApplicationData & {
-  auth: FramedContentAuthDataApplicationOrProposal
-}
-export type PrivateMessageContentProposal = FramedContentProposalData & {
-  auth: FramedContentAuthDataApplicationOrProposal
-}
-export type PrivateMessageContentCommit = FramedContentCommitData & { auth: FramedContentAuthDataCommit }
 
 export function decodePrivateMessageContent (contentType: ContentTypeName): Decoder<PrivateMessageContent> {
     switch (contentType) {

@@ -33,7 +33,7 @@ function level (nodeIndex: NodeIndex): number {
 }
 
 export function isLeaf (nodeIndex: NodeIndex) {
-    return nodeIndex % 2 == 0
+    return nodeIndex % 2 === 0
 }
 
 export function leafToNodeIndex (leafIndex: LeafIndex): NodeIndex {
@@ -45,7 +45,7 @@ export function nodeToLeafIndex (nodeIndex: NodeIndex): LeafIndex {
 }
 
 export function leafWidth (nodeWidth: number): number {
-    return nodeWidth == 0 ? 0 : (nodeWidth - 1) / 2 + 1
+    return nodeWidth === 0 ? 0 : (nodeWidth - 1) / 2 + 1
 }
 
 export function nodeWidth (leafWidth: number): number {

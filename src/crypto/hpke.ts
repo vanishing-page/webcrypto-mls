@@ -14,37 +14,6 @@ export interface HpkeAlgorithm {
   aead: AeadAlgorithm
 }
 
-export function encryptWithLabel (
-    publicKey: PublicKey,
-    label: string,
-    context: Uint8Array,
-    plaintext: Uint8Array,
-    hpke: Hpke,
-): Promise<{ ct: Uint8Array; enc: Uint8Array }> {
-    return hpke.seal(
-        publicKey,
-        plaintext,
-        concatUint8Arrays(encodeVarLenData(new TextEncoder().encode(`MLS 1.0 ${label}`)), encodeVarLenData(context)),
-        new Uint8Array(),
-    )
-}
-
-export function decryptWithLabel (
-    privateKey: PrivateKey,
-    label: string,
-    context: Uint8Array,
-    kemOutput: Uint8Array,
-    ciphertext: Uint8Array,
-    hpke: Hpke,
-): Promise<Uint8Array> {
-    return hpke.open(
-        privateKey,
-        kemOutput,
-        ciphertext,
-        concatUint8Arrays(encodeVarLenData(new TextEncoder().encode(`MLS 1.0 ${label}`)), encodeVarLenData(context)),
-    )
-}
-
 export interface Hpke {
   open(
     privateKey: PrivateKey,
@@ -92,4 +61,35 @@ export interface Hpke {
   generateKeyPair(): Promise<{ privateKey: PrivateKey; publicKey: PublicKey }>
   keyLength: number
   nonceLength: number
+}
+
+export function encryptWithLabel (
+    publicKey: PublicKey,
+    label: string,
+    context: Uint8Array,
+    plaintext: Uint8Array,
+    hpke: Hpke,
+): Promise<{ ct: Uint8Array; enc: Uint8Array }> {
+    return hpke.seal(
+        publicKey,
+        plaintext,
+        concatUint8Arrays(encodeVarLenData(new TextEncoder().encode(`MLS 1.0 ${label}`)), encodeVarLenData(context)),
+        new Uint8Array(),
+    )
+}
+
+export function decryptWithLabel (
+    privateKey: PrivateKey,
+    label: string,
+    context: Uint8Array,
+    kemOutput: Uint8Array,
+    ciphertext: Uint8Array,
+    hpke: Hpke,
+): Promise<Uint8Array> {
+    return hpke.open(
+        privateKey,
+        kemOutput,
+        ciphertext,
+        concatUint8Arrays(encodeVarLenData(new TextEncoder().encode(`MLS 1.0 ${label}`)), encodeVarLenData(context)),
+    )
 }

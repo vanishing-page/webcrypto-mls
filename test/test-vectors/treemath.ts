@@ -1,7 +1,7 @@
 import { test } from '@substrate-system/tapzero'
 import json from '../../test_vectors/tree-math.json'
 import { left, nodeWidth, parent, right, root, sibling, toNodeIndex } from '../../src/treemath.js'
-import { InternalError } from '../../src/mlsError.js'
+import { InternalError as _InternalError } from '../../src/mlsError.js'
 
 for (const [index, x] of json.entries()) {
     test(`tree math test vectors ${index}`, (t) => {

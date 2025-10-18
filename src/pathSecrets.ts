@@ -45,7 +45,7 @@ export async function pathToRoot (
     const rootIndex = root(leafWidth(tree.length))
     let currentIndex = nodeIndex
     const pathSecrets = { [nodeIndex]: pathSecret }
-    while (currentIndex != rootIndex) {
+    while (currentIndex !== rootIndex) {
         const nextIndex = findFirstNonBlankAncestor(tree, currentIndex)
         const nextSecret = await deriveSecret(pathSecrets[currentIndex]!, 'path', kdf)
 

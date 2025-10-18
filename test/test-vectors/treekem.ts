@@ -25,11 +25,25 @@ import type { PrivateKeyPath } from '../../src/privateKeyPath.js'
 import { toPrivateKeyPath } from '../../src/privateKeyPath.js'
 import { hpkeKeysMatch } from '../crypto/keyMatch.js'
 
-for (const [index, x] of json.entries()) {
-    test(`treekem test vectors ${index}`, async (t) => {
-        const impl = await getCiphersuiteImpl(getCiphersuiteFromId(x.cipher_suite as CiphersuiteId))
-        await treekemTest(t, x, impl)
-    })
+// Type definitions used before defined - moved to top
+interface PathSecretState {
+  node: number
+  path_secret: string
+}
+
+interface LeafPrivateState {
+  encryption_priv: string
+  signature_priv: string
+  index: number
+  path_secrets: PathSecretState[]
+}
+
+interface UpdatePathState {
+  sender: number
+  commit_secret: string
+  path_secrets: (string | null)[]
+  tree_hash_after: string
+  update_path: string
 }
 
 interface TreeKEMState {
@@ -41,24 +55,12 @@ interface TreeKEMState {
   ratchet_tree: string
   update_paths: UpdatePathState[]
 }
-interface LeafPrivateState {
-  encryption_priv: string
-  signature_priv: string
-  index: number
-  path_secrets: PathSecretState[]
-}
 
-interface PathSecretState {
-  node: number
-  path_secret: string
-}
-
-interface UpdatePathState {
-  sender: number
-  commit_secret: string
-  path_secrets: (string | null)[]
-  tree_hash_after: string
-  update_path: string
+for (const [index, x] of json.entries()) {
+    test(`treekem test vectors ${index}`, async (t) => {
+        const impl = await getCiphersuiteImpl(getCiphersuiteFromId(x.cipher_suite as CiphersuiteId))
+        await treekemTest(t, x, impl)
+    })
 }
 
 async function treekemTest (t: any, data: TreeKEMState, impl: CiphersuiteImpl) {

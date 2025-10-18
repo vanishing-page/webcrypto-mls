@@ -18,7 +18,7 @@ export async function makeNobleSignatureImpl (alg: SignatureAlgorithm): Promise<
                         return { signKey, publicKey: ed25519.getPublicKey(signKey) }
                     },
                 }
-            } catch (err) {
+            } catch (_err) {
                 throw new DependencyError(
                     "Optional dependency '@noble/curves' is not installed. Please install it to use this feature.",
                 )
@@ -39,7 +39,7 @@ export async function makeNobleSignatureImpl (alg: SignatureAlgorithm): Promise<
                         return { signKey, publicKey: ed448.getPublicKey(signKey) }
                     },
                 }
-            } catch (err) {
+            } catch (_err) {
                 throw new DependencyError(
                     "Optional dependency '@noble/curves' is not installed. Please install it to use this feature.",
                 )
@@ -60,7 +60,7 @@ export async function makeNobleSignatureImpl (alg: SignatureAlgorithm): Promise<
                         return { signKey, publicKey: p256.getPublicKey(signKey) }
                     },
                 }
-            } catch (err) {
+            } catch (_err) {
                 throw new DependencyError(
                     "Optional dependency '@noble/curves' is not installed. Please install it to use this feature.",
                 )
@@ -80,7 +80,7 @@ export async function makeNobleSignatureImpl (alg: SignatureAlgorithm): Promise<
                         return { signKey, publicKey: p384.getPublicKey(signKey) }
                     },
                 }
-            } catch (err) {
+            } catch (_err) {
                 throw new DependencyError(
                     "Optional dependency '@noble/curves' is not installed. Please install it to use this feature.",
                 )
@@ -100,27 +100,27 @@ export async function makeNobleSignatureImpl (alg: SignatureAlgorithm): Promise<
                         return { signKey, publicKey: p521.getPublicKey(signKey) }
                     },
                 }
-            } catch (err) {
+            } catch (_err) {
                 throw new DependencyError(
                     "Optional dependency '@noble/curves' is not installed. Please install it to use this feature.",
                 )
             }
         case 'ML-DSA-87':
             try {
-                const { ml_dsa87 } = await import('@noble/post-quantum/ml-dsa.js')
+                const { ml_dsa87: mlDsa87 } = await import('@noble/post-quantum/ml-dsa.js')
                 return {
                     async sign (signKey, message) {
-                        return ml_dsa87.sign(message, signKey)
+                        return mlDsa87.sign(message, signKey)
                     },
                     async verify (publicKey, message, signature) {
-                        return ml_dsa87.verify(signature, message, publicKey)
+                        return mlDsa87.verify(signature, message, publicKey)
                     },
                     async keygen () {
-                        const keys = ml_dsa87.keygen(crypto.getRandomValues(new Uint8Array(32)))
+                        const keys = mlDsa87.keygen(crypto.getRandomValues(new Uint8Array(32)))
                         return { signKey: keys.secretKey, publicKey: keys.publicKey }
                     },
                 }
-            } catch (err) {
+            } catch (_err) {
                 throw new DependencyError(
                     "Optional dependency '@noble/post-quantum' is not installed. Please install it to use this feature.",
                 )

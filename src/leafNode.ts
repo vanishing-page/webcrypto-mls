@@ -23,6 +23,28 @@ import { encodeLeafNodeSource, decodeLeafNodeSource } from './leafNodeSource.js'
 import type { Lifetime } from './lifetime.js'
 import { encodeLifetime, decodeLifetime } from './lifetime.js'
 
+// Type definitions used before defined - moved to top
+export interface LeafNodeInfoKeyPackage {
+  leafNodeSource: 'key_package'
+  lifetime: Lifetime
+}
+export interface LeafNodeInfoUpdate {
+  leafNodeSource: 'update'
+}
+export interface LeafNodeInfoCommit {
+  leafNodeSource: 'commit'
+  parentHash: Uint8Array
+}
+export type LeafNodeInfo = LeafNodeInfoKeyPackage | LeafNodeInfoUpdate | LeafNodeInfoCommit
+
+type GroupIdLeafIndex = {
+  leafNodeSource: Exclude<LeafNodeSourceName, 'key_package'>
+  groupId: Uint8Array
+  leafIndex: number
+}
+
+export type LeafNodeGroupInfo = GroupIdLeafIndex | { leafNodeSource: 'key_package' }
+
 export interface LeafNodeData {
   hpkePublicKey: Uint8Array
   signaturePublicKey: Uint8Array
@@ -44,19 +66,6 @@ export const decodeLeafNodeData: Decoder<LeafNodeData> = mapDecoders(
         capabilities,
     }),
 )
-
-export type LeafNodeInfo = LeafNodeInfoKeyPackage | LeafNodeInfoUpdate | LeafNodeInfoCommit
-export interface LeafNodeInfoKeyPackage {
-  leafNodeSource: 'key_package'
-  lifetime: Lifetime
-}
-export interface LeafNodeInfoUpdate {
-  leafNodeSource: 'update'
-}
-export interface LeafNodeInfoCommit {
-  leafNodeSource: 'commit'
-  parentHash: Uint8Array
-}
 
 export const encodeLeafNodeInfoLifetime: Encoder<LeafNodeInfoKeyPackage> = contramapEncoders(
     [encodeLeafNodeSource, encodeLifetime],
@@ -122,18 +131,10 @@ export const decodeLeafNodeExtensions: Decoder<LeafNodeExtensions> = mapDecoder(
     (extensions) => ({ extensions }),
 )
 
-type GroupIdLeafIndex = {
-  leafNodeSource: Exclude<LeafNodeSourceName, 'key_package'>
-  groupId: Uint8Array
-  leafIndex: number
-}
-
 export const encodeGroupIdLeafIndex: Encoder<GroupIdLeafIndex> = contramapEncoders(
     [encodeVarLenData, encodeUint32],
     (g) => [g.groupId, g.leafIndex] as const,
 )
-
-export type LeafNodeGroupInfo = GroupIdLeafIndex | { leafNodeSource: 'key_package' }
 
 export const encodeLeafNodeGroupInfo: Encoder<LeafNodeGroupInfo> = (info) => {
     switch (info.leafNodeSource) {

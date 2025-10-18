@@ -16,7 +16,7 @@ import type { RatchetTree } from './ratchetTree.js'
 import type { NodeIndex } from './treemath.js'
 import { rootFromNodeWidth, isLeaf, nodeToLeafIndex, left, right } from './treemath.js'
 
-export type TreeHashInput = LeafNodeHashInput | ParentNodeHashInput
+// Type definitions used before defined - moved to top
 type LeafNodeHashInput = {
   nodeType: 'leaf'
   leafIndex: number
@@ -28,6 +28,7 @@ type ParentNodeHashInput = {
   leftHash: Uint8Array
   rightHash: Uint8Array
 }
+export type TreeHashInput = LeafNodeHashInput | ParentNodeHashInput
 
 export const encodeLeafNodeHashInput: Encoder<LeafNodeHashInput> = contramapEncoders(
     [encodeNodeType, encodeUint32, encodeOptional(encodeLeafNode)],

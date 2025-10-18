@@ -24,7 +24,7 @@ export const decodeUint16: Decoder<number> = (b, offset) => {
     const view = new DataView(b.buffer, b.byteOffset, b.byteLength)
     try {
         return [view.getUint16(offset), 2]
-    } catch (e) {
+    } catch (_e) {
         return undefined
     }
 }
@@ -40,7 +40,7 @@ export const decodeUint32: Decoder<number> = (b, offset) => {
     const view = new DataView(b.buffer, b.byteOffset, b.byteLength)
     try {
         return [view.getUint32(offset), 4]
-    } catch (e) {
+    } catch (_e) {
         return undefined
     }
 }
@@ -56,7 +56,7 @@ export const decodeUint64: Decoder<bigint> = (b, offset) => {
     const view = new DataView(b.buffer, b.byteOffset, b.byteLength)
     try {
         return [view.getBigUint64(offset), 8]
-    } catch (e) {
+    } catch (_e) {
         return undefined
     }
 }

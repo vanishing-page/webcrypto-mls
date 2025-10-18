@@ -109,7 +109,7 @@ export async function protectPublicMessage (
 ): Promise<PublicMessage> {
     if (content.content.contentType === 'application') throw new UsageError("Can't make an application message public")
 
-    if (content.content.sender.senderType == 'member') {
+    if (content.content.sender.senderType === 'member') {
         const authenticatedContent: AuthenticatedContentTBM = {
             contentTbs: toTbs(content.content, 'mls_public_message', groupContext),
             auth: content.auth,
