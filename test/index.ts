@@ -1,7 +1,7 @@
 // Top-level tests
 import './base64.js'
 import './extensionsEqual.js'
-// import './groupinfo.js' // Commented out - requires @noble/curves package
+// import './groupinfo.js'  // Commented out - requires @noble/curves package
 
 // Codec tests
 import './codec/authenticatedContent.js'
