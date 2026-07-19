@@ -85,13 +85,13 @@
     "cryptography",
     "encryption"
   ],
-  "homepage": "https://github.com/substrate-system/webcrypto-mls",
+  "homepage": "https://github.com/vanishing-page/webcrypto-mls",
   "bugs": {
-    "url": "https://github.com/substrate-system/webcrypto-mls/issues"
+    "url": "https://github.com/vanishing-page/webcrypto-mls/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/substrate-system/webcrypto-mls.git"
+    "url": "git+https://github.com/vanishing-page/webcrypto-mls.git"
   },
   "author": "nichoth <nichoth@nichoth.com> (https://nichoth.com)",
   "license": "SEE LICENSE IN LICENSE"
