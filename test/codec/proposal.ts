@@ -3,7 +3,7 @@ import type { Proposal } from '../../src/proposal.js'
 import { encodeProposal, decodeProposal } from '../../src/proposal.js'
 import { createRoundtripTest } from './roundtrip.js'
 
-const dummyProposalAdd: Proposal = {
+const dummyProposalAdd:Proposal = {
     proposalType: 'add',
     add: {
         keyPackage: {
@@ -32,7 +32,7 @@ const dummyProposalAdd: Proposal = {
     },
 }
 
-const dummyProposalRemove: Proposal = {
+const dummyProposalRemove:Proposal = {
     proposalType: 'remove',
     remove: { removed: 42 },
 }

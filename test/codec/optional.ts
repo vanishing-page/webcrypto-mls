@@ -2,9 +2,12 @@ import { test } from '@substrate-system/tapzero'
 import { decodeUint64, decodeUint8, encodeUint64, encodeUint8 } from '../../src/codec/number.js'
 import { decodeOptional, encodeOptional } from '../../src/codec/optional.js'
 import { randomBytes } from '@noble/hashes/utils.js'
-import type { Decoder } from '../../src/codec/tlsDecoder.js'
-import type { Encoder } from '../../src/codec/tlsEncoder.js'
-import { decodeVarLenData, encodeVarLenData } from '../../src/codec/variableLength.js'
+import type { Decoder } from '../../src/codec/tls-decoder.js'
+import type { Encoder } from '../../src/codec/tls-encoder.js'
+import {
+    decodeVarLenData,
+    encodeVarLenData
+} from '../../src/codec/variable-length.js'
 import type { Test } from '@substrate-system/tapzero'
 
 test('optional codec should return single 0 byte', (t) => {
@@ -40,7 +43,31 @@ test('optional codec roundtrip randomBytes(500)', (t) => {
     optionalRoundTrip(t, randomBytes(500), encodeVarLenData, decodeVarLenData)
 })
 
-function optionalRoundTrip<T> (testContext: Test, value: T, enc: Encoder<T>, dec: Decoder<T>) {
+test('optional codec roundtrip falsy present value: 0', (t) => {
+    optionalRoundTrip(t, 0, encodeUint8, decodeUint8)
+})
+
+test('decodeOptional rejects presence octets other than 0 or 1', (t) => {
+    const bogusPresent = new Uint8Array([2, 42])
+    const result = decodeOptional(decodeUint8)(bogusPresent, 0)
+    t.equal(result, undefined, 'presence octet 2 should be rejected')
+
+    const bogusPresent2 = new Uint8Array([255, 42])
+    const result2 = decodeOptional(decodeUint8)(bogusPresent2, 0)
+    t.equal(result2, undefined, 'presence octet 255 should be rejected')
+})
+
+test('decodeOptional bounds-checks before reading the presence octet', (t) => {
+    const empty = new Uint8Array([])
+    const result = decodeOptional(decodeUint8)(empty, 0)
+    t.equal(result, undefined, 'empty buffer should fail to decode')
+
+    const oneByte = new Uint8Array([1])
+    const result2 = decodeOptional(decodeUint8)(oneByte, 1)
+    t.equal(result2, undefined, 'reading past the end of the buffer should fail to decode')
+})
+
+function optionalRoundTrip<T> (testContext:Test, value:T, enc:Encoder<T>, dec:Decoder<T>) {
     const encodedOptional = encodeOptional(enc)(value)
     const encoded = enc(value)
 

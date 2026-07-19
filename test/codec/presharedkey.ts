@@ -18,7 +18,10 @@ test('PSKType roundtrip', (t) => {
 })
 
 test('ResumptionPSKUsageName roundtrip', (t) => {
-    const roundtrip = createRoundtripTest(encodeResumptionPSKUsage, decodeResumptionPSKUsage)
+    const roundtrip = createRoundtripTest(
+        encodeResumptionPSKUsage,
+        decodeResumptionPSKUsage
+    )
     roundtrip(t, 'application')
     roundtrip(t, 'branch')
     roundtrip(t, 'reinit')

@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
+import browserslist from 'browserslist'
+import { browserslistToTargets } from 'lightningcss'
 import preact from '@preact/preset-vite'
-import postcssNesting from 'postcss-nesting'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -23,18 +24,18 @@ export default defineConfig({
     },
     publicDir: '_public',
     css: {
-        postcss: {
-            plugins: [
-                postcssNesting
-            ],
+        transformer: 'lightningcss',
+        lightningcss: {
+            targets: browserslistToTargets(browserslist('>= 0.25%')),
         },
     },
     server: {
-        port: 8888,
+        port: 1234,
         host: true,
         open: true,
     },
     build: {
+        cssMinify: 'lightningcss',
         minify: false,
         outDir: '../public',
         emptyOutDir: true,

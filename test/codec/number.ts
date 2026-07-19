@@ -90,28 +90,28 @@ test("decodeUint64 fails for an array that's too small", (t) => {
     )
 })
 
-function uint8RoundTrip (t: any, num: number) {
+function uint8RoundTrip (t:any, num:number) {
     const encoded = encodeUint8(num)
     const decoded = decodeUint8(encoded, 0)
     t.equal(decoded?.[0], num, 'decoded value should match')
     t.equal(decoded?.[1], 1, 'decoded offset should be 1')
 }
 
-function uint16RoundTrip (t: any, num: number) {
+function uint16RoundTrip (t:any, num:number) {
     const encoded = encodeUint16(num)
     const decoded = decodeUint16(encoded, 0)
     t.equal(decoded?.[0], num, 'decoded value should match')
     t.equal(decoded?.[1], 2, 'decoded offset should be 2')
 }
 
-function uint32RoundTrip (t: any, num: number) {
+function uint32RoundTrip (t:any, num:number) {
     const encoded = encodeUint32(num)
     const decoded = decodeUint32(encoded, 0)
     t.equal(decoded?.[0], num, 'decoded value should match')
     t.equal(decoded?.[1], 4, 'decoded offset should be 4')
 }
 
-function uint64RoundTrip (t: any, num: bigint) {
+function uint64RoundTrip (t:any, num:bigint) {
     const encoded = encodeUint64(num)
     const decoded = decodeUint64(encoded, 0)
     t.deepEqual(decoded?.[0], num, 'decoded value should match')

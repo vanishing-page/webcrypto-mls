@@ -1,3 +1,3 @@
 export interface Rng {
-  randomBytes(n: number): Uint8Array
+    randomBytes(n:number):Uint8Array
 }

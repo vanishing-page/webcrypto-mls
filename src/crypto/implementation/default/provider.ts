@@ -1,18 +1,20 @@
 import type { Ciphersuite, CiphersuiteImpl } from '../../ciphersuite.js'
-
-import { makeHashImpl } from './makeHashImpl.js'
-import { makeHpke } from './makeHpke.js'
-import { makeKdf, makeKdfImpl } from './makeKdfImpl.js'
+import { makeHashImpl } from './make-hash-impl.js'
+import { makeHpke } from './make-hpke.js'
+import { makeKdf, makeKdfImpl } from './make-kdf-impl.js'
 import { defaultRng } from './rng.js'
-import { makeNobleSignatureImpl } from './makeNobleSignatureImpl.js'
+import { makeSignatureImpl } from './make-signature-impl.js'
+
+const webcrypto = globalThis.crypto
 
 export const defaultCryptoProvider = {
-    async getCiphersuiteImpl (cs: Ciphersuite): Promise<CiphersuiteImpl> {
-        const sc = crypto.subtle
+    async getCipherSuite (cs:Ciphersuite):Promise<CiphersuiteImpl> {
+        const subtle = webcrypto.subtle
+
         return {
             kdf: makeKdfImpl(makeKdf(cs.hpke.kdf)),
-            hash: makeHashImpl(sc, cs.hash),
-            signature: await makeNobleSignatureImpl(cs.signature),
+            hash: makeHashImpl(subtle, cs.hash),
+            signature: await makeSignatureImpl(cs.signature),
             hpke: await makeHpke(cs.hpke),
             rng: defaultRng,
             name: cs.name,

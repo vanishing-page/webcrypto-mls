@@ -1,10 +1,10 @@
 import type { CipherSuite } from '@hpke/core'
 import type { Aead } from '../../crypto/aead.js'
 import type { HpkeAlgorithm, Hpke, PrivateKey, PublicKey } from '../../crypto/hpke.js'
-import { bytesToBuffer, concatUint8Arrays } from '../../util/byteArray.js'
-import { CryptoError } from '../../mlsError.js'
+import { bytesToBuffer, concatUint8Arrays } from '../../util/byte-array.js'
+import { CryptoError } from '../../mls-error.js'
 
-export async function makeGenericHpke (hpkealg: HpkeAlgorithm, aead: Aead, cs: CipherSuite): Promise<Hpke> {
+export async function makeGenericHpke (hpkealg:HpkeAlgorithm, aead:Aead, cs:CipherSuite):Promise<Hpke> {
     return {
         async open (privateKey, kemOutput, ciphertext, info, aad) {
             try {
@@ -93,7 +93,7 @@ export async function makeGenericHpke (hpkealg: HpkeAlgorithm, aead: Aead, cs: C
     }
 }
 
-function prepadPrivateKeyP521 (k: Uint8Array) {
+function prepadPrivateKeyP521 (k:Uint8Array) {
     const lengthDifference = 66 - k.byteLength
     return concatUint8Arrays(new Uint8Array(lengthDifference), k)
 }

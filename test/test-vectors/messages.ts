@@ -4,8 +4,8 @@ import json from '../../test_vectors/messages.json'
 import { hexToBytes } from '@noble/ciphers/utils.js'
 import { decodeMlsMessage, encodeMlsMessage } from '../../src/message.js'
 import { decodeCommit, encodeCommit } from '../../src/commit.js'
-import type { Encoder } from '../../src/codec/tlsEncoder.js'
-import type { Decoder } from '../../src/codec/tlsDecoder.js'
+import type { Encoder } from '../../src/codec/tls-encoder.js'
+import type { Decoder } from '../../src/codec/tls-decoder.js'
 import {
     decodeAdd,
     decodeExternalInit,
@@ -22,8 +22,11 @@ import {
     encodeRemove,
     encodeUpdate,
 } from '../../src/proposal.js'
-import { decodeRatchetTree, encodeRatchetTree } from '../../src/ratchetTree.js'
-import { decodeGroupSecrets, encodeGroupSecrets } from '../../src/groupSecrets.js'
+import { decodeRatchetTree, encodeRatchetTree } from '../../src/ratchet-tree.js'
+import {
+    decodeGroupSecrets,
+    encodeGroupSecrets
+} from '../../src/group-secrets.js'
 
 for (const [index, x] of json.entries()) {
     test(`messages test vectors ${index}`, (t) => {
@@ -32,26 +35,26 @@ for (const [index, x] of json.entries()) {
 }
 
 type Messages = {
-  mls_welcome: string
-  mls_group_info: string
-  mls_key_package: string
-  ratchet_tree: string
-  group_secrets: string
-  add_proposal: string
-  update_proposal: string
-  remove_proposal: string
-  pre_shared_key_proposal: string
-  re_init_proposal: string
-  external_init_proposal: string
-  group_context_extensions_proposal: string
-  commit: string
-  public_message_application: string
-  public_message_proposal: string
-  public_message_commit: string
-  private_message: string
+    mls_welcome:string
+    mls_group_info:string
+    mls_key_package:string
+    ratchet_tree:string
+    group_secrets:string
+    add_proposal:string
+    update_proposal:string
+    remove_proposal:string
+    pre_shared_key_proposal:string
+    re_init_proposal:string
+    external_init_proposal:string
+    group_context_extensions_proposal:string
+    commit:string
+    public_message_application:string
+    public_message_proposal:string
+    public_message_commit:string
+    private_message:string
 }
 
-function codecRoundtrip (t: any, msgs: Messages) {
+function codecRoundtrip (t:any, msgs:Messages) {
     welcome(t, msgs.mls_welcome)
     groupInfo(t, msgs.mls_group_info)
     keyPackage(t, msgs.mls_key_package)
@@ -71,7 +74,7 @@ function codecRoundtrip (t: any, msgs: Messages) {
     privateMessage(t, msgs.private_message)
 }
 
-function welcome (t: any, s: string) {
+function welcome (t:any, s:string) {
     const inputBytes = hexToBytes(s)
     const mlsWelcome = decodeMlsMessage(inputBytes, 0)
 
@@ -83,7 +86,7 @@ function welcome (t: any, s: string) {
     }
 }
 
-function privateMessage (t: any, s: string) {
+function privateMessage (t:any, s:string) {
     const inputBytes = hexToBytes(s)
     const p = decodeMlsMessage(inputBytes, 0)
 
@@ -95,7 +98,7 @@ function privateMessage (t: any, s: string) {
     }
 }
 
-function groupInfo (t: any, s: string) {
+function groupInfo (t:any, s:string) {
     const inputBytes = hexToBytes(s)
     const gi = decodeMlsMessage(inputBytes, 0)
 
@@ -107,7 +110,7 @@ function groupInfo (t: any, s: string) {
     }
 }
 
-function keyPackage (t: any, s: string) {
+function keyPackage (t:any, s:string) {
     const inputBytes = hexToBytes(s)
     const kp = decodeMlsMessage(inputBytes, 0)
 
@@ -119,7 +122,7 @@ function keyPackage (t: any, s: string) {
     }
 }
 
-function publicMessageApplication (t: any, s: string) {
+function publicMessageApplication (t:any, s:string) {
     const inputBytes = hexToBytes(s)
     const p = decodeMlsMessage(inputBytes, 0)
 
@@ -132,7 +135,7 @@ function publicMessageApplication (t: any, s: string) {
     }
 }
 
-function publicMessageProposal (t: any, s: string) {
+function publicMessageProposal (t:any, s:string) {
     const inputBytes = hexToBytes(s)
     const p = decodeMlsMessage(inputBytes, 0)
 
@@ -145,7 +148,7 @@ function publicMessageProposal (t: any, s: string) {
     }
 }
 
-function publicMessageCommit (t: any, s: string) {
+function publicMessageCommit (t:any, s:string) {
     const inputBytes = hexToBytes(s)
     const p = decodeMlsMessage(inputBytes, 0)
 
@@ -174,7 +177,7 @@ const groupContextExtension = createTest(
     'group_context_extensions_proposal',
 )
 
-function createTest<T> (enc: Encoder<T>, dec: Decoder<T>, typeName: string): (t: any, s: string) => void {
+function createTest<T> (enc:Encoder<T>, dec:Decoder<T>, typeName:string):(t:any, s:string) => void {
     return (t, s) => {
         const inputBytes = hexToBytes(s)
         const decoded = dec(inputBytes, 0)

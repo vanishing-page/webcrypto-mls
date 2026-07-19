@@ -3,62 +3,65 @@ export { type Extension, type ExtensionType } from './extension.js'
 export {
     defaultProposalTypes,
     type DefaultProposalTypeName
-} from './defaultProposalType.js'
+} from './default-proposal-type.js'
 
 export {
     defaultExtensionTypes,
     type DefaultExtensionTypeName
-} from './defaultExtensionType.js'
+} from './default-extension-type.js'
 
-export { type PrivateKeyPath } from './privateKeyPath.js'
+export { type PrivateKeyPath } from './private-key-path.js'
 
-export { type RatchetTree } from './ratchetTree.js'
+export { type RatchetTree } from './ratchet-tree.js'
 
 export {
     acceptAll,
     type IncomingMessageCallback,
     type IncomingMessageAction
-} from './incomingMessageAction.js'
+} from './incoming-message-action.js'
 
-export { proposeAddExternal, proposeExternal } from './externalProposal.js'
+export { proposeAddExternal, proposeExternal } from './external-proposal.js'
 
-export { type GroupContext } from './groupContext.js'
+export { type GroupContext } from './group-context.js'
 
 export {
     decodeExternalSender,
     encodeExternalSender,
+    decodeExternalSenders,
+    encodeExternalSenders,
     type ExternalSender
-} from './externalSender.js'
+} from './external-sender.js'
 
 export {
     decodeRequiredCapabilities,
     encodeRequiredCapabilities,
     type RequiredCapabilities,
-} from './requiredCapabilities.js'
+} from './required-capabilities.js'
 
 export {
     type AuthenticationService,
     defaultAuthenticationService
-} from './authenticationService.js'
+} from './authentication-service.js'
 
-export { type PaddingConfig, defaultPaddingConfig } from './paddingConfig.js'
+export { type PaddingConfig, defaultPaddingConfig } from './padding-config.js'
 
 export {
     defaultKeyPackageEqualityConfig,
     type KeyPackageEqualityConfig
-} from './keyPackageEqualityConfig.js'
+} from './key-package-equality-config.js'
 
-export { type LifetimeConfig, defaultLifetimeConfig } from './lifetimeConfig.js'
+export { type LifetimeConfig, defaultLifetimeConfig } from './lifetime-config.js'
 
 export {
     type PrivateKeyPackage,
     type KeyPackage,
+    type GenerateKeyPackageOptions,
     generateKeyPackage
-} from './keyPackage.js'
+} from './key-package.js'
 export {
     type KeyRetentionConfig,
     defaultKeyRetentionConfig
-} from './keyRetentionConfig.js'
+} from './key-retention-config.js'
 
 export {
     createGroup,
@@ -67,12 +70,12 @@ export {
     type ClientState,
     type GroupActiveState,
     type EpochReceiverData,
-} from './clientState.js'
+} from './client-state.js'
 
 export {
     createApplicationMessage,
     createProposal
-} from './createMessage.js'
+} from './create-message.js'
 
 export {
     joinGroupExternal,
@@ -80,18 +83,18 @@ export {
     createGroupInfoWithExternalPub,
     createGroupInfoWithExternalPubAndRatchetTree,
     type CreateCommitResult,
-} from './createCommit.js'
+} from './create-commit.js'
 
 export {
     processPrivateMessage,
     processMessage,
     processPublicMessage,
     type ProcessMessageResult,
-} from './processMessages.js'
+} from './process-messages.js'
 
-export { type PrivateMessage } from './privateMessage.js'
+export { type PrivateMessage } from './private-message.js'
 
-export { type PskIndex, emptyPskIndex } from './pskIndex.js'
+export { type PskIndex, emptyPskIndex } from './psk-index.js'
 
 export {
     joinGroupFromReinit,
@@ -105,7 +108,9 @@ export { type Credential } from './credential.js'
 
 export { type Proposal } from './proposal.js'
 
-export { type ClientConfig } from './clientConfig.js'
+export { UsageError } from './mls-error.js'
+
+export { type ClientConfig } from './client-config.js'
 
 export { type Welcome } from './welcome.js'
 
@@ -117,13 +122,18 @@ export {
     getCiphersuiteFromName,
 } from './crypto/ciphersuite.js'
 
-export { getCiphersuiteImpl } from './crypto/getCiphersuiteImpl.js'
+export {
+    getCipherSuite,
+    DEFAULT_CIPHERSUITE,
+} from './crypto/get-ciphersuite-impl.js'
 
 export { type CryptoProvider } from './crypto/provider.js'
 export { nobleCryptoProvider } from './crypto/implementation/noble/provider.js'
-export { defaultCryptoProvider } from './crypto/implementation/default/provider.js'
+export {
+    defaultCryptoProvider
+} from './crypto/implementation/default/provider.js'
 
-export { bytesToBase64 } from './util/byteArray.js'
+export { bytesToBase64 } from './util/byte-array.js'
 
 export {
     decodeMlsMessage,
@@ -133,4 +143,4 @@ export {
 } from './message.js'
 export { type Lifetime, defaultLifetime } from './lifetime.js'
 export { type Capabilities } from './capabilities.js'
-export { defaultCapabilities } from './defaultCapabilities.js'
+export { defaultCapabilities } from './default-capabilities.js'

@@ -1,66 +1,66 @@
-import type { Decoder } from './codec/tlsDecoder.js'
-import { mapDecoders } from './codec/tlsDecoder.js'
-import type { Encoder } from './codec/tlsEncoder.js'
-import { contramapEncoders } from './codec/tlsEncoder.js'
-import { decodeVarLenData, decodeVarLenType, encodeVarLenData, encodeVarLenType } from './codec/variableLength.js'
+import type { Decoder } from './codec/tls-decoder.js'
+import { mapDecoders } from './codec/tls-decoder.js'
+import type { Encoder } from './codec/tls-encoder.js'
+import { contramapEncoders } from './codec/tls-encoder.js'
+import { decodeVarLenData, decodeVarLenType, encodeVarLenData, encodeVarLenType } from './codec/variable-length.js'
 import type { CiphersuiteImpl, CiphersuiteName } from './crypto/ciphersuite.js'
 import { decodeCiphersuite, encodeCiphersuite } from './crypto/ciphersuite.js'
 import type { PublicKey, Hpke, PrivateKey } from './crypto/hpke.js'
 import { encryptWithLabel, decryptWithLabel } from './crypto/hpke.js'
 import { expandWithLabel } from './crypto/kdf.js'
-import type { GroupInfo } from './groupInfo.js'
-import { decodeGroupInfo, encodeGroupInfo, extractWelcomeSecret } from './groupInfo.js'
-import type { GroupSecrets } from './groupSecrets.js'
-import { decodeGroupSecrets, encodeGroupSecrets } from './groupSecrets.js'
-import type { HPKECiphertext } from './hpkeCiphertext.js'
-import { encodeHpkeCiphertext, decodeHpkeCiphertext } from './hpkeCiphertext.js'
-import { ValidationError } from './mlsError.js'
-import { constantTimeEqual } from './util/constantTimeCompare.js'
+import type { GroupInfo } from './group-info.js'
+import { decodeGroupInfo, encodeGroupInfo, extractWelcomeSecret } from './group-info.js'
+import type { GroupSecrets } from './group-secrets.js'
+import { decodeGroupSecrets, encodeGroupSecrets } from './group-secrets.js'
+import type { HPKECiphertext } from './hpke-ciphertext.js'
+import { encodeHpkeCiphertext, decodeHpkeCiphertext } from './hpke-ciphertext.js'
+import { ValidationError } from './mls-error.js'
+import { constantTimeEqual } from './util/constant-time-compare.js'
 
 export interface EncryptedGroupSecrets {
-  newMember: Uint8Array
-  encryptedGroupSecrets: HPKECiphertext
+    newMember:Uint8Array
+    encryptedGroupSecrets:HPKECiphertext
 }
 
-export const encodeEncryptedGroupSecrets: Encoder<EncryptedGroupSecrets> = contramapEncoders(
+export const encodeEncryptedGroupSecrets:Encoder<EncryptedGroupSecrets> = contramapEncoders(
     [encodeVarLenData, encodeHpkeCiphertext],
     (egs) => [egs.newMember, egs.encryptedGroupSecrets] as const,
 )
 
-export const decodeEncryptedGroupSecrets: Decoder<EncryptedGroupSecrets> = mapDecoders(
+export const decodeEncryptedGroupSecrets:Decoder<EncryptedGroupSecrets> = mapDecoders(
     [decodeVarLenData, decodeHpkeCiphertext],
     (newMember, encryptedGroupSecrets) => ({ newMember, encryptedGroupSecrets }),
 )
 
 export interface Welcome {
-  cipherSuite: CiphersuiteName
-  secrets: EncryptedGroupSecrets[]
-  encryptedGroupInfo: Uint8Array
+    cipherSuite:CiphersuiteName
+    secrets:EncryptedGroupSecrets[]
+    encryptedGroupInfo:Uint8Array
 }
 
-export const encodeWelcome: Encoder<Welcome> = contramapEncoders(
+export const encodeWelcome:Encoder<Welcome> = contramapEncoders(
     [encodeCiphersuite, encodeVarLenType(encodeEncryptedGroupSecrets), encodeVarLenData],
     (welcome) => [welcome.cipherSuite, welcome.secrets, welcome.encryptedGroupInfo] as const,
 )
 
-export const decodeWelcome: Decoder<Welcome> = mapDecoders(
+export const decodeWelcome:Decoder<Welcome> = mapDecoders(
     [decodeCiphersuite, decodeVarLenType(decodeEncryptedGroupSecrets), decodeVarLenData],
     (cipherSuite, secrets, encryptedGroupInfo) => ({ cipherSuite, secrets, encryptedGroupInfo }),
 )
 
-export function welcomeNonce (welcomeSecret: Uint8Array, cs: CiphersuiteImpl) {
+export function welcomeNonce (welcomeSecret:Uint8Array, cs:CiphersuiteImpl) {
     return expandWithLabel(welcomeSecret, 'nonce', new Uint8Array(), cs.hpke.nonceLength, cs.kdf)
 }
 
-export function welcomeKey (welcomeSecret: Uint8Array, cs: CiphersuiteImpl) {
+export function welcomeKey (welcomeSecret:Uint8Array, cs:CiphersuiteImpl) {
     return expandWithLabel(welcomeSecret, 'key', new Uint8Array(), cs.hpke.keyLength, cs.kdf)
 }
 
 export async function encryptGroupInfo (
-    groupInfo: GroupInfo,
-    welcomeSecret: Uint8Array,
-    cs: CiphersuiteImpl,
-): Promise<Uint8Array> {
+    groupInfo:GroupInfo,
+    welcomeSecret:Uint8Array,
+    cs:CiphersuiteImpl,
+):Promise<Uint8Array> {
     const key = await welcomeKey(welcomeSecret, cs)
     const nonce = await welcomeNonce(welcomeSecret, cs)
     const encrypted = await cs.hpke.encryptAead(key, nonce, undefined, encodeGroupInfo(groupInfo))
@@ -69,11 +69,11 @@ export async function encryptGroupInfo (
 }
 
 export async function decryptGroupInfo (
-    w: Welcome,
-    joinerSecret: Uint8Array,
-    pskSecret: Uint8Array,
-    cs: CiphersuiteImpl,
-): Promise<GroupInfo | undefined> {
+    w:Welcome,
+    joinerSecret:Uint8Array,
+    pskSecret:Uint8Array,
+    cs:CiphersuiteImpl,
+):Promise<GroupInfo | undefined> {
     const welcomeSecret = await extractWelcomeSecret(joinerSecret, pskSecret, cs.kdf)
 
     const key = await welcomeKey(welcomeSecret, cs)
@@ -85,20 +85,20 @@ export async function decryptGroupInfo (
 }
 
 export function encryptGroupSecrets (
-    initKey: PublicKey,
-    encryptedGroupInfo: Uint8Array,
-    groupSecrets: GroupSecrets,
-    hpke: Hpke,
+    initKey:PublicKey,
+    encryptedGroupInfo:Uint8Array,
+    groupSecrets:GroupSecrets,
+    hpke:Hpke,
 ) {
     return encryptWithLabel(initKey, 'Welcome', encryptedGroupInfo, encodeGroupSecrets(groupSecrets), hpke)
 }
 
 export async function decryptGroupSecrets (
-    initPrivateKey: PrivateKey,
-    keyPackageRef: Uint8Array,
-    welcome: Welcome,
-    hpke: Hpke,
-): Promise<GroupSecrets | undefined> {
+    initPrivateKey:PrivateKey,
+    keyPackageRef:Uint8Array,
+    welcome:Welcome,
+    hpke:Hpke,
+):Promise<GroupSecrets | undefined> {
     const secret = welcome.secrets.find((s) => constantTimeEqual(s.newMember, keyPackageRef))
     if (secret === undefined) throw new ValidationError('No matching secret found')
     const decrypted = await decryptWithLabel(

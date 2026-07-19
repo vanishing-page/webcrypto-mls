@@ -1,0 +1,370 @@
+import { test } from '@substrate-system/tapzero'
+import type { ClientState } from '../../src/client-state.js'
+import { createGroup, joinGroup, makePskIndex } from '../../src/client-state.js'
+import { createCommit } from '../../src/create-commit.js'
+import {
+    createApplicationMessage,
+    createProposal
+} from '../../src/create-message.js'
+import { processPrivateMessage } from '../../src/process-messages.js'
+import { emptyPskIndex } from '../../src/psk-index.js'
+import type { Credential } from '../../src/credential.js'
+import {
+    ciphersuites,
+    getCiphersuiteFromName
+} from '../../src/crypto/ciphersuite.js'
+import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
+import { generateKeyPackage } from '../../src/key-package.js'
+import type { ProposalAdd } from '../../src/proposal.js'
+import { shuffledIndices, testEveryoneCanMessageEveryone } from './common.js'
+import { defaultLifetime } from '../../src/lifetime.js'
+import { defaultCapabilities } from '../../src/default-capabilities.js'
+import type { PrivateMessage } from '../../src/private-message.js'
+import { defaultKeyRetentionConfig } from '../../src/key-retention-config.js'
+import type { CiphersuiteImpl, CiphersuiteName } from '../../src/crypto/ciphersuite.js'
+import type { KeyRetentionConfig } from '../../src/key-retention-config.js'
+import { ValidationError } from '../../src/mls-error.js'
+import { defaultClientConfig } from '../../src/client-config.js'
+
+for (const cs of Object.keys(ciphersuites)) {
+    test(`Out of order epoch ${cs}`, async (t) => {
+        try {
+            await epochOutOfOrder(cs as CiphersuiteName, t)
+        } catch (error:any) {
+            // Skip ciphersuites not supported in the current environment (e.g., X448/Ed448 in browsers)
+            if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+
+    test(`Out of order epoch random ${cs}`, async (t) => {
+        try {
+            await epochOutOfOrderRandom(cs as CiphersuiteName, defaultKeyRetentionConfig.retainKeysForEpochs, t)
+        } catch (error:any) {
+            // Skip ciphersuites not supported in the current environment (e.g., X448/Ed448 in browsers)
+            if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+
+    test(`Out of order epoch limit reached fails ${cs}`, async (t) => {
+        try {
+            await epochOutOfOrderLimitFails(cs as CiphersuiteName, 3, t)
+        } catch (error:any) {
+            // Skip ciphersuites not supported in the current environment (e.g., X448/Ed448 in browsers)
+            if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+}
+
+type TestParticipants = {
+    aliceGroup:ClientState
+    bobGroup:ClientState
+    impl:CiphersuiteImpl
+}
+
+async function setupTestParticipants (
+    cipherSuite:CiphersuiteName,
+    retainConfig?:KeyRetentionConfig,
+):Promise<TestParticipants> {
+    const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
+
+    const aliceCredential:Credential = {
+        credentialType: 'basic',
+        identity: new TextEncoder().encode('alice')
+    }
+    const alice = await generateKeyPackage(
+        aliceCredential,
+        defaultCapabilities(),
+        defaultLifetime,
+        [],
+        impl
+    )
+
+    const groupId = new TextEncoder().encode('group1')
+
+    // group starts at epoch 0
+    let aliceGroup = await createGroup(
+        groupId,
+        alice.publicPackage,
+        alice.privatePackage,
+        [],
+        impl
+    )
+
+    const bobCredential:Credential = {
+        credentialType: 'basic',
+        identity: new TextEncoder().encode('bob')
+    }
+    const bob = await generateKeyPackage(
+        bobCredential,
+        defaultCapabilities(),
+        defaultLifetime,
+        [],
+        impl
+    )
+
+    const addBobProposal:ProposalAdd = {
+        proposalType: 'add',
+        add: {
+            keyPackage: bob.publicPackage,
+        },
+    }
+
+    // alice adds bob and initiates epoch 1
+    const addBobCommitResult = await createCommit(
+        {
+            state: aliceGroup,
+            cipherSuite: impl,
+        },
+        {
+            extraProposals: [addBobProposal],
+            ratchetTreeExtension: true,
+        },
+    )
+    aliceGroup = addBobCommitResult.newState
+
+    // bob joins at epoch 1
+    const bobGroup = await joinGroup(
+        addBobCommitResult.welcome!,
+        bob.publicPackage,
+        bob.privatePackage,
+        emptyPskIndex,
+        impl,
+        undefined,
+        undefined,
+        { ...defaultClientConfig, keyRetentionConfig: retainConfig ?? defaultKeyRetentionConfig },
+    )
+
+    return { aliceGroup, bobGroup, impl }
+}
+
+async function epochOutOfOrder (cipherSuite:CiphersuiteName, t:any) {
+    const { aliceGroup: initialAliceGroup, bobGroup: initialBobGroup, impl } = await setupTestParticipants(cipherSuite)
+
+    let aliceGroup = initialAliceGroup
+    let bobGroup = initialBobGroup
+
+    const firstMessage = new TextEncoder().encode('Hello bob!')
+    const secondMessage = new TextEncoder().encode('How are ya?')
+    const thirdMessage = new TextEncoder().encode('Have you heard the news?')
+
+    // alice sends the first message in epoch 1
+    const aliceCreateFirstMessageResult = await createApplicationMessage(aliceGroup, firstMessage, impl)
+    aliceGroup = aliceCreateFirstMessageResult.newState
+
+    // alice sends a proposal message in epoch 1
+    const aliceCreateFirstProposalResult = await createProposal(
+        aliceGroup,
+        false,
+        { proposalType: 7, proposalData: new Uint8Array() },
+        impl,
+    )
+    aliceGroup = aliceCreateFirstProposalResult.newState
+
+    // bob creates an empty commit and goes to epoch 2
+    const emptyCommitResult1 = await createCommit({
+        state: bobGroup,
+        cipherSuite: impl,
+    })
+    bobGroup = emptyCommitResult1.newState
+
+    if (emptyCommitResult1.commit.wireformat !== 'mls_private_message') throw new Error('Expected private message')
+
+    // alice processes the empty commit and goes to epoch 2
+    const aliceProcessFirstCommitResult = await processPrivateMessage(
+        aliceGroup,
+        emptyCommitResult1.commit.privateMessage,
+        emptyPskIndex,
+        impl,
+    )
+    aliceGroup = aliceProcessFirstCommitResult.newState
+
+    // alice sends the 2nd message in epoch 2
+    const aliceCreateSecondMessageResult = await createApplicationMessage(aliceGroup, secondMessage, impl)
+    aliceGroup = aliceCreateSecondMessageResult.newState
+
+    // bob creates an empty commit and goes to epoch 3
+    const emptyCommitResult2 = await createCommit({
+        state: bobGroup,
+        cipherSuite: impl,
+    })
+    bobGroup = emptyCommitResult2.newState
+
+    if (emptyCommitResult2.commit.wireformat !== 'mls_private_message') throw new Error('Expected private message')
+
+    // alice processes the empty commit and goes to epoch 3
+    const aliceProcessSecondCommitResult = await processPrivateMessage(
+        aliceGroup,
+        emptyCommitResult2.commit.privateMessage,
+        emptyPskIndex,
+        impl,
+    )
+    aliceGroup = aliceProcessSecondCommitResult.newState
+
+    // alice sends the 3rd message in epoch 3
+    const aliceCreateThirdMessageResult = await createApplicationMessage(aliceGroup, thirdMessage, impl)
+    aliceGroup = aliceCreateThirdMessageResult.newState
+
+    // bob creates an empty commit and goes to epoch 4
+    const emptyCommitResult3 = await createCommit({
+        state: bobGroup,
+        cipherSuite: impl,
+    })
+    bobGroup = emptyCommitResult3.newState
+
+    if (emptyCommitResult3.commit.wireformat !== 'mls_private_message') throw new Error('Expected private message')
+
+    // alice processes the empty commit and goes to epoch 4
+    const aliceProcessThirdCommitResult = await processPrivateMessage(
+        aliceGroup,
+        emptyCommitResult3.commit.privateMessage,
+        emptyPskIndex,
+        impl,
+    )
+    aliceGroup = aliceProcessThirdCommitResult.newState
+
+    // bob receives 3rd message first
+    const bobProcessThirdMessageResult = await processPrivateMessage(
+        bobGroup,
+        aliceCreateThirdMessageResult.privateMessage,
+        makePskIndex(bobGroup, {}),
+        impl,
+    )
+    bobGroup = bobProcessThirdMessageResult.newState
+
+    // then bob receives the first message
+    const bobProcessFirstMessageResult = await processPrivateMessage(
+        bobGroup,
+        aliceCreateFirstMessageResult.privateMessage,
+        makePskIndex(bobGroup, {}),
+        impl,
+    )
+    bobGroup = bobProcessFirstMessageResult.newState
+
+    // bob receives 2nd message last
+    const bobProcessSecondMessageResult = await processPrivateMessage(
+        bobGroup,
+        aliceCreateSecondMessageResult.privateMessage,
+        makePskIndex(bobGroup, {}),
+        impl,
+    )
+    bobGroup = bobProcessSecondMessageResult.newState
+
+    // bob won't be able to receive the proposal from an older epoch
+
+    if (aliceCreateFirstProposalResult.message.wireformat !== 'mls_private_message') { throw new Error('Expected private message') }
+
+    let errorThrown = false
+    try {
+        await processPrivateMessage(bobGroup, aliceCreateFirstProposalResult.message.privateMessage, emptyPskIndex, impl)
+    } catch (error) {
+        errorThrown = error instanceof ValidationError
+    }
+    t.ok(errorThrown, 'should throw ValidationError when processing proposal from older epoch')
+
+    await testEveryoneCanMessageEveryone([aliceGroup, bobGroup], impl, t)
+}
+
+async function epochOutOfOrderRandom (cipherSuite:CiphersuiteName, totalMessages:number, t:any) {
+    const { aliceGroup: initialAliceGroup, bobGroup: initialBobGroup, impl } = await setupTestParticipants(cipherSuite)
+
+    let aliceGroup = initialAliceGroup
+    let bobGroup = initialBobGroup
+
+    const message = new TextEncoder().encode('Hi!')
+
+    const messages:PrivateMessage[] = []
+    for (let i = 0; i < totalMessages; i++) {
+        const createMessageResult = await createApplicationMessage(aliceGroup, message, impl)
+        // alice sends the first message in current epoch
+        aliceGroup = createMessageResult.newState
+
+        // bob creates an empty commit and goes to next epoch
+        const emptyCommitResult = await createCommit({
+            state: bobGroup,
+            cipherSuite: impl,
+        })
+        bobGroup = emptyCommitResult.newState
+
+        if (emptyCommitResult.commit.wireformat !== 'mls_private_message') throw new Error('Expected private message')
+
+        // alice processes the empty commit and goes to next epoch
+        const aliceProcessCommitResult = await processPrivateMessage(
+            aliceGroup,
+            emptyCommitResult.commit.privateMessage,
+            emptyPskIndex,
+            impl,
+        )
+        aliceGroup = aliceProcessCommitResult.newState
+        messages.push(createMessageResult.privateMessage)
+    }
+
+    const shuffledMessages = shuffledIndices(messages).map((i) => messages[i]!)
+
+    for (const msg of shuffledMessages) {
+        const bobProcessMessageResult = await processPrivateMessage(bobGroup, msg, makePskIndex(bobGroup, {}), impl)
+        bobGroup = bobProcessMessageResult.newState
+    }
+
+    await testEveryoneCanMessageEveryone([aliceGroup, bobGroup], impl, t)
+}
+
+async function epochOutOfOrderLimitFails (cipherSuite:CiphersuiteName, totalMessages:number, t:any) {
+    const retainConfig = { ...defaultKeyRetentionConfig, retainKeysForEpochs: totalMessages - 1 }
+    const {
+        aliceGroup: initialAliceGroup,
+        bobGroup: initialBobGroup,
+        impl,
+    } = await setupTestParticipants(cipherSuite, retainConfig)
+
+    let aliceGroup = initialAliceGroup
+    let bobGroup = initialBobGroup
+
+    const message = new TextEncoder().encode('Hi!')
+
+    const messages:PrivateMessage[] = []
+    for (let i = 0; i < totalMessages; i++) {
+        const createMessageResult = await createApplicationMessage(aliceGroup, message, impl)
+        // alice sends the first message in current epoch
+        aliceGroup = createMessageResult.newState
+
+        // bob creates an empty commit and goes to next epoch
+        const emptyCommitResult = await createCommit({
+            state: bobGroup,
+            cipherSuite: impl,
+        })
+        bobGroup = emptyCommitResult.newState
+
+        if (emptyCommitResult.commit.wireformat !== 'mls_private_message') throw new Error('Expected private message')
+
+        // alice processes the empty commit and goes to next epoch
+        const aliceProcessCommitResult = await processPrivateMessage(
+            aliceGroup,
+            emptyCommitResult.commit.privateMessage,
+            emptyPskIndex,
+            impl,
+        )
+        aliceGroup = aliceProcessCommitResult.newState
+        messages.push(createMessageResult.privateMessage)
+    }
+
+    // process last message
+    let errorThrown = false
+    try {
+        await processPrivateMessage(bobGroup, messages.at(0)!, emptyPskIndex, impl)
+    } catch (error) {
+        errorThrown = error instanceof ValidationError
+    }
+    t.ok(errorThrown, 'should throw ValidationError when retention limit is exceeded')
+}

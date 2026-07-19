@@ -1,13 +1,13 @@
 import { test } from '@substrate-system/tapzero'
-import type { PaddingConfig } from '../../src/paddingConfig.js'
-import type { PrivateMessageContent } from '../../src/privateMessage.js'
+import type { PaddingConfig } from '../../src/padding-config.js'
+import type { PrivateMessageContent } from '../../src/private-message.js'
 import {
     encodePrivateMessageContent,
     decodePrivateMessageContent
-} from '../../src/privateMessage.js'
+} from '../../src/private-message.js'
 import { createRoundtripTest } from './roundtrip.js'
 
-const content: PrivateMessageContent = {
+const content:PrivateMessageContent = {
     contentType: 'application',
     applicationData: new Uint8Array(),
     auth: {
@@ -57,7 +57,7 @@ test('PrivateMessageContent roundtrip with 80000 bytes of padding', (t) => {
 })
 
 test('PrivateMessageContent roundtrip with padding until 4000 bytes', (t) => {
-    const config: PaddingConfig = { kind: 'padUntilLength', padUntilLength: 4000 }
+    const config:PaddingConfig = { kind: 'padUntilLength', padUntilLength: 4000 }
     const roundtrip = createRoundtripTest(
         encodePrivateMessageContent(config),
         decodePrivateMessageContent('application')

@@ -1,5 +1,5 @@
 import { test } from '@substrate-system/tapzero'
-import { bytesToBase64, base64ToBytes } from '../src/util/byteArray.js'
+import { bytesToBase64, base64ToBytes } from '../src/util/byte-array.js'
 
 test('bytes to base 64 - empty array', (t) => {
     const result = bytesToBase64(new Uint8Array())
@@ -101,10 +101,13 @@ test('base64 to bytes - browser atob path', (t) => {
     const originalBuffer = globalThis.Buffer
     const originalAtob = globalThis.atob
 
+    console.log('aaaaaaaaaaa', originalBuffer)
+
     // Simulate browser: remove Buffer and add atob
     delete globalThis.Buffer
-    globalThis.atob = (str: string) =>
-        originalBuffer.from(str, 'base64').toString('binary')
+    globalThis.atob = (str:string) => {
+        return originalBuffer.from(str, 'base64').toString('binary')
+    }
 
     const original = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     const base64 = bytesToBase64(original)

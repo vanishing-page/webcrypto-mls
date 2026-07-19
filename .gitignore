@@ -5,5 +5,7 @@ test/*.js
 dist
 .env
 public
-docs
+docs/*
+!docs/design-plans/
 .claude
+.test-bundle.cjs

@@ -6,7 +6,7 @@ import { createRoundtripTest } from './roundtrip.js'
 const roundtrip = createRoundtripTest(encodeExtension, decodeExtension)
 
 test('extension roundtrip minimal', (t) => {
-    const e: Extension = {
+    const e:Extension = {
         extensionType: 'application_id',
         extensionData: new Uint8Array([]),
     }
@@ -14,7 +14,7 @@ test('extension roundtrip minimal', (t) => {
 })
 
 test('extension roundtrip nontrivial', (t) => {
-    const e: Extension = {
+    const e:Extension = {
         extensionType: 'ratchet_tree',
         extensionData: new Uint8Array([1, 2, 3, 4]),
     }

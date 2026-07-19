@@ -1,7 +1,7 @@
 import { test } from '@substrate-system/tapzero'
 import json from '../../test_vectors/tree-math.json'
 import { left, nodeWidth, parent, right, root, sibling, toNodeIndex } from '../../src/treemath.js'
-import { InternalError as _InternalError } from '../../src/mlsError.js'
+import { InternalError as _InternalError } from '../../src/mls-error.js'
 
 for (const [index, x] of json.entries()) {
     test(`tree math test vectors ${index}`, (t) => {
@@ -9,14 +9,14 @@ for (const [index, x] of json.entries()) {
     })
 }
 
-function treemathTest (t: any, data: {
-  n_leaves: number
-  n_nodes: number
-  root: number
-  left: (number | null)[]
-  right: (number | null)[]
-  parent: (number | null)[]
-  sibling: (number | null)[]
+function treemathTest (t:any, data:{
+    n_leaves:number
+    n_nodes:number
+    root:number
+    left:(number | null)[]
+    right:(number | null)[]
+    parent:(number | null)[]
+    sibling:(number | null)[]
 }) {
     // n_nodes is the number of nodes in the tree with n_leaves leaves
     t.equal(nodeWidth(data.n_leaves), data.n_nodes, 'node width should match expected')

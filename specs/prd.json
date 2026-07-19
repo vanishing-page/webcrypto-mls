@@ -1,0 +1,444 @@
+{
+  "project": "webcrypto-mls",
+  "branchName": "ralph/rfc9420-security-audit-fixes",
+  "description": "Fix security and RFC 9420 conformance findings from SECURITY-AUDIT.md, ordered critical-first. Each story is a localized fix with a regression test.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Require UpdatePath for single Update/Remove/GroupContextExtensions commits (C1)",
+      "description": "As a group member, I need removals to be cryptographically effective so a removed member cannot derive future epoch secrets.",
+      "acceptanceCriteria": [
+        "In src/client-state.ts:635 change needsUpdatePath to require a path when the proposal list is empty OR grouped.update.length > 0 OR grouped.remove.length > 0 OR grouped.group_context_extensions.length > 0",
+        "createCommit generates an UpdatePath for a commit containing a single Remove",
+        "process-messages rejects a received commit that covers a single Remove and has no path",
+        "Add a test asserting the commit secret is non-zero after a single-Remove commit (removed member cannot derive the new epoch secret)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "needsUpdatePath now requires a path for empty proposal lists or any Update/Remove/GroupContextExtensions proposal. createCommit generates an UpdatePath for a single Remove; process-messages rejects a received single-Remove commit lacking a path. Receiver derivation uses pathSecretsAlongFilteredPath so the commit secret is seeded from a fresh path secret (non-zero) even when the sender's leaf is the tree root. Regression test test/scenario/require-update-path.ts asserts the UpdatePath is present, the commit secret is non-zero, and the no-path commit is rejected, across all ciphersuites. Tests and typecheck pass (pre-existing unrelated tsc error in test/test-vectors/key-schedule.ts)."
+    },
+    {
+      "id": "US-002",
+      "title": "Exclude commit-added leaves from copath resolutions on the sender side (H1)",
+      "description": "As a pre-existing member, I need commits that both add a member and send a path to remain decryptable per RFC 9420 section 7.6.",
+      "acceptanceCriteria": [
+        "In src/update-path.ts (applyInitialTreeUpdate / encryptSecretsForPath) exclude leaves added by the current commit from each copath resolution before encrypting path secrets",
+        "encrypted_path_secret vector length equals the copath resolution length excluding new leaves",
+        "Add a test: commit containing both an Add and an UpdatePath, verified by a pre-existing member decrypting successfully (blank parent with children [newLeaf, existingLeaf])",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Sender-side fix: createUpdatePath (src/update-path.ts) now takes an excludeNodes:NodeIndex[] parameter and filters each copath resolution with the (moved-here, now-exported) filterNewLeaves helper before it becomes a PathSecret's sendTo list, so encrypted_path_secret is only built for non-excluded resolution members. create-commit.ts computes excludeNodes from res.additionalResult.addedLeafNodes for memberCommit and passes it through; this mirrors the exclusion the receiver side (applyUpdatePathSecret/applyTreeUpdate in process-messages.ts) already performed, which is why only the sender was out of sync. filterNewLeaves was previously a private duplicate in create-commit.ts; it is now defined once in update-path.ts and imported. Regression test test/scenario/add-with-path.ts builds a tree where a blank parent's children are [newLeaf, existingLeaf] (new leaf ordered first in the resolution, which is exactly the ordering that produces an index mismatch under the old bug) and asserts a pre-existing member can process the commit and reach the same epochAuthenticator as the committer; confirmed the test fails with a CryptoError before the fix and passes after. Full suite (44756 assertions) and lint pass; tsc has the same pre-existing unrelated error in test/test-vectors/key-schedule.ts noted under US-001."
+    },
+    {
+      "id": "US-003",
+      "title": "Fix leaf-width computation in filteredDirectPath (M1)",
+      "description": "As a receiver applying an UpdatePath, I need correct node indices so valid commits are not corrupted or rejected.",
+      "acceptanceCriteria": [
+        "In src/ratchet-tree.ts:248 replace nodeToLeafIndex(toNodeIndex(tree.length)) with leafWidth(tree.length)",
+        "Add a test at a tree size where tree.length/2 != leafWidth (e.g. 4 leaves) exercising applyUpdatePath",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "src/ratchet-tree.ts:248 (filteredDirectPath) and the sibling filteredDirectPathAndCopathResolution already used leafWidth(tree.length) as of a prior uncommitted 'wip' pass; verified no remaining nodeToLeafIndex(toNodeIndex(tree.length)) leaf-width pattern exists anywhere in src/. Added test/scenario/leaf-width-update-path.ts (4-leaf tree, tree.length=7) which asserts leafWidth(7)=4 diverges numerically from the buggy nodeToLeafIndex(toNodeIndex(7))=3.5 expression, then exercises a full UpdatePath commit/apply cycle (createCommit -> processPrivateMessage) across three receivers at that tree size and checks epochAuthenticator convergence plus HPKE key matching. Registered the test in test/index.ts. Investigated (and recorded in progress.log) that this exact bug pattern is mathematically inert for root()/directPath()/copath() given the current treemath implementation -- the fix is still correct and required per the acceptance criteria, and the test provides real integration coverage of applyUpdatePath at this tree size plus a direct numeric-divergence assertion, but a true RED-before/GREEN-after test via the full protocol is not achievable for this specific manifestation."
+    },
+    {
+      "id": "US-004",
+      "title": "Implement parent-hash resolution / unmerged-leaves check (H2)",
+      "description": "As a joiner, I need parent-hash verification to enforce the RFC 9420 section 7.9.2 tree invariant so a malicious inviter cannot plant known keys.",
+      "acceptanceCriteria": [
+        "In src/parent-hash.ts add the section 7.9.2 criterion: D is in the resolution of C, and the intersection of P's unmerged_leaves with the subtree under C equals the resolution of C with D removed",
+        "The check runs during tree validation on both join and commit apply",
+        "Add a negative test with a tree that passes the hash chain but violates the unmerged-leaves intersection condition",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Added the RFC 9420 SS7.9.2 resolution/unmerged-leaves criterion to src/parent-hash.ts (satisfiesResolutionCriterion), checked alongside the existing hash-chain equality in parentHashCoverage for every D-vs-P link. Added leafRange(nodeIndex) to src/treemath.ts as a structural helper. Both join (client-state.ts validateRatchetTree) and commit-apply (create-commit.ts validateRatchetTree) already funnel through verifyParentHashes, so both call sites are covered by this one fix. New negative test in test/validation/parent-hash-resolution.ts builds a genuine 4-leaf tree with a real UpdatePath parent-hash chain, then tampers with the root parent node unmerged_leaves to include a leaf not actually part of the relevant resolution -- passes the pre-existing hash chain check but is now rejected by the new criterion."
+    },
+    {
+      "id": "US-005",
+      "title": "Range-validate all decoded node/leaf indices including unmergedLeaves (H3)",
+      "description": "As a joining client, I need out-of-range tree indices rejected so a malformed ratchet tree cannot cause an infinite loop or OOB access.",
+      "acceptanceCriteria": [
+        "Validate every decoded node/leaf index (including all unmergedLeaves entries) against the tree width immediately on decode and reject out-of-range values",
+        "Add defensive bounds guards in treemath helpers (parent/level/directPath)",
+        "Add a test with an oversized unmergedLeaves entry (e.g. 0xFFFFFFFF) that must reject, not hang",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Range-checks every decoded unmergedLeaves entry against the tree's leaf width immediately in decodeRatchetTree (src/ratchet-tree.ts), rejecting the whole tree (decode returns undefined) if any parent node's unmergedLeaves contains a non-integer, negative, or >= leafWidth(tree.length) value -- this is the single choke point through which all RatchetTree-embedded indices flow, so once it rejects, no out-of-range index ever reaches treemath/resolution/encryptSecretsForPath. Also added defensive bounds guards directly in src/treemath.ts: assertValidNodeIndex (used by level) rejects non-integer/negative/>=2^31 indices before the bit-shift loops run (2^31+ wraps to negative under JS's 32-bit bitwise coercion, which made level()'s loop condition permanently true -- an unbounded hang, confirmed by reproducing it pre-fix), and parent/directPath both reject any nodeIndex outside [0, nodeWidth(leafWidth)). Test test/codec/ratchet-tree.ts adds a decode-rejection case with an unmergedLeaves entry of 0xFFFFFFFF in a 1-leaf tree, and a treemath case asserting directPath throws ValidationError for an out-of-range index instead of hanging.  Found this work already implemented uncommitted in the working tree at session start; verified it via git-stash RED/GREEN (test fails with a BigInt-serialization crash inside the assertion library pre-fix, confirming the pre-fix path is NOT silently passing, and passes cleanly post-fix), full suite, lint, and tsc before committing."
+    },
+    {
+      "id": "US-006",
+      "title": "Fix unmerged-leaves join validation logic (M2)",
+      "description": "As a joiner, I need the tree unmerged-leaves validation to match RFC 9420 section 7.9 so malformed trees are rejected and valid trees accepted.",
+      "acceptanceCriteria": [
+        "Fix src/client-state.ts:323 so an entry is rejected unless it is a non-blank leaf AND a descendant of the parent (use || so either failing condition rejects)",
+        "Change src/client-state.ts:331 from array-equality to membership (leaf present in each intermediate node's unmergedLeaves)",
+        "Add tests for both a valid tree that was previously falsely rejected and an invalid tree that was previously accepted",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "src/client-state.ts: extracted the inline unmerged-leaves validation from validateRatchetTree into a standalone exported validateUnmergedLeaves(tree) function, fixing two bugs in the process. (1) The 'is this a valid unmerged-leaf entry' check used `&&` between its two negated conditions (`tree[nodeIndex]?.nodeType !== 'leaf' && !dp.includes(...)`), which only rejected an entry when BOTH the leaf was blank AND it wasn't a descendant -- an entry could satisfy just one failing condition and still be wrongly accepted. Changed to `||` so either failing condition rejects, per RFC 9420 SS7.9. (2) The 'every intermediate node between the leaf and this parent must also carry the leaf in its own unmerged_leaves' check used `arraysEqual(dpNode.parent.unmergedLeaves, n.parent.unmergedLeaves)`, i.e. full array equality between two potentially-different nodes' lists -- this wrongly rejected valid trees where two ancestors both contain the leaf but also each contain other, different leaves (spec only requires membership, not identical sets). Changed to `dpNode.parent.unmergedLeaves.includes(unmergedLeaf)`. Removed the now-unused `arraysEqual` import (the util function itself is untouched and still used elsewhere). test/validation/unmerged-leaves-validation.ts (new) adds two tests per ciphersuite: one 4-leaf tree with two ancestors of the same leaf carrying different-but-overlapping unmergedLeaves lists ([1] and [1,3]) asserting it is now accepted (previously falsely rejected by the arraysEqual bug), and one 2-leaf tree where the root claims leaf index 1 is unmerged but that leaf node is blank, asserting it is rejected (previously wrongly accepted by the && bug, since 'not a leaf' was true but 'not a descendant' was false). Registered in test/index.ts."
+    },
+    {
+      "id": "US-007",
+      "title": "Reject inbound messages whose group_id does not match the local group (H4)",
+      "description": "As a group member, I need group_id checked on receipt so external-sender proposals cannot be replayed across groups.",
+      "acceptanceCriteria": [
+        "In src/process-messages.ts both public and private receive paths reject any message whose groupId differs from state.groupContext.groupId before further processing",
+        "Add a cross-group replay test for an external-sender proposal (message from group A rejected in group B)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Both receive paths in src/process-messages.ts now check the message's groupId against state.groupContext.groupId as the very first statement in the function, before any other processing: processPrivateMessage checks pm.groupId, processPublicMessage checks pm.content.groupId. Both throw a ValidationError on mismatch. Comparison uses the existing constantTimeEqual helper (src/util/constant-time-compare.ts) rather than a plain !== -- groupId isn't itself secret, but this reuses the codebase's existing byte-array-equality primitive rather than introducing a second comparison idiom. New test/scenario/cross-group-replay.ts builds two independent groups (A and B) sharing the same external sender (charlie), has charlie's external Add proposal for group A processed successfully by group A (sanity check), then feeds that exact same signed PublicMessage into group B's processPublicMessage and asserts it throws a ValidationError -- this is the H4 attack scenario verbatim (an external-sender proposal replayed across groups). Registered in test/index.ts."
+    },
+    {
+      "id": "US-008",
+      "title": "Validate external commits and bind resync Remove to joiner identity (H5)",
+      "description": "As a group member, I need external commits fully validated so a joiner cannot evict an arbitrary victim leaf.",
+      "acceptanceCriteria": [
+        "External-commit receive path runs proposal-list validation (or the section 12.4.3.2 subset), including validateRemove on any Remove",
+        "An external-commit Remove is bound to the joiner's identity/credential (resync); Removes targeting unrelated leaves are rejected",
+        "Add a test: external commit whose Remove targets an unrelated member is rejected",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "External-commit branch of applyProposals (src/client-state.ts) now calls validateRemove on any Remove proposal (rejects a Remove targeting an already-blank leaf, same check member commits already used), and additionally binds the Remove to the joiner: it compares the removed leaf's signaturePublicKey against the new member's own leaf node (the UpdatePath's leafNode, which every external commit must carry) using the same constantTimeEqual signaturePublicKey comparison the codebase's defaultKeyPackageEqualityConfig.compareKeyPackageToLeafNode already uses to establish 'same identity' elsewhere (e.g. joinGroupExternal's own resync-leaf lookup). applyProposals gained an optional newMemberLeafNode:LeafNode parameter; process-messages.ts's processCommit (shared by both processPrivateMessage and processPublicMessage) passes content.content.commit.path?.leafNode through, since a genuine external commit always includes a path. Regression test test/scenario/external-commit-unrelated-remove.ts forges a new_member_commit external-join PublicMessage (mallory) whose Remove proposal targets bob's leaf, which has no relation to mallory's identity, and asserts both alice and bob reject it with a ValidationError."
+    },
+    {
+      "id": "US-009",
+      "title": "Enforce the validateSenderData result (H6)",
+      "description": "As a receiver, I need the SenderData sender-leaf check to actually run so a blank-leaf sender index is rejected.",
+      "acceptanceCriteria": [
+        "At src/message-protection.ts:236 the validateSenderData result is enforced (throwIfDefined, or convert validateSenderData to throw)",
+        "Add a test: a PrivateMessage whose decrypted SenderData points at a blank leaf is rejected cleanly",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Reject non-minimal QUIC varint encodings on decode (M3)",
+      "description": "As a receiver, I need canonical varint decoding so ref-hash and transcript-hash inputs stay canonical per RFC 9420 section 2.1.2.",
+      "acceptanceCriteria": [
+        "src/codec/variable-length.ts rejects non-minimal (over-long) varint encodings on decode",
+        "Add decode tests for each non-minimal form of a small value",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "determineLength (src/codec/variable-length.ts) now rejects non-minimal varint length encodings: a 2-byte length field must encode a value >= 64 and a 4-byte length field must encode a value >= 16384, otherwise a shorter field size would have been minimal and CodecError is thrown. decodeVarLenData/decodeVarLenType inherit the check since they call determineLength internally. Added decode tests in test/codec/var-length-encoding.ts for non-minimal 2-byte and 4-byte encodings of small values, plus boundary-value acceptance tests (63 and 16383). Full suite (45572 assertions), lint, and typecheck (only the pre-existing unrelated key-schedule.ts error) all pass."
+    },
+    {
+      "id": "US-011",
+      "title": "Harden decodeOptional and encodeOptional (M4, M5)",
+      "description": "As a receiver, I need strict optional decoding so truncated or non-canonical messages are rejected.",
+      "acceptanceCriteria": [
+        "src/codec/optional.ts decodeOptional rejects presence octets other than 0 or 1",
+        "decodeOptional bounds-checks before reading the presence octet and fails on truncation",
+        "encodeOptional uses t !== undefined instead of a truthiness check",
+        "Add tests for invalid presence octet, truncated buffer, and a falsy present value round-trip",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "decodeOptional (src/codec/optional.ts) now bounds-checks before reading the presence octet (returns undefined immediately if decodeUint8(b, offset) itself returns undefined, instead of optional-chaining past a missing byte) and rejects any presence octet other than 0 or 1 via an explicit three-way branch (1 => decode, 0 => absent, else => undefined/reject), replacing the old bare else that treated any non-1 octet as absent. encodeOptional's ternary now checks t !== undefined instead of a truthiness check, so a legitimately-present-but-falsy value (e.g. 0) is no longer wrongly encoded as absent. Verified every other call site of encodeOptional/decodeOptional in src/ (group-secrets.ts, commit.ts, ratchet-tree.ts, tree-hash.ts) only ever wraps object-typed encoders, so the truthiness fix changes no existing runtime behavior. test/codec/optional.ts adds tests for a falsy-present round-trip (0), invalid presence octets (2, 255), and truncation (empty buffer; reading one byte past the end of a 1-byte buffer). Confirmed via git-stash RED/GREEN that the new tests fail (6 assertions) against the pre-fix code and pass (35/35) post-fix. Full suite (45580 assertions), lint, and typecheck (only the pre-existing unrelated key-schedule.ts error) all pass."
+    },
+    {
+      "id": "US-012",
+      "title": "Use constant-time comparison for noble provider MAC verification (M6)",
+      "description": "As a group member, I need tag comparison to be constant time so there is no timing oracle on confirmation/membership tags.",
+      "acceptanceCriteria": [
+        "src/crypto/implementation/noble/make-hash-impl.ts verifyMac uses constantTimeEqual from src/util/constant-time-compare.ts",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "src/crypto/implementation/noble/make-hash-impl.ts's verifyMac now delegates to the existing constantTimeEqual helper (src/util/constant-time-compare.ts, already used elsewhere in the codebase e.g. groupId/signaturePublicKey comparisons) instead of `mac.length === expectedMac.length && mac.every(...)`, which short-circuits on the first mismatching byte and is not constant time. New test/crypto/hash.ts covers verifyMac accepting a correct tag and rejecting tags tampered at the first byte, tampered at the last byte, and of mismatched length; registered in test/index.ts. Confirmed via git-stash that the new tests pass identically against both the pre-fix and post-fix code -- this is a hardening change with no functional/behavioral difference (both the old early-exit loop and the new constant-time scan compute the exact same boolean result for every input), only a timing-side-channel difference that a black-box functional test cannot observe -- so there is no true RED-before-fix state to capture, analogous to the US-003 leaf-width finding already documented in Codebase Patterns."
+    },
+    {
+      "id": "US-013",
+      "title": "Initialize interim_transcript_hash[0] to the empty string (M7)",
+      "description": "As an interoperating client, I need the epoch-0 interim transcript hash to be empty per RFC 9420 section 8.2 so the first commit matches conformant peers.",
+      "acceptanceCriteria": [
+        "src/client-state.ts nextEpochContext sets interim_transcript_hash_[0] to the zero-length octet string and only folds in the confirmation tag for epochs >= 1",
+        "Validate against RFC 9420 transcript-hash test vectors",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Pass the PSK index through to processPrivateMessage (M8)",
+      "description": "As a member, I need PSK proposals in commits sent as PrivateMessage to resolve using my known PSKs.",
+      "acceptanceCriteria": [
+        "src/process-messages.ts:410 passes the real pskIndex to processPrivateMessage instead of emptyPskIndex",
+        "Add a test: a commit with a PSK proposal sent as a PrivateMessage resolves successfully",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Reject ExternalInit from member senders (M9)",
+      "description": "As a member, I need ExternalInit accepted only in external commits so a member cannot abnormally reset the init secret.",
+      "acceptanceCriteria": [
+        "process/applyProposals rejects an external_init proposal unless the sender is new_member_commit",
+        "A new_member_commit commit lacking exactly one external_init is rejected",
+        "Add tests for both rejection cases",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "Added validateExternalInitSenderType(senderType, externalInitCount) in src/client-state.ts, called from applyProposals immediately after grouping proposals: rejects an external_init proposal when the sender is not new_member_commit, and separately rejects a new_member_commit sender whose proposal set does not contain exactly one external_init proposal. applyProposals gained a new optional senderType:SenderTypeName parameter (default committerLeafIndex !== undefined ? 'member' : 'new_member_commit', preserving existing call-site behavior for src/create-commit.ts's member-only createCommit call). src/process-messages.ts's processCommit now passes the real content.content.sender.senderType through explicitly instead of relying on the default. Regression test test/scenario/external-init-sender-policy.ts covers both rejection cases (member sender with external_init; new_member_commit sender missing external_init) across all ciphersuites, registered in test/index.ts. Found this fully drafted, uncommitted, in the working tree at session start; reviewed against acceptance criteria, verified via git-stash RED/GREEN (38/57 assertions fail pre-fix, all pass post-fix), confirmed no regression in external-join/external-join-resync/external-add-proposal/external-commit-unrelated-remove/external-proposal/require-update-path scenario tests, then ran the full suite/lint/typecheck before committing."
+    },
+    {
+      "id": "US-016",
+      "title": "Enforce sender-type and proposal-type policy at the framing layer (M10)",
+      "description": "As a receiver, I need external senders restricted to permitted proposal types per RFC 9420 section 12.1.7 / 12.1.8.2.",
+      "acceptanceCriteria": [
+        "Receive path rejects external senders sending anything other than Add/Remove/PSK/ReInit/GroupContextExtensions (no Update, no Commit, no application)",
+        "new_member_commit is accepted only for external commits",
+        "Add tests for a rejected external Update and a rejected external application message",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "src/public-message.ts's findSignaturePublicKey now enforces, for the 'external' sender case, that framedContent.contentType is 'proposal' (rejecting Commit and application content outright) and that the proposal's type is one of add/remove/psk/reinit/group_context_extensions via a new externalSenderAllowedProposalTypes Set (also rejecting unknown/GREASE numeric proposal types). 'new_member_commit is accepted only for external commits' was already fully enforced by US-015's validateExternalInitSenderType (src/client-state.ts), which rejects any new_member_commit-sender commit lacking exactly one external_init proposal, so no additional framing-layer change was needed for that criterion. New regression test test/scenario/external-sender-policy.ts covers both required rejection cases (external sender sending an Update proposal; external sender sending an application message) across all ciphersuites, registered in test/index.ts. Found this fully drafted, uncommitted, in the working tree at session start; reviewed against acceptance criteria, verified via git-stash RED/GREEN (38/57 assertions fail pre-fix -- specifically the Update-rejection assertions -- all 76 pass post-fix), then ran the full suite/lint/typecheck before committing."
+    },
+    {
+      "id": "US-017",
+      "title": "Decode external_senders as a vector within one extension (M11)",
+      "description": "As an interoperating client, I need SenderIndex to index into the external_senders vector per RFC 9420 section 12.1.8.2.",
+      "acceptanceCriteria": [
+        "src/external-sender.ts decodes external_senders as a variable-length vector of ExternalSender entries inside a single extension",
+        "src/public-message.ts senderFromExtension indexes SenderIndex into that vector",
+        "Confirm the encoder matches the decoder (round-trip test with two external senders)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "src/external-sender.ts adds encodeExternalSenders/decodeExternalSenders built from the existing encodeVarLenType/decodeVarLenType combinators, so external_senders now decodes as a single variable-length vector of ExternalSender entries per RFC 9420 SS12.1.8.2, instead of the old (incorrect) model of one ExternalSender per separately-typed extension. src/public-message.ts's senderFromExtension finds the one external_senders extension, decodes it as a vector, and indexes SenderIndex into that vector (decoded[0][senderIndex]) rather than into the filtered extension list. src/client-state.ts's validateExternalSenders and src/external-proposal.ts's proposeExternal were updated to match (decode the one extension as a vector, then loop/search within it). Every test fixture constructing an external_senders extension was updated to encodeExternalSenders([sender]) since a bare single-entry encoding is no longer a valid payload. test/codec/external-sender.ts adds the round-trip test with two external senders required by the acceptance criteria, plus a SenderIndex-resolution test. Found this fix already fully drafted, uncommitted, in the working tree at session start; reviewed against every acceptance criterion, verified via git-stash RED (full src stash fails to compile: missing export) and an isolated per-file stash RED (public-message.ts alone reverted crashes at runtime with CodecError, distinct from the compile-level failure), then GREEN (862/862 targeted assertions) before committing. Full suite (45818 assertions), lint, and tsc (only the pre-existing key-schedule.ts error) all pass."
+    },
+    {
+      "id": "US-018",
+      "title": "Check existing members support new GroupContextExtensions (M12)",
+      "description": "As a member, I need a GroupContextExtensions proposal to be rejected if any existing member cannot support the new extensions per RFC 9420 section 12.1.6.",
+      "acceptanceCriteria": [
+        "validateProposals verifies every existing leaf's capabilities support the proposed new group context extensions before accepting the proposal",
+        "Add a test where one member lacks support and the proposal is rejected",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "validateProposals (src/client-state.ts) now walks the pre-commit ratchet tree whenever a commit contains a group_context_extensions proposal, rejecting the commit unless every non-blank existing leaf either is being removed by a Remove proposal in the same commit or has capabilities supporting every proposed extension (extensionsSupportedByCapabilities, the same helper already used for Add-vs-GroupContext and required_capabilities checks in this function). Regression test in test/validation/proposal-validation.ts builds a group_context_extensions proposal with a custom numeric extension type (9821) that no member's default capabilities declare, and asserts createCommit throws ValidationError, across all ciphersuites. Found this fix already drafted, uncommitted, in the working tree at session start; reviewed against RFC 9420 SS12.1.6 and all acceptance criteria, verified via git-stash RED/GREEN (19/380 assertions fail pre-fix, all pass post-fix), then ran the full suite/lint/typecheck before committing. Full suite (45837 assertions -- 45818 baseline + 19 new), lint, and tsc (only the pre-existing key-schedule.ts error) all pass."
+    },
+    {
+      "id": "US-019",
+      "title": "Validate PreSharedKey proposal type/usage in commits (M13)",
+      "description": "As a member, I need PreSharedKey proposals restricted to external PSKs or application-usage resumption PSKs per RFC 9420 section 12.1.5.",
+      "acceptanceCriteria": [
+        "Commit processing validates PSK type/usage for PreSharedKey proposals (external, or resumption with usage application)",
+        "Add a test rejecting a disallowed PSK type in a PreSharedKey proposal",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "Added validatePskProposals(pskIds, groupContext) in src/client-state.ts (RFC 9420 SS12.1.5): rejects any PreSharedKey proposal whose PreSharedKeyID is psktype 'resumption' with a usage other than 'application', UNLESS the commit is the group's epoch-0 (group-creating) commit, in which case 'reinit'/'branch' usage is allowed -- this mirrors how src/resumption.ts's reinitCreateNewGroup/branchGroup already construct exactly that proposal (usage 'reinit'/'branch') inside the createGroup+createCommit call that creates the new group's first epoch, so a strict 'application only' rule would have broken the existing reinit/branch flows exercised by test/scenario/reinit.ts and test/scenario/resumption.ts. External PSKs (psktype 'external') are always allowed, matching the acceptance criteria's 'external, or resumption with usage application'. Wired into both call sites in applyProposals: the member-commit branch via the existing validateProposals function (called from createCommit and from process-messages.ts's processCommit), and the external-commit branch directly (mirroring how validateExternalInit is already checked there). New test/scenario/psk-proposal-usage-policy.ts asserts a resumption PreSharedKey proposal with usage 'branch' and one with usage 'reinit' are both rejected with a ValidationError when submitted as a proposal in an ordinary (post-epoch-0) commit, across all ciphersuites. Registered in test/index.ts. Found this fix and test fully drafted, uncommitted, in the working tree at session start (consistent with the pattern noted for US-005/006/007/011/012/015/016/017/018); reviewed it against SECURITY-AUDIT.md's M13 and RFC 9420 SS12.1.5, verified the epoch-0 exception is load-bearing by checking src/resumption.ts's actual usage sites, then verified via git-stash RED/GREEN (stashing only src/client-state.ts: 38/38 new assertions fail pre-fix, all pass post-fix) that the fix and test are genuinely linked, and confirmed no regression in reinit.ts/resumption.ts/psk-private-message.ts/external-psk.ts/external-psk-join.ts (513/513 assertions). Full suite (45913 assertions), lint, and tsc (only the pre-existing unrelated key-schedule.ts error) all pass."
+    },
+    {
+      "id": "US-020",
+      "title": "Fix PQ ciphersuite IDs and internal inconsistencies (M14)",
+      "description": "As an interoperating client, I need experimental PQ suites clearly non-standard and internally consistent so they cannot be confused with future IANA allocations.",
+      "acceptanceCriteria": [
+        "Move experimental PQ suites (currently 0x004D-0x0058) into the private-use range 0xF000-0xFFFF or clearly mark them non-standard and stop decoding them as standard suites",
+        "Fix AEAD/hash/kdf mismatches so each PQ suite is internally consistent with its name (e.g. suite 77 AES128GCM not AES256GCM; hash matches kdf hash)",
+        "Standard suites 0x0001-0x0007 remain unchanged",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": "Experimental PQ suites moved from 77-88 to the private-use range 0xF001-0xF00C in src/crypto/ciphersuite.ts (both the `ciphersuites` name->id map and the `ciphersuiteValues` id->definition map); standard suites 1-7 untouched. Fixed internal inconsistencies: suite 77 (now 0xF001) now uses AES128GCM per its name (was AES256GCM); every ML-KEM/X-Wing suite's `hash` now matches its `hpke.kdf` digest (all set to SHA-512/HKDF-SHA512, since this codebase's ML-KEM DeriveKeyPair requires a 64-byte KDF-derived seed regardless of the suite's nominal security level -- see comment above the 0xF001 entry). New test/ciphersuite.ts asserts standard IDs are unchanged, all non-standard IDs fall in 0xF000-0xFFFF, and every non-standard suite's aead matches its name and hash digest matches its kdf digest; registered in test/index.ts."
+    },
+    {
+      "id": "US-021",
+      "title": "Drop epoch_secret from KeySchedule after deriving outputs (M15)",
+      "description": "As a group member, I need intermediate epoch secrets discarded so a state compromise cannot recompute already-deleted secret-tree segments.",
+      "acceptanceCriteria": [
+        "src/key-schedule.ts no longer retains epochSecret in KeySchedule after its outputs are derived",
+        "Best-effort fill(0) on consumed secrets (joiner/welcome/commit/path secrets and consumed ratchet segments)",
+        "Existing key-schedule tests still pass",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": "epochSecret removed from the KeySchedule interface entirely; initializeKeySchedule (src/key-schedule.ts) now fill(0)s the passed-in epochSecret buffer once all outputs (initSecret/senderDataSecret/encryptionSecret/exporterSecret/externalSecret/confirmationKey/membershipKey/resumptionPsk/epochAuthenticator) are derived. Scoped the 'joiner/welcome/commit/path secrets and consumed ratchet segments' clause of the acceptance criteria to what is genuinely dead in src/key-schedule.ts after use: joinerSecret and pskSecret are still needed by callers after deriveKeySchedule returns (e.g. welcome-message encryption), so they are intentionally left alone here; broader path/node/ratchet zeroization is explicitly scoped to US-028."
+    },
+    {
+      "id": "US-022",
+      "title": "Use low-S ECDSA signatures to remove malleability (L1)",
+      "description": "As a member, I want non-malleable ECDSA signatures so a proposal cannot have two valid ProposalRefs.",
+      "acceptanceCriteria": [
+        "src/crypto/implementation/default/make-noble-signature-impl.ts sets lowS: true on sign and verify for P-256/P-384/P-521",
+        "Existing signature tests pass",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "manual": true,
+      "notes": "BLOCKED pending a human decision -- flagged manual:true (seventh pass, 2026-07-17) so ralph_claude.sh's autonomous current_task() selection skips this story and moves on to US-023+ instead of re-selecting it; run via an attended session once a decision is made (see ralph_claude.sh's count_pending_manual/pending_manual_list), then unset manual. See progress.log 'US-022' entries (seven passes, 2026-07-17) for the full history. The literal criteria (lowS:true on sign AND verify) is proven, via three independent methods, to break the official RFC 9420 message-protection test vectors for all three ECDSA suites (P-256/P-384/P-521), so it cannot be satisfied alongside 'Tests pass' as currently written. Needs one of: (a) explicit sign-off to accept that interop regression and implement literally, with the vector failures handled as a documented exception; or (b) rescoped acceptance criteria for sign-side lowS:true + lenient verify + post-verify canonicalization before ProposalRef computation (touches src/authenticated-content.ts too). See the sixth-pass log entry for a full comparison and a recommendation of (b)."
+    },
+    {
+      "id": "US-023",
+      "title": "Use the secure Rng for GREASE selection (L2)",
+      "description": "As a maintainer, I want no Math.random in src so the secure-randomness invariant is auditable.",
+      "acceptanceCriteria": [
+        "src/grease.ts uses the threaded Rng instead of Math.random",
+        "grep for Math.random in src returns nothing",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": "grease.ts and default-capabilities.ts now thread the secure Rng (src/crypto/rng.ts) instead of calling Math.random; defaultCapabilities defaults to the webcrypto-backed defaultRng so existing call sites are unaffected. New unit test test/grease.ts verifies Math.random is never called and selection is a pure function of the injected rng bytes. grep for Math.random in src returns nothing. Lint, typecheck, and full test suite (46017/46017) pass."
+    },
+    {
+      "id": "US-024",
+      "title": "Constant-time padding zero-check and reject zero-length codec items (L3, L4)",
+      "description": "As a receiver, I want defense-in-depth on padding checks and no infinite loop on a zero-length item decoder.",
+      "acceptanceCriteria": [
+        "src/private-message.ts padding zero-check uses a constant-time scan (no early exit)",
+        "src/codec/variable-length.ts decodeVarLenType rejects an item that consumes zero bytes (if len === 0)",
+        "Add a test that a zero-length item decoder does not hang",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "Harden verifyParentHashes traversal and applyUpdatePath uniqueness (L5, L6)",
+      "description": "As a member, I want the parent-hash traversal to never spin on a blank node and update-path keys checked for full uniqueness.",
+      "acceptanceCriteria": [
+        "src/parent-hash.ts parentHashCoverage advances the index via findFirstNonBlankAncestor and does not early-return true incorrectly",
+        "src/update-path.ts applyUpdatePath checks new keys against leaf hpke keys and detects duplicates within the UpdatePath itself",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 25,
+      "passes": true,
+      "notes": "src/update-path.ts applyUpdatePath's existing-key collision check now compares incoming UpdatePath node keys against both leaf and parent hpke keys in the tree (previously parent-only), and a second check rejects duplicate keys within the UpdatePath itself -- both throw distinct ValidationErrors. src/parent-hash.ts parentHashCoverage's blank-node branch now advances via findFirstNonBlankAncestor instead of an unconditional continue (defense-in-depth against a hang; proved analytically that this branch is unreachable via any well-typed RatchetTree given calculateParentHash's contract, so no true RED-before/GREEN-after integration test exists for this half, same category as US-003/US-012). Regression test test/validation/update-path-key-uniqueness.ts (found already drafted, test-only, in the working tree at session start) covers both L6 scenarios across all ciphersuites; its original t.rejects()-based assertions were not a real tapzero API and were also a false-positive test (instanceof ValidationError alone passed pre-fix for an unrelated parent-hash-mismatch reason) -- rewritten to assert on the exact error message, giving a genuine 38/57-failing RED pre-fix and 57/57 GREEN post-fix. Full suite (46075 assertions), lint, and tsc (only the pre-existing key-schedule.ts error) all pass."
+    },
+    {
+      "id": "US-026",
+      "title": "Enforce maximumTotalLifetime on KeyPackage validation (L7)",
+      "description": "As a member, I want KeyPackage lifetime windows bounded per the configured maximum.",
+      "acceptanceCriteria": [
+        "src/client-state.ts validateLeafNodeKeyPackage enforces LifetimeConfig.maximumTotalLifetime (reject notAfter - notBefore greater than the maximum)",
+        "Add a test rejecting an over-long lifetime window",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 26,
+      "passes": true,
+      "notes": "validateLeafNodeKeyPackage (src/client-state.ts) now rejects a key_package-sourced LeafNode whose lifetime window (notAfter - notBefore) exceeds LifetimeConfig.maximumTotalLifetime, inside the existing sentByClient||validateLifetimeOnReceive gate alongside the pre-existing current-time check. defaultLifetime (src/lifetime.ts) was shrunk from a ~292-billion-year window to a 1-hour-past/30-day-future window (computed at module load) so the ~40 existing test files importing it stay under the new maximumTotalLifetime limit -- verified this is independently load-bearing (not scope creep) via git-stash: without it, the pre-existing test/scenario/one-to-one-join.ts crashes with the new ValidationError. New test/validation/lifetime-validation.ts asserts createCommit rejects an Add proposal for a KeyPackage with an over-long lifetime, across all ciphersuites. Found both fixes and the test already drafted, uncommitted, in the working tree at session start (a stalled prior pass); reviewed against acceptance criteria and traced the sentByClient plumbing before trusting it, then verified via git-stash RED/GREEN per file (client-state.ts: 0/38 pre-fix, 38/38 post-fix; lifetime.ts: broke one-to-one-join.ts pre-fix, 95/95 post-fix restored). Full suite (46113 assertions -- 46075 baseline + 38 new), lint, and tsc (only the pre-existing key-schedule.ts error) all pass."
+    },
+    {
+      "id": "US-027",
+      "title": "Fix resumption-PSK handling in joinGroup and add PSK field validations (L8, L9)",
+      "description": "As a joiner, I want resumption PSK rules applied correctly and PSK fields validated.",
+      "acceptanceCriteria": [
+        "src/client-state.ts joinGroup allows application-usage resumption PSKs like external PSKs and validates all resumption PSKs in the list, not just the first",
+        "src/presharedkey.ts bounds-checks index/count before uint16 encoding",
+        "Received PreSharedKeyID.pskNonce length is validated to equal KDF.Nh",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 27,
+      "passes": true,
+      "notes": "src/client-state.ts joinGroup: application-usage resumption PSKs (usage 'application') are now excluded from the resumption-continuity checks -- filtered via a resumptionPsksRequiringPriorState array (typed PreSharedKeyIdResumption via a type-guard filter) built from ALL of pskIds (not just .find()'s first match), and every entry in that filtered list is validated in a for-loop (epoch match, groupId match, epoch===1 on the new group, and for usage 'reinit' the suspendedPendingReinit/groupId/version/cipherSuite/extensions checks) instead of the old code which only ever inspected the single PSK returned by pskIds.find(id => id.psktype === 'resumption') -- a second resumption PSK later in the list, or a mismatched one, was silently skipped entirely. src/presharedkey.ts updatePskSecret now throws ValidationError if index or count exceeds 0xffff (uint16 range) before they reach encodeUint16 inside expandWithLabel's context construction. src/psk-index.ts accumulatePskSecret now throws ValidationError if any PreSharedKeyID's pskNonce.length !== cs.kdf.size (KDF.Nh) before searching/folding it into the running PSK secret. Found all three src/ changes and the new test file (test/validation/psk-field-validation.ts) already fully drafted, uncommitted, in the working tree at session start (same stalled-prior-pass pattern noted for US-005/006/007/011/012/015/016/017/018/026 in Codebase Patterns); reviewed each against the acceptance criteria and RFC 9420 SS12.4.3/SS7.7, then verified via git-stash RED/GREEN (untracked test file is not touched by git stash, so stashing only the three modified src/ files reproduces a genuine pre-fix run): the application-usage-resumption-PSK test throws ValidationError('No prior state passed for resumption') pre-fix and all 133 new assertions pass post-fix. Full suite (46246 assertions -- 46113 baseline + 133 new), lint, and tsc (only the pre-existing key-schedule.ts error) all pass. Also ran the full PSK/resumption regression cluster (external-psk, external-psk-join, psk-private-message, reinit, resumption, psk-proposal-usage-policy, resumption-validation scenario/validation tests) standalone -- 741/741 assertions pass, no regressions."
+    },
+    {
+      "id": "US-028",
+      "title": "Reduce retained key material for forward secrecy (L10, L11, L12)",
+      "description": "As a group member, I want superseded and unusable key material dropped so forward secrecy is preserved.",
+      "acceptanceCriteria": [
+        "src/client-state.ts strips handshake ratchets when snapshotting historical receiver data (old-epoch handshake content is rejected anyway)",
+        "src/secret-tree.ts does not retain ratchet roots for internal (non-leaf) nodes",
+        "Path/node secrets in src/update-path.ts, src/path-secrets.ts, src/private-key-path.ts are zeroized (fill(0)) once superseded",
+        "Existing tests still pass",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": "Found this story's implementation already drafted, uncommitted, in the working tree at session start (src/client-state.ts, src/create-commit.ts, src/path-secrets.ts, src/private-key-path.ts, src/process-messages.ts, src/secret-tree.ts, src/update-path.ts, test/index.ts modified; test/validation/key-material-retention.ts untracked) -- reviewed against every acceptance criterion rather than trusting it, and found + fixed a real regression the draft introduced (see progress.log for full detail): createCommit zeroized pathSecrets before createWelcome read from that same array to build new members' EncryptedGroupSecrets, so any commit that both added a member and required an UpdatePath handed the new joiner a zeroed pathSecret. Moved the zeroization to after createWelcome. Also fixed a TS narrowing regression in process-messages.ts (moving the former-epoch content-type check earlier broke discriminated-union narrowing on result.content.content.applicationData) and tightened the draft test's overly-broad skippable() (it caught CryptoError, which is exactly the error class the pathSecret bug manifested as, silently hiding the regression) to match this codebase's established NotSupportedError/DependencyError-only convention. All three acceptance-criteria mechanisms (historical-receiver-data handshake stripping, secret-tree internal-node non-retention, path/node secret zeroization) verified correct and in place. Full suite (46569 assertions -- 46246 baseline + 323 new), lint, and tsc (only the pre-existing key-schedule.ts error) all pass."
+    },
+    {
+      "id": "US-029",
+      "title": "Restrict external-sender proposal construction by type (L13)",
+      "description": "As an API consumer, I should not be able to build non-conformant external-sender proposals.",
+      "acceptanceCriteria": [
+        "src/external-proposal.ts proposeExternal rejects proposal types not permitted for external senders (no Update, no ExternalInit)",
+        "Add a test that constructing an external Update proposal throws",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": "proposeExternal (src/external-proposal.ts) now validates proposal.proposalType against an allow-list (add, remove, psk, reinit, group_context_extensions) before constructing the message, throwing UsageError for update/external_init/custom types. Updated test/scenario/external-sender-policy.ts to assert the earlier construction-time throw (was asserting a later receiver-side ValidationError via processPublicMessage) and added test/scenario/external-proposal-restricted-types.ts covering Update and ExternalInit."
+    },
+    {
+      "id": "US-030",
+      "title": "Resolve dev-dependency npm audit advisories (L14)",
+      "description": "As a maintainer, I want the test tooling free of known advisories.",
+      "acceptanceCriteria": [
+        "Update test tooling (trim via tap-out/tap-spec) so npm audit reports no high-severity advisories, or document why they are dev-only and acceptable",
+        "Test suite still runs",
+        "Typecheck passes"
+      ],
+      "priority": 30,
+      "passes": true,
+      "notes": "Removed the unused `tap-spec` devDependency from package.json (the source of the L14 finding's `trim`-via-tap-out/tap-spec ReDoS advisories); npm audit now reports 0 vulnerabilities at every severity. tap-spec was never referenced by any npm script or source file -- this project's actual test tooling is the unrelated, scoped @substrate-system/tapout package. Found the package.json edit already made, uncommitted, in the working tree at session start, with node_modules already in sync; verified via repo-wide grep (only doc references remain), npm ls trim/tap-out (both empty), and npm install --dry-run (no unexpected changes) before trusting it. Full suite (46645 assertions, matching the US-029 baseline exactly), lint, and typecheck (only the pre-existing key-schedule.ts error) all pass."
+    }
+  ]
+}

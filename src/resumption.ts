@@ -1,30 +1,30 @@
-import type { ClientState } from './clientState.js'
-import { makePskIndex, createGroup, joinGroup } from './clientState.js'
-import type { CreateCommitResult } from './createCommit.js'
-import { createCommit } from './createCommit.js'
+import type { ClientState } from './client-state.js'
+import { makePskIndex, createGroup, joinGroup } from './client-state.js'
+import type { CreateCommitResult } from './create-commit.js'
+import { createCommit } from './create-commit.js'
 import type { CiphersuiteName, CiphersuiteImpl } from './crypto/ciphersuite.js'
 import { getCiphersuiteFromName } from './crypto/ciphersuite.js'
-import { getCiphersuiteImpl } from './crypto/getCiphersuiteImpl.js'
+import { getCipherSuite } from './crypto/get-ciphersuite-impl.js'
 import { defaultCryptoProvider } from './crypto/implementation/default/provider.js'
 import type { CryptoProvider } from './crypto/provider.js'
 import type { Extension } from './extension.js'
-import type { KeyPackage, PrivateKeyPackage } from './keyPackage.js'
-import { UsageError } from './mlsError.js'
+import type { KeyPackage, PrivateKeyPackage } from './key-package.js'
+import { UsageError } from './mls-error.js'
 import type { ResumptionPSKUsageName, PreSharedKeyID } from './presharedkey.js'
 import type { Proposal, ProposalAdd, ProposalPSK } from './proposal.js'
-import type { ProtocolVersionName } from './protocolVersion.js'
-import type { RatchetTree } from './ratchetTree.js'
+import type { ProtocolVersionName } from './protocol-version.js'
+import type { RatchetTree } from './ratchet-tree.js'
 import type { Welcome } from './welcome.js'
 
 export async function reinitGroup (
-    state: ClientState,
-    groupId: Uint8Array,
-    version: ProtocolVersionName,
-    cipherSuite: CiphersuiteName,
-    extensions: Extension[],
-    cs: CiphersuiteImpl,
-): Promise<CreateCommitResult> {
-    const reinitProposal: Proposal = {
+    state:ClientState,
+    groupId:Uint8Array,
+    version:ProtocolVersionName,
+    cipherSuite:CiphersuiteName,
+    extensions:Extension[],
+    cs:CiphersuiteImpl,
+):Promise<CreateCommitResult> {
+    const reinitProposal:Proposal = {
         proposalType: 'reinit',
         reinit: {
             groupId,
@@ -47,26 +47,26 @@ export async function reinitGroup (
 }
 
 export async function reinitCreateNewGroup (
-    state: ClientState,
-    keyPackage: KeyPackage,
-    privateKeyPackage: PrivateKeyPackage,
-    memberKeyPackages: KeyPackage[],
-    groupId: Uint8Array,
-    cipherSuite: CiphersuiteName,
-    extensions: Extension[],
-    provider: CryptoProvider = defaultCryptoProvider,
-): Promise<CreateCommitResult> {
-    const cs = await getCiphersuiteImpl(getCiphersuiteFromName(cipherSuite), provider)
+    state:ClientState,
+    keyPackage:KeyPackage,
+    privateKeyPackage:PrivateKeyPackage,
+    memberKeyPackages:KeyPackage[],
+    groupId:Uint8Array,
+    cipherSuite:CiphersuiteName,
+    extensions:Extension[],
+    provider:CryptoProvider = defaultCryptoProvider,
+):Promise<CreateCommitResult> {
+    const cs = await getCipherSuite(getCiphersuiteFromName(cipherSuite), provider)
     const newGroup = await createGroup(groupId, keyPackage, privateKeyPackage, extensions, cs)
 
-    const addProposals: Proposal[] = memberKeyPackages.map((kp) => ({
+    const addProposals:Proposal[] = memberKeyPackages.map((kp) => ({
         proposalType: 'add',
         add: { keyPackage: kp },
     }))
 
     const psk = makeResumptionPsk(state, 'reinit', cs)
 
-    const resumptionPsk: Proposal = {
+    const resumptionPsk:Proposal = {
         proposalType: 'psk',
         psk: {
             preSharedKeyId: psk.id,
@@ -86,10 +86,10 @@ export async function reinitCreateNewGroup (
 }
 
 export function makeResumptionPsk (
-    state: ClientState,
-    usage: ResumptionPSKUsageName,
-    cs: CiphersuiteImpl,
-): { id: PreSharedKeyID; secret: Uint8Array } {
+    state:ClientState,
+    usage:ResumptionPSKUsageName,
+    cs:CiphersuiteImpl,
+):{ id:PreSharedKeyID; secret:Uint8Array } {
     const secret = state.keySchedule.resumptionPsk
 
     const pskNonce = cs.rng.randomBytes(cs.kdf.size)
@@ -106,27 +106,27 @@ export function makeResumptionPsk (
 }
 
 export async function branchGroup (
-    state: ClientState,
-    keyPackage: KeyPackage,
-    privateKeyPackage: PrivateKeyPackage,
-    memberKeyPackages: KeyPackage[],
-    newGroupId: Uint8Array,
-    cs: CiphersuiteImpl,
-): Promise<CreateCommitResult> {
+    state:ClientState,
+    keyPackage:KeyPackage,
+    privateKeyPackage:PrivateKeyPackage,
+    memberKeyPackages:KeyPackage[],
+    newGroupId:Uint8Array,
+    cs:CiphersuiteImpl,
+):Promise<CreateCommitResult> {
     const resumptionPsk = makeResumptionPsk(state, 'branch', cs)
 
     const pskSearch = makePskIndex(state, {})
 
     const newGroup = await createGroup(newGroupId, keyPackage, privateKeyPackage, state.groupContext.extensions, cs)
 
-    const addMemberProposals: ProposalAdd[] = memberKeyPackages.map((kp) => ({
+    const addMemberProposals:ProposalAdd[] = memberKeyPackages.map((kp) => ({
         proposalType: 'add',
         add: {
             keyPackage: kp,
         },
     }))
 
-    const branchPskProposal: ProposalPSK = {
+    const branchPskProposal:ProposalPSK = {
         proposalType: 'psk',
         psk: {
             preSharedKeyId: resumptionPsk.id,
@@ -146,30 +146,30 @@ export async function branchGroup (
 }
 
 export async function joinGroupFromBranch (
-    oldState: ClientState,
-    welcome: Welcome,
-    keyPackage: KeyPackage,
-    privateKeyPackage: PrivateKeyPackage,
-    ratchetTree: RatchetTree | undefined,
-    cs: CiphersuiteImpl,
-): Promise<ClientState> {
+    oldState:ClientState,
+    welcome:Welcome,
+    keyPackage:KeyPackage,
+    privateKeyPackage:PrivateKeyPackage,
+    ratchetTree:RatchetTree | undefined,
+    cs:CiphersuiteImpl,
+):Promise<ClientState> {
     const pskSearch = makePskIndex(oldState, {})
 
     return await joinGroup(welcome, keyPackage, privateKeyPackage, pskSearch, cs, ratchetTree, oldState)
 }
 
 export async function joinGroupFromReinit (
-    suspendedState: ClientState,
-    welcome: Welcome,
-    keyPackage: KeyPackage,
-    privateKeyPackage: PrivateKeyPackage,
-    ratchetTree: RatchetTree | undefined,
-    provider: CryptoProvider = defaultCryptoProvider,
-): Promise<ClientState> {
+    suspendedState:ClientState,
+    welcome:Welcome,
+    keyPackage:KeyPackage,
+    privateKeyPackage:PrivateKeyPackage,
+    ratchetTree:RatchetTree | undefined,
+    provider:CryptoProvider = defaultCryptoProvider,
+):Promise<ClientState> {
     const pskSearch = makePskIndex(suspendedState, {})
     if (suspendedState.groupActiveState.kind !== 'suspendedPendingReinit') { throw new UsageError('Cannot reinit because no init proposal found in last commit') }
 
-    const cs = await getCiphersuiteImpl(
+    const cs = await getCipherSuite(
         getCiphersuiteFromName(suspendedState.groupActiveState.reinit.cipherSuite),
         provider,
     )
