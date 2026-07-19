@@ -31,6 +31,7 @@ which means it is usable in the browser.
 - [Example](#example)
   * [Joining the Group](#joining-the-group)
   * [Use with pre-existing keypairs](#use-with-pre-existing-keypairs)
+- [Defaults](#defaults)
 - [Some Terms](#some-terms)
   * [Proposal](#proposal)
   * [Commit](#commit)

@@ -1,6 +1,6 @@
 {
   "name": "@vanishing.page/webcrypto-mls",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "MLS in the browser",
   "type": "module",
   "exports": {
