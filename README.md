@@ -187,8 +187,10 @@ let bobState = await joinGroup(
 
 // 4. createApplicationMessage and processPublicMessage to send
 //    and receive encrypted group messages
-const { newState: aliceAfterSend, privateMessage } =
-    await createApplicationMessage(
+const {
+    newState: aliceAfterSend,
+    privateMessage
+} = await createApplicationMessage(
         aliceState,
         new TextEncoder().encode('hello, bob'),
         cipherSuite,
@@ -217,8 +219,7 @@ to maintain a persistent identity across sessions), you can pass a pre-existing
 Ed25519 `CryptoKeyPair` to `generateKeyPackage` via the `signatureKeyPair`
 option.
 
-The private key **can be non-extractable**, meaning it stays locked
-in the Web Crypto substrate and is never readable.
+The private key **can be non-extractable**, meaning it is never readable.
 
 >
 > [!TIP]
@@ -282,7 +283,7 @@ implementation.
 
 Note that changing the signature algorithm away from `Ed25519` switches
 signing to `@noble/curves` (see `make-signature-impl.ts`), so the
-all-WebCrypto guarantee applies specifically to the defaults.
+*all-WebCrypto* guarantee applies specifically to the defaults.
 
 
 ## Some Terms
