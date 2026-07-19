@@ -89,7 +89,7 @@ State.init = async function (state:ReturnType<typeof State>) {
 
     batch(() => {
         state.ciphersuite.value = cs
-        state.status.value = 'Initialized with the default ciphersuite ' + 
+        state.status.value = 'Initialized with the default ciphersuite ' +
             `(${ciphersuite})`
     })
 }
