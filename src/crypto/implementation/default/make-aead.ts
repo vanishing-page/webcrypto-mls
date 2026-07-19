@@ -6,7 +6,9 @@ import type { AeadAlgorithm, Aead } from '../../aead.js'
 
 const webcrypto = globalThis.crypto
 
-export async function makeAead (aeadAlg:AeadAlgorithm):Promise<[Aead, AeadInterface]> {
+export async function makeAead (
+    aeadAlg:AeadAlgorithm
+):Promise<[Aead, AeadInterface]> {
     switch (aeadAlg) {
         case 'AES128GCM':
             return [
@@ -34,10 +36,13 @@ export async function makeAead (aeadAlg:AeadAlgorithm):Promise<[Aead, AeadInterf
             ]
         case 'CHACHA20POLY1305':
             try {
-                const { Chacha20Poly1305 } =
-                    await import('@hpke/chacha20poly1305')
-                const { chacha20poly1305 } =
-                    await import('@noble/ciphers/chacha.js')
+                const {
+                    Chacha20Poly1305
+                } = await import('@hpke/chacha20poly1305')
+                const {
+                    chacha20poly1305
+                } = await import('@noble/ciphers/chacha.js')
+
                 return [
                     {
                         async encrypt (key, nonce, aad, plaintext) {
