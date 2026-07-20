@@ -73,7 +73,7 @@ webpage with controls for all the mechanics of MLS.
 The core flow:
 
 1. `generateKeyPackage` for each client. 
-   This runs locally on each client's own device, before they know what
+   This runs locally on each client's device, before they know what
    group they'll join.
 2. `createGroup` to start a group, or `joinGroup` to join via a
    [welcome message](#welcome-messages).
