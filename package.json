@@ -62,10 +62,10 @@
     "@noble/hashes": "2.2.0"
   },
   "peerDependencies": {
-    "@hpke/hybridkem-x-wing": "0.6.1",
-    "@hpke/ml-kem": "0.2.1",
-    "@noble/curves": "2.0.1",
-    "@noble/post-quantum": "0.5.2"
+    "@hpke/hybridkem-x-wing": "0.7.0",
+    "@hpke/ml-kem": "0.3.0",
+    "@noble/curves": "2.2.0",
+    "@noble/post-quantum": "0.6.1"
   },
   "peerDependenciesMeta": {
     "@hpke/hybridkem-x-wing": {
@@ -83,10 +83,10 @@
   },
   "devDependencies": {
     "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
-    "@hpke/hybridkem-x-wing": "0.6.1",
-    "@hpke/ml-kem": "0.2.1",
-    "@noble/curves": "2.0.1",
-    "@noble/post-quantum": "0.5.2",
+    "@hpke/hybridkem-x-wing": "0.7.0",
+    "@hpke/ml-kem": "0.3.0",
+    "@noble/curves": "2.2.0",
+    "@noble/post-quantum": "0.6.1",
     "@preact/preset-vite": "^2.10.2",
     "@preact/signals": "^2.3.2",
     "@substrate-system/button": "^0.0.49",
@@ -104,13 +104,13 @@
     "htm": "^3.1.1",
     "lightningcss": "^1.32.0",
     "markdown-toc": "^1.2.0",
-    "nanoid": "^5.1.16",
+    "nanoid": "^6.0.1",
     "newneostandard": "^0.14.1",
     "preact": "^10.27.0",
     "route-event": "^8.1.2",
     "simple-hpke": "^0.2.0",
-    "typescript": "^5.9.2",
-    "vite": "^7.0.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0",
     "wrangler": "^4.114.0"
   },
   "directories": {
