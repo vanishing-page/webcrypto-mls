@@ -10,7 +10,6 @@ import { processPrivateMessage } from '../../src/process-messages.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -25,8 +24,9 @@ import type { CiphersuiteImpl, CiphersuiteName } from '../../src/crypto/ciphersu
 import type { KeyRetentionConfig } from '../../src/key-retention-config.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { defaultClientConfig } from '../../src/client-config.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`Out of order epoch ${cs}`, async (t) => {
         try {
             await epochOutOfOrder(cs as CiphersuiteName, t)
@@ -86,7 +86,7 @@ async function setupTestParticipants (
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -109,7 +109,7 @@ async function setupTestParticipants (
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

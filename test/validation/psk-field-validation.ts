@@ -9,7 +9,6 @@ import { makeResumptionPsk } from '../../src/resumption.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -18,12 +17,13 @@ import type { Proposal, ProposalAdd } from '../../src/proposal.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
 function isSkippableError (error:any):boolean {
     return error?.name === 'NotSupportedError' || error?.name === 'DependencyError'
 }
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`joinGroup allows application-usage resumption PSK without prior state ${cs}`, async (t) => {
         try {
             await applicationUsageAllowed(cs as CiphersuiteName, t)
@@ -78,7 +78,7 @@ async function makeMember (name:string, impl:Awaited<ReturnType<typeof getCipher
         credentialType: 'basic',
         identity: new TextEncoder().encode(name),
     }
-    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime, [], impl)
+    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime(), [], impl)
 }
 
 async function applicationUsageAllowed (cipherSuite:CiphersuiteName, t:any) {

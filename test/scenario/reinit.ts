@@ -18,8 +18,9 @@ import { getRandomElement, testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { UsageError as _UsageError } from '../../src/mls-error.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('Reinit ' + cs, async (t) => {
         try {
             await reinit(t, cs as CiphersuiteName)
@@ -44,7 +45,7 @@ async function reinit (t:any, cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -66,7 +67,7 @@ async function reinit (t:any, cipherSuite:CiphersuiteName) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -131,12 +132,12 @@ async function reinit (t:any, cipherSuite:CiphersuiteName) {
 
     const newImpl = await getCipherSuite(getCiphersuiteFromName(newCiphersuite))
 
-    const bobNewKeyPackage = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime, [], newImpl)
+    const bobNewKeyPackage = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime(), [], newImpl)
 
     const aliceNewKeyPackage = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         newImpl,
     )

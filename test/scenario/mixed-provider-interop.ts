@@ -64,7 +64,7 @@ async function mixedProviderInterop (t:Test) {
     const aKeyPackage = await generateKeyPackage(
         aCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         implA,
         { signatureKeyPair: aNonExtractablePair }
@@ -92,7 +92,7 @@ async function mixedProviderInterop (t:Test) {
     const bKeyPackage = await generateKeyPackage(
         bCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         implB
     )

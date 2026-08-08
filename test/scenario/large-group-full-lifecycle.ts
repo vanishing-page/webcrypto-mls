@@ -6,8 +6,7 @@ import { processPrivateMessage } from '../../src/process-messages.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
 import type { CiphersuiteName, CiphersuiteImpl } from '../../src/crypto/ciphersuite.js'
 import {
-    getCiphersuiteFromName,
-    ciphersuites
+    getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import type { KeyPackage, PrivateKeyPackage } from '../../src/key-package.js'
@@ -17,6 +16,7 @@ import type { ProposalAdd, ProposalRemove } from '../../src/proposal.js'
 import { shuffledIndices, testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { sampleCiphersuites } from '../helpers/suite-filter.js'
 
 // Browser-compatible randomInt function
 function randomInt (max:number):number {
@@ -25,7 +25,7 @@ function randomInt (max:number):number {
     return array[0] % max
 }
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of sampleCiphersuites()) {
     test(`Large Group, Full Lifecycle ${cs}`, async (t) => {
         try {
             await largeGroupFullLifecycle(cs as CiphersuiteName, 5, 8, t)
@@ -58,7 +58,7 @@ async function largeGroupFullLifecycle (cipherSuite:CiphersuiteName, initialSize
     const creatorKP = await generateKeyPackage(
         creatorCred,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -173,7 +173,7 @@ async function addMember (memberStates:MemberState[], index:number, impl:Ciphers
     const newKP = await generateKeyPackage(
         newCred,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

@@ -4,7 +4,6 @@ import { createCommit } from '../../src/create-commit.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -14,8 +13,9 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultLifetimeConfig } from '../../src/lifetime-config.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { ValidationError } from '../../src/mls-error.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('reject over-long KeyPackage lifetime on commit ' + cs, async (t) => {
         try {
             await rejectsOverLongLifetime(t, cs as CiphersuiteName)
@@ -40,7 +40,7 @@ async function rejectsOverLongLifetime (t:any, cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

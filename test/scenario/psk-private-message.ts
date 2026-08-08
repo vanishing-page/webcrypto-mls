@@ -7,7 +7,6 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -18,8 +17,9 @@ import { checkHpkeKeysMatch } from '../crypto/key-match.js'
 import { testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`PSK commit via processMessage (PrivateMessage) ${cs}`, async (t) => {
         try {
             await pskViaProcessMessage(cs as CiphersuiteName, t)
@@ -44,7 +44,7 @@ async function pskViaProcessMessage (cipherSuite:CiphersuiteName, t:any) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -66,7 +66,7 @@ async function pskViaProcessMessage (cipherSuite:CiphersuiteName, t:any) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

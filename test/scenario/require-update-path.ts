@@ -11,7 +11,6 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -25,8 +24,9 @@ import { createUpdatePath } from '../../src/update-path.js'
 import { toLeafIndex } from '../../src/treemath.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('Single-remove commit requires UpdatePath ' + cs, async (t) => {
         try {
             await singleRemoveRequiresPath(t, cs as CiphersuiteName)
@@ -50,7 +50,7 @@ async function singleRemoveRequiresPath (t:any, cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )
@@ -72,7 +72,7 @@ async function singleRemoveRequiresPath (t:any, cipherSuite:CiphersuiteName) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )

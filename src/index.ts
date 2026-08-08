@@ -133,7 +133,7 @@ export {
     defaultCryptoProvider
 } from './crypto/implementation/default/provider.js'
 
-export { bytesToBase64 } from './util/byte-array.js'
+export { bytesToBase64, bytesToBase64url } from './util/byte-array.js'
 
 export {
     decodeMlsMessage,

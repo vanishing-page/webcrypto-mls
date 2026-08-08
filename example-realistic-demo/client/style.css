@@ -1,0 +1,1307 @@
+@import url("@substrate-system/css-normalize");
+
+/* The control styling is the packages', not this demo's. Importing
+   their default sheets is the point rather than a convenience: a
+   re-skin would put the same focus, disabled and hover rules back
+   under different selectors, which is the duplication this replaces.
+   Every control selector is scoped under its own tag, so nothing
+   here restyles a bare `button` or `input`. check-box is the one
+   exception: its sheet also sets --primary-accent on :root. Nothing
+   in this demo reads that name, so it collides with nothing today.
+   Keeping the palette import last is what would settle it if a later
+   _variables.css ever did define it. */
+@import url("@substrate-system/button/css");
+@import url("@substrate-system/check-box/css");
+@import url("@substrate-system/input/css");
+
+/* The palette is copied from `example/style.css`, deliberately, rather
+   than imported. Importing that sheet would pull the other demos' whole
+   ruleset into this separate application and tie the two appearances
+   together; copying the variable block keeps one palette without that
+   coupling. Do not edit `example/style.css` from here. */
+@import url("./_variables.css");
+
+/* ---------------------------------------------------------------- *
+ * The page is the log.
+ *
+ * The subject of this demo is an append-only ledger: numbered entries,
+ * appended in an order the server chooses, some of which this client
+ * can read and some of which it cannot. So the page is set as a ruled
+ * document rather than a stack of cards: sections divided by hairlines,
+ * and a gutter down the left of the log holding its sequence numbers --
+ * the one place a number answers where in the document you are.
+ *
+ * Every view is two columns where there is width for two, and the page
+ * owns that split rather than any one view, divided by a rule that runs
+ * down the page. Before there is a room, the left track is the form and
+ * the right is what to read while filling it in. In a room the split
+ * turns: everything written stands to the left, at the same width, and
+ * the right track is the log and nothing else. The persistence control
+ * and the explainer join those tracks rather than sitting under both.
+ * See "The page's two columns".
+ *
+ * Consequences worth knowing before editing. There are no cards, no
+ * shadows and no corner radii; separation is done with hairlines, and
+ * `--radius` is 0 on purpose. Monospace means the value was produced
+ * by a machine -- a room id, an epoch, a sequence number, a database
+ * name -- and is never used to make prose look technical. Disclosures
+ * are ruled off but never shrunk: nothing here is small print, because
+ * the caveats are the argument.
+ * ---------------------------------------------------------------- */
+
+html {
+    -webkit-text-size-adjust: 100%;
+}
+
+body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-size: 1.125rem;
+    line-height: var(--leading-body);
+    margin: 0;
+    padding: 0;
+}
+
+/* The track sizes are stated here rather than in the queries below,
+   because `grid-template-columns` is inert until something makes this a
+   grid. That leaves each query with one job: saying at what width its
+   view has room for two columns. */
+.page {
+    column-gap: 0;
+    grid-template-columns: 26rem minmax(0, 1fr);
+    margin: 0 auto;
+    max-width: 90vw;
+    padding: 0 2rem 6rem;
+}
+
+/* ---------------------------------------------------------------- *
+ * Blocks
+ *
+ * A block names itself with a heading and then says the thing under it,
+ * in reading order, at one measure. Sections are told apart by the
+ * hairline above them, not by indentation. A block never lays anything
+ * out beside anything else: where the room stands two blocks side by
+ * side, the column does that, and the blocks inside it are unchanged.
+ * ---------------------------------------------------------------- */
+
+/* `.instructions` is the shared how-to card, which arrives from
+   `example-shared` with markup this application cannot change. It
+   happens to have exactly a block's shape -- one heading, then content
+   -- so it is given the block's layout here rather than being wrapped. */
+.block, .instructions {
+    margin: 2rem 0;
+    max-width: var(--measure);
+    padding-top: 1.5rem;
+
+    &:first-child {
+        border-top: 0;
+        margin-top: 0;
+        padding-top: 0;
+    }
+
+    /* The label register, sized and tracked like every other label on
+       the page rather than scaled as a title: the h1 is the only thing
+       here set at heading size.
+
+       The normalize sheet sets `hyphens: auto` and `overflow-wrap:
+       break-word` on everything, which is right for prose and wrong
+       here: a label that runs long should wrap between its words,
+       never break one. */
+    & > h2,
+    & > h3 {
+        font-family: var(--font-display);
+        font-size: 1rem;
+        font-weight: 700;
+        hyphens: none;
+        letter-spacing: var(--tracking-label);
+        line-height: var(--leading-snug);
+        margin: 0 0 0.5rem;
+        overflow-wrap: normal;
+        text-transform: uppercase;
+    }
+
+    & h2 {
+        border-bottom: 2px solid;
+    }
+}
+
+.block {
+    &.chat {
+        background-color: white;
+    }
+}
+
+h1 {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: var(--tracking-tight);
+    line-height: var(--leading-tight);
+    margin: 0 0 1.5rem;
+    text-wrap: balance;
+}
+
+/* Stated rather than inherited. The normalize sheet gives `p` a
+   line-height of its own -- `calc(1em + 0.2rem)`, about 1.18 -- which
+   silently wins over the body's, and 1.18 is far too tight for a serif
+   at this size. */
+p,
+li {
+    line-height: var(--leading-body);
+}
+
+p {
+    margin: 0 0 1rem;
+    max-width: 68ch;
+}
+
+a {
+    color: var(--color-accent-ink);
+    overflow-wrap: anywhere;
+    text-decoration-thickness: from-font;
+    text-underline-offset: 0.15em;
+
+    &:hover {
+        text-decoration-thickness: 2px;
+    }
+}
+
+/* `hyphens: none`, here and on every machine value below, because the
+   normalize sheet turns automatic hyphenation on for the whole page.
+   That is right for prose and wrong for an identifier: a soft hyphen
+   inside `mls-realistic-demo` renders a database name that is not the
+   one you would have to type. Breaking at the hyphens it really has is
+   still allowed. */
+code {
+    background-color: var(--color-sunken);
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    hyphens: none;
+    padding: 0 0.2em;
+}
+
+/* Machine values, wherever they appear: produced by something other
+   than a person, and set so they cannot be mistaken for prose. */
+.epoch,
+.live li,
+.own-identity,
+.own-leaf,
+.seq,
+.seq-pending,
+.presence,
+.status {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+    hyphens: none;
+}
+
+/* The machine-value treatment goes on the control the component renders
+   rather than on the element this demo writes. The class is copied onto
+   the host, the wrapper and the inner input alike, so an unscoped
+   `.room-url` would match three elements; this puts the declarations on
+   the one that displays the URL text. */
+substrate-input.room-url input {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+    hyphens: none;
+}
+
+/* ---------------------------------------------------------------- *
+ * Nameplate
+ * ---------------------------------------------------------------- */
+
+.masthead {
+    align-items: baseline;
+    border-bottom: 2px solid var(--color-ink);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding: 2rem 0 0.5rem;
+
+    & .wordmark {
+        font-family: var(--font-display);
+        font-size: 1.375rem;
+        font-weight: 700;
+        letter-spacing: var(--tracking-label);
+        margin: 0;
+        text-transform: uppercase;
+
+        & a {
+            text-decoration: none;
+            color: var(--color-ink);
+        }
+    }
+
+    & .masthead-sub {
+        color: var(--color-ink-muted);
+        font-family: var(--font-mono);
+        font-size: 1rem;
+        letter-spacing: var(--tracking-label);
+        margin: 0;
+        text-transform: uppercase;
+    }
+}
+
+/* The one line that says what just happened. Reserved whether or not
+   there is anything in it, so arriving text never shifts the page. */
+.status {
+    color: var(--color-ink-muted);
+    margin-top: 1.5rem;
+    min-height: 1.5rem;
+}
+
+/* A passage set apart from the prose around it by rules above and
+   below, the way a printed document sets an extract. Used where a
+   single paragraph has to be read before anything under it. */
+.gone-disclosure {
+    border-bottom: var(--hairline) solid var(--color-ink);
+    border-top: var(--hairline) solid var(--color-ink);
+    font-size: 1.375rem;
+    line-height: var(--leading-snug);
+    margin-bottom: 1.5rem;
+    padding: 1.5rem 0;
+}
+
+/* Ruled off, never shrunk. These are the caveats, and this page's
+   whole claim to being worth trusting is that it states them at the
+   same size as everything else. */
+.presence-disclosure,
+.removal-disclosure,
+.identity-disclosure,
+.name-disclosure,
+.persist-disclosure,
+.history-disclosure,
+.reset-disclosure,
+.waiting .disclosure {
+    line-height: var(--leading-loose);
+    padding-top: 1rem;
+}
+
+/* ---------------------------------------------------------------- *
+ * The invitation
+ * ---------------------------------------------------------------- */
+
+.room-link,
+.copy-value {
+    align-items: flex-end;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0 0 1.5rem;
+
+    & substrate-input.room-url {
+        flex: 1 1 20rem;
+        min-width: 0;
+    }
+
+    & .copied {
+        align-self: center;
+        color: var(--color-live);
+        font-family: var(--font-display);
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: var(--tracking-label);
+        text-transform: uppercase;
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * Setup
+ * ---------------------------------------------------------------- */
+
+.setup {
+    & .setup-form {
+        align-items: flex-end;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+
+        & substrate-input {
+            flex: 1 1 16rem;
+            min-width: 0;
+        }
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * The page's two columns
+ *
+ * The left track is what you do and what this client is: the form, the
+ * invitation, the socket, the group, who is connected, and the
+ * persistence control. The right track is what there is to read -- the
+ * trust disclosure and the how-to -- until there is a room, at which
+ * point the log takes that track whole and everything written moves
+ * left, which is the arrangement the room query states.
+ * The division is a rule, like every other division on this page, and it
+ * is the same rule in both layouts -- across the page when the tracks
+ * are stacked, down the left edge of the right one when they stand side
+ * by side. So the right track's sections carry it either way, and the
+ * queries turn it rather than adding one.
+ *
+ * The columns meet with no gap between the tracks, and the gutter is
+ * padding inside each of them instead. That is what makes the top rules
+ * one continuous line, with the vertical rule meeting them square --
+ * ruled paper, not two panels with a gap.
+ *
+ * Placement is by explicit row rather than by flow. There are four:
+ * the masthead, the room's title, the view, and the standing sections.
+ * A view without a title of its own leaves row 2 empty, which costs
+ * nothing because no row gap is set. Auto-placement would not do: it
+ * packs sparsely, so the explainer would land in the row after the
+ * persistence control rather than beside it.
+ *
+ * Every rule in this first group is inert until a query below makes
+ * `.page` a grid, so the placement is stated once for both layouts.
+ * ---------------------------------------------------------------- */
+
+/* The room's own two parts are items in the page's grid rather than in
+   a grid of their own, which is what lines them up with the two
+   standing sections underneath. Stacked, `contents` changes nothing:
+   they were block children of a block either way. */
+.room {
+    display: contents;
+}
+
+.masthead {
+    grid-column: 1 / -1;
+    grid-row: 1;
+}
+
+/* The title is the document's, not either column's. */
+.room > h1 {
+    grid-column: 1 / -1;
+    grid-row: 2;
+}
+
+.setup,
+.waiting,
+.gone,
+.removed,
+.room-meta {
+    grid-column: 1;
+    grid-row: 3;
+}
+
+.persistence {
+    grid-column: 1;
+    grid-row: 4;
+}
+
+/* The log's own height is set here rather than left to its contents,
+   because a chat panel is a window onto a log and not the whole of one:
+   the entries scroll inside it and the composer stays put under them.
+   Stacked, that window is a portion of the viewport -- enough to be a
+   log, not so much that it swallows the page it is one section of. The
+   two-column layout gives it the whole viewport; see below. */
+.room-log {
+    border-top: var(--hairline) solid var(--color-rule);
+    grid-column: 2;
+    grid-row: 3;
+    height: min(75svh, 36rem);
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+}
+
+/* Spanning both content rows, so the explainer starts level with the
+   view beside it instead of below the persistence control. A room is
+   the exception and says so further down: its log already holds row 3,
+   so there the explainer takes row 4 and stands beside the persistence
+   control, which is the arrangement the two columns are named for. */
+.explainer {
+    grid-column: 2;
+    grid-row: 3 / span 2;
+}
+
+/* Wide enough for both columns at their full size, which is what the
+   page's own width is then set to: the rail's track, being a 24rem rail
+   and the 2rem gutter inside it; the 2rem gutter on the other side of
+   the rule; the measure everything on this page is read at; and the
+   page's 2rem padding either side.
+ *
+ * The text views split first. What stands beside them is prose, which
+ * reads perfectly well below the measure, so there is nothing to wait
+ * for. A room waits for 70rem because its right column is the log, and
+ * a log narrower than the measure is a worse log than one further down
+ * the page. The cost is that a page changes width between these two
+ * widths at the moment a room is created. */
+@media (min-width: 60rem) {
+    .page:not(:has(.room)) {
+        display: grid;
+        max-width: calc(26rem + 2rem + var(--measure) + 2rem * 2);
+
+        & .setup,
+        & .waiting,
+        & .gone,
+        & .removed,
+        & .persistence {
+            padding-right: 2rem;
+        }
+
+        /* Nothing above it in the track, so it takes the rule from the
+           masthead like the view opposite does, and drops the heavy
+           division it carries when it is a footer under everything. */
+        & .explainer {
+            border-left: var(--hairline) solid var(--color-rule);
+            border-top: 0;
+            margin-top: 0;
+            padding: 0 0 0 2rem;
+        }
+    }
+}
+
+@media (min-width: 70rem) {
+    /* A room's two tracks are the same width, which the views above are
+       not. Those have a rail on the left because what stands in it is a
+       short form and a few controls. A room's left track is where
+       everything there is to read stands -- the group, who is connected,
+       what the gaps mean, what the server is trusted to do, and how to
+       drive the page -- so it is a column of prose, and a column of
+       prose is not a rail.
+     *
+       The page keeps the width it already had rather than growing to
+       hold two full measures: 34rem a track, being 32rem of content and
+       the 2rem gutter inside it, twice, plus the page's own padding. So
+       the page does not change width at the moment a room is created,
+       and 32rem is a measure either track reads well at. */
+    .page:has(.room) {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+
+        & .room-meta,
+        & .persistence,
+        & .explainer {
+            padding-right: 2rem;
+        }
+
+        & .room-meta {
+            padding-top: 0;
+        }
+
+        /* Both tracks are items in one grid row, so they are the same
+           height whichever holds more -- which is what runs this rule
+           the full depth of the split rather than only as far as the
+           content that is shorter.
+         *
+         * Stuck to the top of the viewport, so the log and the box you
+         * type in stay on screen for the whole of the prose beside them.
+         * `sticky` rather than `fixed` because the panel belongs to its
+         * grid area: it cannot ride up over the masthead, and it stops
+         * when the column beside it runs out.
+         *
+         * The sticky offset and the height are one number stated once,
+         * because they have to agree. A sticky panel is at its natural
+         * place until the page scrolls that place off, so a panel a
+         * whole viewport tall hangs below the fold by however far down
+         * the document it starts -- which would put the composer out of
+         * sight until the first scroll, and the composer is the one
+         * thing here that must never need finding. Pinning it at the
+         * same offset it already sits at makes the two cases identical:
+         * the panel occupies the space below the masthead, before any
+         * scrolling and after it alike, and the strip above it is the
+         * prose column carrying on past.
+         *
+         * The number is the height of what stands above the two columns
+         * -- the masthead and its 3rem, then the page title and its
+         * 1.5rem -- which comes to 11.62rem in the display face this
+         * page asks for first. It is rounded up rather than derived,
+         * because two of those four are font metrics and CSS cannot ask
+         * a grid how tall its earlier rows came out. Rounding up is the
+         * safe direction: too large costs a few pixels of inset, too
+         * small puts the composer back under the fold.
+         *
+         * `svh` rather than `dvh` deliberately: `dvh` changes as a
+         * mobile browser's toolbar comes and goes, which would resize
+         * the panel and move the log under somebody mid-sentence.
+         *
+         * The whole track, not one row of it: the log is the only thing
+         * in this column, so it stays stuck for the length of the
+         * column beside it rather than coming unstuck at the end of the
+         * row the group stands in. Ending at line 6 rather than at `-1`
+         * because no `grid-template-rows` is stated, which leaves the
+         * explicit grid without the row lines `-1` would count back
+         * from. The line number is the explainer's end; a section added
+         * to the left track after it moves both. */
+        & .room-log {
+            --log-top: 9rem;
+
+            align-self: start;
+            border-left: var(--hairline) solid var(--color-rule);
+            grid-row: 3 / 6;
+            height: calc(100svh - var(--log-top));
+            margin-top: 0;
+            padding: 1.5rem 0 1.5rem 2rem;
+            position: sticky;
+            top: var(--log-top);
+        }
+
+        /* Every word of prose in one column. What the server is trusted
+           to do and how to drive the page are read, not operated, so
+           they belong with the group and the caveats rather than
+           opposite them -- which leaves the track beside them holding
+           the log and nothing else.
+         *
+           Under the persistence control, in the order the two already
+           stack when there is one track, and divided by the same heavy
+           rule they carry there. Nothing passes behind the log any more
+           either: a sticky panel is drawn over whatever scrolls under
+           it, and this section used to be what scrolled under it. */
+        & .explainer {
+            border-left: 0;
+            grid-column: 1;
+            grid-row: 5;
+            padding-left: 0;
+        }
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * The room's readout
+ *
+ * Connection and epoch as a strip of labelled machine values, which is
+ * what they are. The two come from different places -- the socket, and
+ * this client's own group -- and neither of them is prose.
+ * ---------------------------------------------------------------- */
+
+/* The label register, shared by the two `dl`s that use it: the
+   Connection/Epoch strip and the "You" block's identity list. Hoisted
+   out of `.readout` so the second one does not restate it. */
+.readout dt,
+.you-identity dt {
+    color: var(--color-ink-muted);
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+}
+
+.readout {
+    border-bottom: var(--hairline) solid var(--color-rule);
+    border-top: var(--hairline) solid var(--color-rule);
+    display: flex;
+    flex-wrap: wrap;
+    margin: 0 0 1.5rem;
+
+    & .readout-item {
+        flex: 0 1 auto;
+        padding: 0.5rem 1rem;
+
+        &:first-child {
+            padding-left: 0;
+        }
+
+        & + .readout-item {
+            border-left: var(--hairline) solid var(--color-rule);
+        }
+    }
+
+    & dd {
+        margin: 0;
+    }
+
+    & .connection {
+        color: var(--color-ink-muted);
+
+        &[data-status="open"] {
+            color: var(--color-live);
+        }
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * Asking to join
+ * ---------------------------------------------------------------- */
+
+/* Nobody has asked yet. A heading with nothing under it says less than
+   no section at all, and the list comes back the moment a request
+   arrives. `:empty` rather than `:not(:has(*))` because
+   `:has()` may not be nested inside `:has()` -- the whole selector is
+   dropped as invalid if it is, silently, and the heading stays. */
+.room .block:has(> .pending:empty) {
+    display: none;
+}
+
+.pending {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+
+    & .request {
+        border: var(--hairline) solid var(--color-rule-strong);
+        margin-bottom: 1rem;
+        padding: 1rem;
+
+        & .requester-name {
+            display: block;
+            font-family: var(--font-display);
+            font-size: 1.375rem;
+            font-weight: 700;
+            letter-spacing: var(--tracking-tight);
+            line-height: var(--leading-snug);
+            overflow-wrap: anywhere;
+        }
+
+        /* What the room's ledger already knows about this identity: a
+           field on the request, so it is set as a label rather than as
+           a sentence offering advice. */
+        & .standing {
+            color: var(--color-ink-muted);
+            display: block;
+            font-family: var(--font-display);
+            font-size: 1rem;
+            letter-spacing: var(--tracking-label);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+        }
+
+        & substrate-button {
+            margin-right: 0.5rem;
+        }
+    }
+
+    /* Re-admitting someone previously removed is the decision worth
+       pausing over, so it is marked, not just worded. A request whose
+       key package is not the asker's own gets the same treatment for
+       the same reason. Both are marked by being enclosed -- a full
+       border and a wash -- rather than by an edge stripe. */
+    & .standing-warning,
+    & .mismatch-warning {
+        background-color: var(--color-flag-wash);
+        border: var(--hairline) solid var(--color-flag);
+        color: var(--color-ink);
+        margin: 0 0 1rem;
+        padding: 0.5rem 0.75rem;
+    }
+
+    /* A request that cannot be approved at all is worth setting apart
+       from one that merely deserves a second thought. */
+    & .request:has(.mismatch-warning) {
+        border-color: var(--color-flag);
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * Membership
+ *
+ * Two different kinds of fact meet in this list and are kept visibly
+ * apart. The name comes from this client's own ratchet tree; the
+ * connected mark comes from the room's roster, which knows nothing
+ * about the group. The mark differs in fill as well as colour, so
+ * colour never carries it alone, and the word is always there too.
+ * ---------------------------------------------------------------- */
+
+.members {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+
+    & .member {
+        align-items: center;
+        border-bottom: var(--hairline) solid var(--color-rule);
+        column-gap: 1rem;
+        display: grid;
+        grid-template-columns: var(--seq) minmax(0, 1fr) auto auto;
+        padding: 0.5rem 0;
+
+        /* Away is hollow, connected is filled. Never crossed out: a
+           member nobody can see right now is still a member. */
+        &::before {
+            border: var(--hairline) solid var(--color-ink-muted);
+            content: "";
+            grid-column: 1;
+            height: 0.65rem;
+            justify-self: end;
+            width: 0.65rem;
+            border-radius: 50%;
+        }
+
+        &[data-connected="true"]::before {
+            background-color: var(--color-live);
+            border-color: var(--color-live);
+        }
+
+        & .member-name {
+            font-family: var(--font-display);
+            font-weight: 700;
+            grid-column: 2;
+            overflow-wrap: anywhere;
+        }
+
+        & .presence {
+            color: var(--color-ink-muted);
+            grid-column: 3;
+            letter-spacing: var(--tracking-label);
+            text-transform: uppercase;
+        }
+
+        &[data-connected="true"] .presence {
+            color: var(--color-live);
+        }
+
+        & .remove {
+            grid-column: 4;
+        }
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * The log
+ *
+ * The sequence number is the point of this treatment. A delivered
+ * message carries the number the room gave it; a message this client
+ * has sent but the room has not numbered back yet carries `--`; and a
+ * run of entries this client cannot read carries hatching where the
+ * numbers would be. Read down the gutter and the gaps in what this
+ * client can see are the gaps in the numbering, which is exactly what
+ * they are.
+ *
+ * The panel around it is a chat panel: the log fills whatever height is
+ * left over once the heading and the composer have taken theirs, and it
+ * scrolls inside that. So the three parts are a flex column all the way
+ * down, and every box in the chain carries `min-height: 0` -- a flex
+ * item's default minimum is its content, which for a log of any length
+ * means it refuses to shrink and pushes the composer off the panel
+ * instead of scrolling.
+ * ---------------------------------------------------------------- */
+
+.room-log {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+
+    & > .chat {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        min-height: 0;
+    }
+}
+
+/* The scrolling window onto the log. Its own top rule is the one the
+   list used to carry: the list moves and this does not, so the rule
+   belongs to the frame.
+ *
+ * Four of these are here to stop the panel from lurching, which is the
+ * whole ask. `overscroll-behavior: contain` stops a flick at either end
+ * of the log from carrying on into the page behind it. `scroll-behavior:
+ * auto` is stated rather than assumed, because the normalize sheet sets
+ * `smooth` on `html` and turning it on here would animate every
+ * correction `stick-to-bottom.js` makes, which is the jank rather than
+ * the cure. `scrollbar-gutter: stable` keeps the measure from jumping a
+ * scrollbar's width the moment the log outgrows one screen. And
+ * `overflow-anchor` is left at its default on purpose: the browser's own
+ * anchoring is what holds a reader's place when a run of placeholders
+ * above them collapses into one row. */
+.log-scroll {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    position: relative;
+    scroll-behavior: auto;
+    scrollbar-gutter: stable;
+
+    &:focus-visible {
+        outline: 2px solid var(--color-accent-ink);
+        outline-offset: -2px;
+    }
+}
+
+/* A room nobody has said anything in yet. Without this the panel is a
+   ruled empty box, which reads as something having failed rather than
+   as nothing having happened. Centred rather than pushed down: there is
+   no conversation for it to be the end of. */
+.log-empty {
+    color: var(--color-ink-muted);
+    margin: auto 0;
+    text-align: center;
+}
+
+/* Which end of the log you are at, said with a rule, because a rule is
+   how every other division on this page is said. Each rail is a
+   zero-height sticky strip at one edge of the scrollport, and its rule
+   appears only while there is something past that edge -- so a log that
+   fits entirely on screen shows neither, and a log you are in the middle
+   of shows both.
+ *
+ * `data-above` and `data-below` are written by `stick-to-bottom.js`,
+ * which says there why they are not scroll-state container queries. */
+.log-edge {
+    /* Zero-height, so it must not be handed a share of the column the
+       way a flex item otherwise would be. */
+    flex: 0 0 auto;
+    height: 0;
+    position: sticky;
+    z-index: 1;
+
+    &::before {
+        background-color: var(--color-rule-strong);
+        content: "";
+        height: 1px;
+        inset-inline: 0;
+        opacity: 0;
+        position: absolute;
+        transition: opacity var(--duration) var(--ease);
+    }
+
+    &[data-edge="top"] {
+        top: 0;
+
+        &::before {
+            top: 0;
+        }
+    }
+
+    &[data-edge="bottom"] {
+        bottom: 0;
+
+        &::before {
+            bottom: 0;
+        }
+    }
+}
+
+.log-scroll[data-above="true"] .log-edge[data-edge="top"]::before {
+    opacity: 1;
+}
+
+.log-scroll[data-below="true"] .log-edge[data-edge="bottom"]::before {
+    opacity: 1;
+}
+
+/* Offered only while the newest entry is out of sight, which is the
+   only time it does anything. Hidden with `visibility` and not with
+   `opacity` alone, so that when it is not offered it is not in the tab
+   order either -- a control you can focus and cannot see is worse than
+   no control. */
+.jump-newest {
+    background-color: var(--color-paper);
+    border: var(--hairline) solid var(--color-ink);
+    bottom: 0.75rem;
+    color: var(--color-ink);
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 700;
+    left: 50%;
+    letter-spacing: var(--tracking-label);
+    opacity: 0;
+    padding: 0.35rem 0.9rem;
+    position: absolute;
+    text-transform: uppercase;
+    transition:
+        opacity var(--duration) var(--ease),
+        visibility var(--duration) var(--ease);
+    translate: -50% 0;
+    visibility: hidden;
+    white-space: nowrap;
+
+    &:hover {
+        background-color: var(--color-accent-wash);
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--color-accent-ink);
+        outline-offset: 2px;
+    }
+}
+
+.log-scroll[data-below="true"] .jump-newest {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* A conversation two lines long sits above the composer, not under the
+   heading with a hole beneath it: the newest thing said is always just
+   above the box you answer it in, whether there are two of them or two
+   hundred. That is `margin-top: auto` and not `justify-content:
+   flex-end`, which draws the same picture by a route that has
+   historically made the top of an overflowing scroller unreachable. */
+.timeline {
+    list-style: none;
+    margin: auto 0 0;
+    padding: 0;
+
+    & .message,
+    & .outbound-message,
+    & .placeholder {
+        border-bottom: var(--hairline) solid var(--color-rule);
+        column-gap: 1rem;
+        display: grid;
+        grid-template-columns: var(--seq) minmax(0, 1fr);
+        padding: 0.5rem 0;
+    }
+
+    & .seq,
+    & .seq-pending {
+        color: var(--color-ink-muted);
+        grid-column: 1;
+        grid-row: 1;
+        text-align: right;
+    }
+
+    & .message-from {
+        font-family: var(--font-display);
+        font-size: 1rem;
+        font-weight: 700;
+        grid-column: 2;
+        letter-spacing: var(--tracking-label);
+        overflow-wrap: anywhere;
+        text-transform: uppercase;
+    }
+
+    & .message-text {
+        grid-column: 2;
+        overflow-wrap: anywhere;
+    }
+
+    /* Yours. Marked by an accent rule down the edge of the row and a
+       wash behind it -- not by a bubble on the other side of the panel.
+       Alignment is the messenger's way of saying this and it would cost
+       the log the thing it is built around: one gutter of sequence
+       numbers, read straight down. So the rows stay where they are and
+       the mark goes beside them.
+     *
+       Absolute rather than a `border-left`, so the rule sits outside the
+       grid and the sequence gutter does not shift by its width on the
+       rows that have one. */
+    & .message[data-own="true"],
+    & .outbound-message {
+        position: relative;
+    }
+
+    & .message[data-own="true"] {
+        background-color: var(--color-accent-wash);
+    }
+
+    /* Sent, but the room has not numbered it back yet. Quieter than a
+       delivered message, never struck through: it is on its way, not
+       lost. The rule says it is yours; the missing wash and the missing
+       number say it has not landed. */
+    & .outbound-message {
+        color: var(--color-ink-muted);
+    }
+
+    /* A placeholder is ordinary forward secrecy, so it is set apart
+       from the messages without being marked as an error. The hatching
+       sits in the gutter, where the numbers would have been. */
+    & .placeholder {
+        align-items: center;
+        background-color: var(--color-surface);
+
+        &::before {
+            align-self: stretch;
+            background-image: repeating-linear-gradient(
+                135deg,
+                var(--color-rule-strong) 0 1px,
+                transparent 1px 6px
+            );
+            content: "";
+            grid-column: 1;
+            min-height: 1.4rem;
+        }
+
+        & .gap-text {
+            color: var(--color-ink-muted);
+            grid-column: 2;
+        }
+    }
+}
+
+/* Under the log and outside its scroll, so it is always where you left
+   it. Divided from the log by the same rule that opens it, which is what
+   makes the panel read as one framed window rather than as a list with a
+   form after it. */
+.composer {
+    align-items: flex-end;
+    border-top: var(--hairline) solid var(--color-rule-strong);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0;
+    padding-top: 1rem;
+
+    /* 12rem rather than 18rem: the panel is narrower than the page was,
+       and a basis wider than the track sends the send control onto its
+       own line at widths where both fit. */
+    & substrate-input.draft {
+        flex: 1 1 12rem;
+        min-width: 0;
+    }
+
+    /* The field's label, kept for the screen reader and taken out of
+       the picture. A label stacked above the box is a form's shape; a
+       composer's is one line you type on, and the placeholder carries
+       the same words for anyone reading it. Scoped to the composer so
+       no other field on the page loses its label. */
+    & .label-content {
+        clip-path: inset(50%);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        white-space: nowrap;
+        width: 1px;
+    }
+}
+
+/* Who is holding a socket open, by the identity the room knows them by
+   -- a signature public key, and nothing the room could turn into a
+   name. */
+ul.live {
+    border-top: var(--hairline) solid var(--color-rule);
+    margin: 0;
+    padding: 0;
+
+    & li {
+        border-bottom: var(--hairline) solid var(--color-rule);
+        overflow-wrap: anywhere;
+        padding: 0.25rem 0;
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * The ends
+ * ---------------------------------------------------------------- */
+
+.removed,
+.gone {
+    & p {
+        color: var(--color-ink-muted);
+    }
+
+    & .gone-disclosure,
+    & .status {
+        color: var(--color-ink);
+    }
+}
+
+.waiting {
+    & .chosen-name {
+        font-family: var(--font-display);
+        font-weight: 700;
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * Standing sections
+ *
+ * The persist control and the explainer stand beside every view rather
+ * than inside one, so both are set off as document-level divisions,
+ * with a heavier rule than a section gets. That is the stacked
+ * arrangement and the one a room keeps. Where the explainer heads the
+ * right column instead, the vertical rule is already doing the
+ * dividing and the heavy one comes off; see "The page's two columns".
+ * ---------------------------------------------------------------- */
+
+.persistence,
+.explainer {
+    padding-top: 1.5rem;
+}
+
+.persistence {
+    /* The toggle's text is a sentence rather than a field label, so it
+       wants the reading face and its own capitalisation. Nothing
+       overrides either any more -- it inherits both from `body` -- so
+       only the outer spacing is left here. */
+    & check-box.persist-toggle {
+        margin-bottom: 1.5rem;
+    }
+
+    /* Unscoped on purpose. The host is `display: inline`, where a
+       vertical margin is inert, so this gap is carried by the inner
+       button that substrate-button copies the class onto. Scoping it
+       to `substrate-button.reset` would silently remove the gap. */
+    & .reset {
+        margin-top: 1rem;
+    }
+}
+
+.storage-persistence {
+    border-top: var(--hairline) solid var(--color-rule);
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+
+    /* One cell, every message in it, so the tallest one sets the
+       height at whatever width the page happens to be. */
+    & .persist-result-slot {
+        display: grid;
+
+        & > * {
+            grid-area: 1 / 1;
+        }
+    }
+
+    & .persist-sizer {
+        margin: 0.5rem 0 0;
+        visibility: hidden;
+    }
+
+    & .persist-result {
+        margin: 0.5rem 0 0;
+
+        &.granted {
+            color: var(--color-live);
+        }
+
+        &.denied {
+            color: var(--color-flag);
+        }
+    }
+}
+
+.explainer {
+    /* Standing outside any block, so it takes the measure by hand. */
+    & .expiry {
+        border-top: var(--hairline) solid var(--color-rule);
+        margin-top: 1.5rem;
+        max-width: var(--measure);
+        padding-top: 1rem;
+    }
+}
+
+/* The shared how-to card, which is not a card here. The steps are
+   numbered by a counter so the numerals can be monospaced and aligned
+   with the log's, like everything else on this page that counts. */
+.instructions {
+    & ol {
+        counter-reset: step;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* A hanging indent rather than a grid. Each step is one flowing
+       sentence -- a bold title, then a dash, then the detail -- and a
+       grid would take the title and the detail for two separate items
+       and drop the detail into the numeral's column. */
+    & li {
+        counter-increment: step;
+        padding: 0.75rem 0 0.75rem calc(var(--seq) + 1rem);
+        position: relative;
+
+        &::before {
+            color: var(--color-ink-muted);
+            content: counter(step, decimal-leading-zero);
+            font-family: var(--font-mono);
+            font-size: 1rem;
+            font-variant-numeric: tabular-nums;
+            left: 0;
+            position: absolute;
+            text-align: right;
+            width: var(--seq);
+        }
+
+        & strong {
+            font-family: var(--font-display);
+            font-weight: 700;
+        }
+    }
+
+    & li + li {
+        border-top: var(--hairline) solid var(--color-rule);
+    }
+}
+
+/* ---------------------------------------------------------------- *
+ * Narrow
+ *
+ * Nothing is unstacked here. The page's two columns are `min-width`
+ * queries that have already stopped applying long before this one
+ * starts, so everything is in one track by the time it does. What is
+ * left is the sequence gutter, which only tightens: it does not
+ * disappear. The
+ * numbers are the point, and losing them would cost the log its
+ * structure.
+ * ---------------------------------------------------------------- */
+
+/* Who this client is. The values are the page's existing registers:
+   the name in display type like a member name, the key and the leaf in
+   the mono machine face they share with the epoch, the role in the
+   muted label case the readout labels use. Nothing here introduces a
+   colour. */
+.you {
+    & .you-identity {
+        margin: 0 0 1rem;
+
+        & .you-item + .you-item {
+            margin-top: 1rem;
+        }
+
+        & dd {
+            margin: 0.25rem 0 0;
+        }
+    }
+
+    & .own-name {
+        font-family: var(--font-display);
+        font-weight: 700;
+    }
+
+    /* 43 characters with no spaces in it. Same treatment as the keys
+       in the list above, which break the same way. */
+    & .own-identity {
+        overflow-wrap: anywhere;
+    }
+
+    & .copy-value {
+        margin: 0.5rem 0 0;
+    }
+
+    & .own-role {
+        color: var(--color-ink-muted);
+        letter-spacing: var(--tracking-label);
+        text-transform: uppercase;
+    }
+}
+
+/* The marker on this client's own row, in both lists. A real element
+   rather than generated content, so it is announced; lighter than the
+   name it sits beside, so it reads as an annotation and not as part of
+   it. Never smaller than 1rem. */
+.own-mark {
+    color: var(--color-ink-muted);
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 400;
+    letter-spacing: var(--tracking-label);
+    margin-left: 0.5rem;
+    text-transform: uppercase;
+}
+
+@media (max-width: 52rem) {
+    :root {
+        --seq: 2.5rem;
+    }
+
+    .page {
+        padding-inline: 1rem;
+    }
+
+    .members .member {
+        grid-template-columns: var(--seq) minmax(0, 1fr) auto;
+        row-gap: 0.5rem;
+
+        & .remove {
+            grid-column: 2 / -1;
+            justify-self: start;
+        }
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

@@ -7,7 +7,15 @@ export default [
             'lib.es5.d.ts',
             'dist/*',
             'public/*',
-            'test/*.js'
+            'test/*.js',
+            'example-realistic-demo/public/*',
+            'example-realistic-demo/dist/*',
+            'example-realistic-demo/worker-configuration.d.ts',
+            // wrangler dev writes a bundled copy of the Worker here.
+            // It is gitignored, but eslint does not read .gitignore, so
+            // without this `npm run lint` fails with hundreds of errors
+            // from generated code as soon as anyone runs the dev server.
+            '**/.wrangler/**'
         ]
     }),
     {
@@ -71,6 +79,14 @@ export default [
                         arrow: 'ignore'
                     }
                 }
+            ],
+            // Union and intersection types are written without spaces
+            // around the operator, matching the tight colon style above.
+            // Only the type operators are exempt -- spacing on every
+            // other infix operator is still enforced.
+            '@stylistic/space-infix-ops': [
+                'error',
+                { ignoreTypes: true }
             ]
         }
     }

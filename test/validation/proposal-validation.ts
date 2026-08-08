@@ -9,7 +9,6 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -30,6 +29,7 @@ import { createCustomCredential } from '../../src/custom-credential.js'
 import type { Extension } from '../../src/extension.js'
 import type { LeafNode } from '../../src/leaf-node.js'
 import { proposeExternal } from '../../src/index.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
 function withAuthService (
     state:ClientState,
@@ -42,7 +42,7 @@ function withAuthService (
 }
 
 // Convert test.concurrent.each to individual tests
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`Proposal Validation - ${cs}`, async (t) => {
         try {
             const cipherSuite = cs as CiphersuiteName
@@ -55,7 +55,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const alice = await generateKeyPackage(
                 aliceCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )
@@ -77,7 +77,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const bob = await generateKeyPackage(
                 bobCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )
@@ -89,7 +89,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const charlie = await generateKeyPackage(
                 charlieCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )
@@ -246,7 +246,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const diana = await generateKeyPackage(
                 dianaCredential,
                 { ...defaultCapabilities(), credentials: ['basic'] },
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl,
             )
@@ -354,7 +354,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const edward = await generateKeyPackage(
                 edwardCredential,
                 { ...defaultCapabilities(), credentials: ['basic'] },
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl,
             )
@@ -393,7 +393,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const frank = await generateKeyPackage(
                 frankCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )
@@ -427,7 +427,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const george = await generateKeyPackage(
                 georgeCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [georgeExtension],
                 impl,
             )
@@ -516,7 +516,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const hannah = await generateKeyPackage(
                 hannahCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )

@@ -5,7 +5,6 @@ import { applyUpdatePath, createUpdatePath } from '../../src/update-path.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -15,13 +14,14 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { toLeafIndex } from '../../src/treemath.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
 // RFC 9420 SS7.6: the HPKEPublicKey values in an UpdatePath's nodes MUST be
 // distinct from every public key already present in the ratchet tree
 // (leaves included, not just parent nodes) AND from each other within the
 // UpdatePath itself. Reusing a key lets an attacker who controls that key
 // decrypt path secrets meant for a different node.
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('applyUpdatePath rejects a path key colliding with an existing ' +
         'leaf key - ' + cs, async (t) => {
         try {
@@ -54,7 +54,7 @@ async function makeMember (name:string, impl:any) {
         credentialType: 'basic',
         identity: new TextEncoder().encode(name),
     }
-    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime, [], impl)
+    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime(), [], impl)
 }
 
 async function rejectsLeafKeyCollision (t:any, cipherSuite:CiphersuiteName) {

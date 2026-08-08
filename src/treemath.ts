@@ -56,6 +56,9 @@ export function leafToNodeIndex (leafIndex:LeafIndex):NodeIndex {
 }
 
 export function nodeToLeafIndex (nodeIndex:NodeIndex):LeafIndex {
+    if (!isLeaf(nodeIndex)) {
+        throw new ValidationError(`node index ${nodeIndex} is not a leaf node`)
+    }
     return toLeafIndex(nodeIndex / 2)
 }
 

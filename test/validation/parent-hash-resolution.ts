@@ -6,7 +6,6 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -19,6 +18,7 @@ import { defaultAuthenticationService } from '../../src/authentication-service.j
 import { CryptoVerificationError } from '../../src/mls-error.js'
 import { treeHashRoot } from '../../src/tree-hash.js'
 import type { RatchetTree } from '../../src/ratchet-tree.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
 // RFC 9420 SS7.9.2: the parent hash of D is valid with respect to P only if,
 // in addition to the hash-chain match, D is in the resolution of C (the
@@ -31,7 +31,7 @@ import type { RatchetTree } from '../../src/ratchet-tree.js'
 // malicious inviter would craft both the tree and its GroupInfo tree_hash
 // together), and the hash chain itself remains untouched, so this only fails
 // the new resolution/unmerged-leaves criterion, not the pre-existing checks.
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('rejects tree that passes hash chain but violates unmerged-leaves ' +
         'resolution criterion (H2) - ' + cs, async (t) => {
         try {
@@ -57,7 +57,7 @@ async function tamperedUnmergedLeaves (t:any, cipherSuite:CiphersuiteName) {
         return generateKeyPackage(
             credential,
             defaultCapabilities(),
-            defaultLifetime,
+            defaultLifetime(),
             [],
             impl,
         )

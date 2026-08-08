@@ -2,29 +2,73 @@ name: Node CI
 
 on: [push]
 
+env:
+  NODE_VERSION: 22.x
+
 jobs:
+  # Build and lint do not need to wait behind the test matrix, and the
+  # test jobs do not need `dist/`: the tests import `src/` directly.
   build:
-
     runs-on: ubuntu-22.04
-    timeout-minutes: 5
-
-    strategy:
-      matrix:
-        node-version: [22.x]
+    timeout-minutes: 10
 
     steps:
     - uses: actions/checkout@v5
-    - name: Use Node.js ${{ matrix.node-version }}
+    - name: Use Node.js ${{ env.NODE_VERSION }}
       uses: actions/setup-node@v5
       with:
-        node-version: ${{ matrix.node-version }}
-    - name: npm install, build
+        node-version: ${{ env.NODE_VERSION }}
+    - name: npm install, build, lint
       run: |
         npm install
         npm run build --if-present
         npm run lint
       env:
         CI: true
+
+  # Nearly all of the running time is scenario and validation tests
+  # fanning out over the nineteen ciphersuites, so the matrix is split
+  # into four cost-balanced shards that together cover every ciphersuite
+  # exactly once. `test/helpers/suite-filter.ts` owns that split, and
+  # `test/suite-filter.ts` asserts the shards stay a partition, so adding
+  # a ciphersuite cannot quietly leave one untested.
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    strategy:
+      # one slow or broken shard should not hide the others
+      fail-fast: false
+      matrix:
+        include:
+          - name: unit
+            script: test:unit
+          - name: suites 1/4
+            script: test:matrix
+            suites: shard:1/4
+          - name: suites 2/4
+            script: test:matrix
+            suites: shard:2/4
+          - name: suites 3/4
+            script: test:matrix
+            suites: shard:3/4
+          - name: suites 4/4
+            script: test:matrix
+            suites: shard:4/4
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Use Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+    - name: npm install
+      run: npm install
+      env:
+        CI: true
     - name: Run tap tests
-      run: |
-        xvfb-run --server-args="-screen 0 1920x1080x24" npm test
+      run: npm run ${{ matrix.script }}
+      env:
+        CI: true
+        MLS_SUITES: ${{ matrix.suites }}

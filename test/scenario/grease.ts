@@ -5,7 +5,6 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -18,8 +17,9 @@ import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { defaultGreaseConfig, greaseExtensions } from '../../src/grease.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import { extensionTypeToNumber } from '../../src/extension.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`Grease ${cs}`, async (t) => {
         try {
             await greaseTest(cs as CiphersuiteName, t)
@@ -46,7 +46,7 @@ async function greaseTest (cipherSuite:CiphersuiteName, t:any) {
         ...defaultCapabilities(),
         extensions: greased.map((n) => extensionTypeToNumber(n.extensionType)),
     }
-    const alice = await generateKeyPackage(aliceCredential, caps, defaultLifetime, greased, impl)
+    const alice = await generateKeyPackage(aliceCredential, caps, defaultLifetime(), greased, impl)
 
     const groupId = new TextEncoder().encode('group1')
 
@@ -65,7 +65,7 @@ async function greaseTest (cipherSuite:CiphersuiteName, t:any) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

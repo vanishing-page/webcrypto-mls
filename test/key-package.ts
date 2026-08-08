@@ -32,7 +32,7 @@ test(
         const { privatePackage } = await generateKeyPackage(
             credential,
             defaultCapabilities(),
-            defaultLifetime,
+            defaultLifetime(),
             [],
             csImpl,
             { signatureKeyPair: pair },
@@ -73,7 +73,7 @@ test(
         const { publicPackage } = await generateKeyPackage(
             credential,
             defaultCapabilities(),
-            defaultLifetime,
+            defaultLifetime(),
             [],
             csImpl,
             { signatureKeyPair: pair },
@@ -115,7 +115,7 @@ test(
             await generateKeyPackage(
                 credential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 csImpl,
                 { signatureKeyPair: pair },

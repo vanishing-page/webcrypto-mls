@@ -5,13 +5,13 @@ import type { Credential } from '../../src/credential.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    getCiphersuiteFromName,
-    ciphersuites
+    getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { ValidationError } from '../../src/mls-error.js'
 import type { RatchetTree } from '../../src/ratchet-tree.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
 function shouldSkip (error:any):boolean {
     return (
@@ -24,7 +24,7 @@ function shouldSkip (error:any):boolean {
     )
 }
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`should accept unmerged_leaves lists that differ across ancestors but each contain the leaf - ${cs}`, async (t) => {
         try {
             const cipherSuite = cs as CiphersuiteName
@@ -40,7 +40,7 @@ for (const cs of Object.keys(ciphersuites)) {
                 versions: ['mls10'],
                 ciphersuites: [cipherSuite],
             }
-            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime, [], impl)
+            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime(), [], impl)
             const leafNode = kp.publicPackage.leafNode
 
             // 4-leaf tree. Leaf index 1 (node 2) is unmerged under both its
@@ -94,7 +94,7 @@ for (const cs of Object.keys(ciphersuites)) {
                 versions: ['mls10'],
                 ciphersuites: [cipherSuite],
             }
-            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime, [], impl)
+            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime(), [], impl)
             const leafNode = kp.publicPackage.leafNode
 
             // 2-leaf tree. The root (node 1) claims leaf index 1 (node 2) is

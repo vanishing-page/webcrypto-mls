@@ -4,15 +4,16 @@ import { createCommit } from '../../src/create-commit.js'
 import { ValidationError } from '../../src/mls-error.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
-import { ciphersuites, getCiphersuiteFromName } from '../../src/crypto/ciphersuite.js'
+import { getCiphersuiteFromName } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { generateKeyPackage } from '../../src/key-package.js'
 import type { Proposal } from '../../src/proposal.js'
 import { toLeafIndex } from '../../src/treemath.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('PreSharedKey proposal with resumption usage branch rejected ' + cs, async (t) => {
         try {
             await resumptionUsageBranchRejected(t, cs as CiphersuiteName)
@@ -48,7 +49,7 @@ async function makeAliceGroup (cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )

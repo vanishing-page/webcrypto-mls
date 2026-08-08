@@ -8,7 +8,6 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteImpl, CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -22,8 +21,9 @@ import type { KeyRetentionConfig } from '../../src/key-retention-config.js'
 import { defaultKeyRetentionConfig } from '../../src/key-retention-config.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { defaultClientConfig } from '../../src/client-config.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`Out of order generation ${cs}`, async (t) => {
         try {
             await generationOutOfOrder(cs as CiphersuiteName, t)
@@ -83,7 +83,7 @@ async function setupTestParticipants (
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -104,7 +104,7 @@ async function setupTestParticipants (
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

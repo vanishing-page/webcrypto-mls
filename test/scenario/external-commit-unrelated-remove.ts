@@ -7,19 +7,18 @@ import {
     exportSecret,
     validateRatchetTree,
     throwIfDefined,
-    nextEpochContext,
+    nextEpochContext
 } from '../../src/client-state.js'
 import {
     createGroupInfoWithExternalPubAndRatchetTree,
-    createCommit,
+    createCommit
 } from '../../src/create-commit.js'
 import { processPublicMessage } from '../../src/process-messages.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteImpl, CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    getCiphersuiteFromName,
-    ciphersuites
+    getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { generateKeyPackage } from '../../src/key-package.js'
@@ -30,13 +29,13 @@ import { defaultCapabilities } from '../../src/default-capabilities.js'
 import type { GroupInfo } from '../../src/group-info.js'
 import {
     ratchetTreeFromExtension,
-    verifyGroupInfoSignature,
+    verifyGroupInfoSignature
 } from '../../src/group-info.js'
 import {
     addLeafNode,
     getCredentialFromLeafIndex,
     getSignaturePublicKeyFromLeafIndex,
-    removeLeafNode,
+    removeLeafNode
 } from '../../src/ratchet-tree.js'
 import { createUpdatePath } from '../../src/update-path.js'
 import { updateLeafKey, toPrivateKeyPath } from '../../src/private-key-path.js'
@@ -52,8 +51,9 @@ import { createSecretTree } from '../../src/secret-tree.js'
 import { protectPublicMessage } from '../../src/message-protection-public.js'
 import { defaultClientConfig } from '../../src/client-config.js'
 import { CryptoVerificationError, UsageError, ValidationError } from '../../src/mls-error.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`External commit Remove targeting unrelated member is rejected ${cs}`, async (t) => {
         try {
             await externalCommitUnrelatedRemoveTest(cs as CiphersuiteName, t)
@@ -203,14 +203,14 @@ async function externalCommitUnrelatedRemoveTest (cipherSuite:CiphersuiteName, t
     const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
 
     const aliceCredential:Credential = { credentialType: 'basic', identity: new TextEncoder().encode('alice') }
-    const alice = await generateKeyPackage(aliceCredential, defaultCapabilities(), defaultLifetime, [], impl)
+    const alice = await generateKeyPackage(aliceCredential, defaultCapabilities(), defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('group1')
 
     let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
 
     const bobCredential:Credential = { credentialType: 'basic', identity: new TextEncoder().encode('bob') }
-    const bob = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime, [], impl)
+    const bob = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime(), [], impl)
 
     const addBobProposal:ProposalAdd = { proposalType: 'add', add: { keyPackage: bob.publicPackage } }
 
@@ -234,7 +234,7 @@ async function externalCommitUnrelatedRemoveTest (cipherSuite:CiphersuiteName, t
     // mallory is an outsider who is not a member of the group, and has no
     // relation to bob's leaf whatsoever.
     const malloryCredential:Credential = { credentialType: 'basic', identity: new TextEncoder().encode('mallory') }
-    const mallory = await generateKeyPackage(malloryCredential, defaultCapabilities(), defaultLifetime, [], impl)
+    const mallory = await generateKeyPackage(malloryCredential, defaultCapabilities(), defaultLifetime(), [], impl)
 
     const groupInfo = await createGroupInfoWithExternalPubAndRatchetTree(aliceGroup, [], impl)
 

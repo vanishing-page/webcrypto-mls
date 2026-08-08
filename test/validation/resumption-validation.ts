@@ -7,7 +7,6 @@ import { joinGroupFromReinit, reinitCreateNewGroup, reinitGroup } from '../../sr
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -17,12 +16,13 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { processMessage } from '../../src/process-messages.js'
 import { acceptAll } from '../../src/incoming-message-action.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
 import type { ProtocolVersionName } from '../../src/protocol-version.js'
 import { ValidationError } from '../../src/mls-error.js'
 
 // Convert test.concurrent.each to individual tests
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`Reinit Validation - ${cs}`, async (t) => {
         try {
             const cipherSuite = cs as CiphersuiteName
@@ -35,7 +35,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const alice = await generateKeyPackage(
                 aliceCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )
@@ -57,7 +57,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const bob = await generateKeyPackage(
                 bobCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )
@@ -110,7 +110,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const bobNewKeyPackage = await generateKeyPackage(
                 bobCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )
@@ -118,7 +118,7 @@ for (const cs of Object.keys(ciphersuites)) {
             const aliceNewKeyPackage = await generateKeyPackage(
                 aliceCredential,
                 defaultCapabilities(),
-                defaultLifetime,
+                defaultLifetime(),
                 [],
                 impl
             )

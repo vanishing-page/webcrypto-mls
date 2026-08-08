@@ -97,6 +97,10 @@ export function makeKeyPackageRef (value:KeyPackage, h:Hash) {
 }
 
 export interface PrivateKeyPackage {
+    /**
+     * Consumed by a successful `joinGroup` (RFC 9420 SS16.8): the same
+     * KeyPackage/init key must not be used to process a second Welcome.
+     */
     initPrivateKey:Uint8Array
     hpkePrivateKey:Uint8Array
     signaturePrivateKey:SignatureSecretKey

@@ -33,7 +33,7 @@ import {
 } from './mls-error.js'
 import { pathSecretsAlongFilteredPath, zeroPathSecrets } from './path-secrets.js'
 import type { PrivateKeyPath } from './private-key-path.js'
-import { mergePrivateKeyPaths, toPrivateKeyPath } from './private-key-path.js'
+import { mergePrivateKeyPaths, pruneBlankedNodes, toPrivateKeyPath } from './private-key-path.js'
 import type { PrivateMessage } from './private-message.js'
 import type { PskIndex } from './psk-index.js'
 import type { PublicMessage } from './public-message.js'
@@ -202,6 +202,14 @@ export async function processPublicMessage (
     )
 
     if (content.content.contentType === 'proposal') {
+        if (content.content.epoch !== state.groupContext.epoch) {
+            throw new ValidationError(
+                content.content.epoch < state.groupContext.epoch ?
+                    'Cannot process proposal, epoch too old' :
+                    'Cannot process proposal, epoch is in the future',
+            )
+        }
+
         const action = onMessage({
             kind: 'proposal',
             proposal: { proposal: content.content.proposal, senderLeafIndex: getSenderLeafNodeIndex(content.content.sender) },
@@ -252,6 +260,11 @@ async function processCommit (
         return { newState: state, actionTaken: action }
     }
 
+    const groupContextWithExtensions =
+        result.additionalResult.kind === 'memberCommit' && result.additionalResult.hasGroupContextExtensionsProposal
+            ? { ...state.groupContext, extensions: result.additionalResult.extensions }
+            : state.groupContext
+
     if (content.content.commit.path !== undefined) {
         const committerLeafIndex =
             senderLeafIndex ??
@@ -263,7 +276,7 @@ async function processCommit (
             await validateLeafNodeUpdateOrCommit(
                 content.content.commit.path.leafNode,
                 committerLeafIndex,
-                state.groupContext,
+                groupContextWithExtensions,
                 result.tree,
                 state.clientConfig.authService,
                 cs.signature,
@@ -283,11 +296,6 @@ async function processCommit (
             actionTaken: action,
         }
     }
-
-    const groupContextWithExtensions =
-        result.additionalResult.kind === 'memberCommit' && result.additionalResult.extensions.length > 0
-            ? { ...state.groupContext, extensions: result.additionalResult.extensions }
-            : state.groupContext
 
     const [pkp, commitSecret, tree] = await applyTreeUpdate(
         content.content.commit.path,
@@ -368,7 +376,7 @@ async function applyTreeUpdate (
     excludeNodes:NodeIndex[],
     kdf:Kdf,
 ):Promise<[PrivateKeyPath, Uint8Array, RatchetTree]> {
-    if (path === undefined) return [state.privatePath, new Uint8Array(kdf.size), tree] as const
+    if (path === undefined) return [pruneBlankedNodes(state.privatePath, tree), new Uint8Array(kdf.size), tree] as const
     if (sender.senderType === 'member') {
         const updatedTree = await applyUpdatePath(tree, toLeafIndex(sender.leafIndex), path, cs.hash)
 
@@ -431,9 +439,12 @@ async function updatePrivateKeyPath (
     // the very same Uint8Array as pathSecrets' final entry
     const commitSecret = await deriveSecret(lastSecret, 'path', cs.kdf)
 
-    const newPkp = mergePrivateKeyPaths(
-        state.privatePath,
-        await toPrivateKeyPath(pathSecrets, state.privatePath.leafIndex, cs),
+    const newPkp = pruneBlankedNodes(
+        mergePrivateKeyPaths(
+            state.privatePath,
+            await toPrivateKeyPath(pathSecrets, state.privatePath.leafIndex, cs),
+        ),
+        tree,
     )
 
     zeroPathSecrets(pathSecrets)

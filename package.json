@@ -33,18 +33,26 @@
   "scripts": {
     "lint": "eslint \"./**/*.{ts,js}\"",
     "test": "npm run test:node",
-    "test:node": "esbuild ./test/index.ts --bundle --platform=node --format=cjs --loader:.json=json --keep-names --outfile=.test-bundle.cjs && node .test-bundle.cjs && rm .test-bundle.cjs",
+    "test:node": "node scripts/run-tests.mjs all",
+    "test:unit": "node scripts/run-tests.mjs unit",
+    "test:matrix": "node scripts/run-tests.mjs matrix",
+    "test:fast": "node scripts/run-tests.mjs all fast",
     "test:browser": "node build-test.js | tapout --timeout 300000",
     "build-cjs": "esbuild src/*.ts --format=cjs --keep-names --tsconfig=tsconfig.build.json --outdir=./dist --out-extension:.js=.cjs --sourcemap",
     "build-cjs:min": "esbuild src/*.ts --format=cjs --minify --keep-names --tsconfig=tsconfig.build.json --outdir=./dist --out-extension:.js=.min.cjs --sourcemap",
     "build-esm": "esbuild src/*.ts --format=esm --metafile=dist/meta.json --keep-names --tsconfig=tsconfig.build.json --outdir=./dist --sourcemap && tsc --emitDeclarationOnly --project tsconfig.build.json --outDir dist",
     "build-esm:min": "esbuild ./src/*.ts --format=esm --keep-names --bundle --tsconfig=tsconfig.build.json --minify --out-extension:.js=.min.js --outdir=./dist --sourcemap",
     "build-types-cjs": "node scripts/cts.mjs",
-    "build-example": "mkdir -p ./public && rm -rf ./public/* && vite --mode staging --base=\"/webcrypto-mls\" build",
-    "build-docs": "typedoc ./src/index.ts",
+    "build-example": "mkdir -p ./public && rm -rf ./public/* && vite --mode staging --base=\"/webcrypto-mls\" build && mkdir -p ./public/persistence && cp ./public/index.html ./public/persistence/index.html && mkdir -p ./public/multi-device && cp ./public/index.html ./public/multi-device/index.html",
+    "types:realistic": "wrangler types example-realistic-demo/worker-configuration.d.ts -c example-realistic-demo/wrangler.jsonc",
+    "build:realistic": "vite build -c example-realistic-demo/vite.config.js",
+    "dev:realistic": "vite -c example-realistic-demo/vite.config.js",
+    "worker:realistic": "wrangler dev -c example-realistic-demo/wrangler.jsonc",
+    "deploy:realistic": "npm run build:realistic && wrangler deploy -c example-realistic-demo/wrangler.jsonc",
+    "start:realistic": "mkdir -p example-realistic-demo/public && concurrently -k -n worker,client -c blue,green \"npm run worker:realistic\" \"npm run dev:realistic\"",
     "build": "mkdir -p ./dist && rm -rf ./dist/* && npm run build-cjs && npm run build-esm && npm run build-types-cjs && npm run build-esm:min && npm run build-cjs:min",
     "start": "vite",
-    "toc": "markdown-toc --maxdepth 3 -i README.md",
+    "toc": "markdown-toc --maxdepth 4 -i README.md",
     "preversion": "npm run lint",
     "version": "npm run toc && auto-changelog -p --template keepachangelog --breaking-pattern 'BREAKING CHANGE:' && git add CHANGELOG.md README.md",
     "postversion": "git push --follow-tags && npm publish",
@@ -56,6 +64,26 @@
     "@noble/ciphers": "2.2.0",
     "@noble/hashes": "2.2.0"
   },
+  "peerDependencies": {
+    "@hpke/hybridkem-x-wing": "0.6.1",
+    "@hpke/ml-kem": "0.2.1",
+    "@noble/curves": "2.0.1",
+    "@noble/post-quantum": "0.5.2"
+  },
+  "peerDependenciesMeta": {
+    "@hpke/hybridkem-x-wing": {
+      "optional": true
+    },
+    "@hpke/ml-kem": {
+      "optional": true
+    },
+    "@noble/curves": {
+      "optional": true
+    },
+    "@noble/post-quantum": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
     "@hpke/hybridkem-x-wing": "0.6.1",
@@ -64,21 +92,29 @@
     "@noble/post-quantum": "0.5.2",
     "@preact/preset-vite": "^2.10.2",
     "@preact/signals": "^2.3.2",
+    "@substrate-system/button": "^0.0.49",
+    "@substrate-system/check-box": "^0.0.19",
+    "@substrate-system/css-normalize": "^0.0.15",
     "@substrate-system/debug": "^0.9.67",
+    "@substrate-system/input": "^0.0.27",
     "@substrate-system/tapout": "^0.0.40",
     "@substrate-system/tapzero": "^0.10.16",
     "auto-changelog": "^2.4.0",
     "browserslist": "^4.28.6",
+    "concurrently": "^10.0.4",
     "esbuild": "^0.28.1",
     "eslint": "^10.7.0",
     "htm": "^3.1.1",
     "lightningcss": "^1.32.0",
     "markdown-toc": "^1.2.0",
+    "nanoid": "^5.1.16",
     "newneostandard": "^0.14.1",
     "preact": "^10.27.0",
-    "typedoc": "^0.28.9",
+    "route-event": "^8.1.2",
+    "simple-hpke": "^0.2.0",
     "typescript": "^5.9.2",
-    "vite": "^7.0.6"
+    "vite": "^7.0.6",
+    "wrangler": "^4.114.0"
   },
   "directories": {
     "example": "example",

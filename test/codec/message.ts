@@ -81,6 +81,29 @@ test('MLSMessage roundtrip welcome', (t) => {
     }, 'should roundtrip welcome')
 })
 
+test('decodeMlsMessage rejects trailing bytes after a complete message', (t) => {
+    const encoded = encodeMlsMessage({
+        version: 'mls10',
+        wireformat: 'mls_welcome',
+        welcome: {
+            cipherSuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+            secrets: [],
+            encryptedGroupInfo: new Uint8Array([1]),
+        },
+    })
+    const withGarbage = new Uint8Array([...encoded, 0xff, 0xff])
+    t.equal(
+        decodeMlsMessage(withGarbage, 0),
+        undefined,
+        'should reject input with trailing garbage bytes',
+    )
+    t.notEqual(
+        decodeMlsMessage(encoded, 0),
+        undefined,
+        'should still decode the exact-length message',
+    )
+})
+
 test('MLSMessage roundtrip group info message', (t) => {
     roundtrip(t, {
         version: 'mls10',

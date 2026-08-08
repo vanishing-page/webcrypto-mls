@@ -5,8 +5,7 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    getCiphersuiteFromName,
-    ciphersuites
+    getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { generateKeyPackage } from '../../src/key-package.js'
@@ -16,8 +15,9 @@ import { defaultCapabilities } from '../../src/default-capabilities.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import type { Extension, ExtensionType } from '../../src/extension.js'
 import { ValidationError } from '../../src/mls-error.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`Custom Extensions ${cs}`, async (t) => {
         try {
             await customExtensionTest(cs as CiphersuiteName, t)
@@ -49,7 +49,7 @@ async function customExtensionTest (cipherSuite:CiphersuiteName, t:any) {
         credentialType: 'basic',
         identity: new TextEncoder().encode('alice')
     }
-    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime, [], impl)
+    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('group1')
 
@@ -66,7 +66,7 @@ async function customExtensionTest (cipherSuite:CiphersuiteName, t:any) {
         credentialType: 'basic',
         identity: new TextEncoder().encode('bob')
     }
-    const bob = await generateKeyPackage(bobCredential, capabilities, defaultLifetime, [], impl)
+    const bob = await generateKeyPackage(bobCredential, capabilities, defaultLifetime(), [], impl)
 
     const addBobProposal:ProposalAdd = {
         proposalType: 'add',
@@ -110,7 +110,7 @@ async function customExtensionTest (cipherSuite:CiphersuiteName, t:any) {
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

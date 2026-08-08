@@ -12,8 +12,7 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    getCiphersuiteFromName,
-    ciphersuites
+    getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { generateKeyPackage } from '../../src/key-package.js'
@@ -25,8 +24,9 @@ import type { ExternalSender } from '../../src/external-sender.js'
 import { encodeExternalSenders } from '../../src/external-sender.js'
 import type { Extension } from '../../src/extension.js'
 import { proposeExternal } from '../../src/external-proposal.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`External Proposal ${cs}`, async (t) => {
         try {
             await externalProposalTest(cs as CiphersuiteName, t)
@@ -51,7 +51,7 @@ async function externalProposalTest (cipherSuite:CiphersuiteName, t:any) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -63,7 +63,7 @@ async function externalProposalTest (cipherSuite:CiphersuiteName, t:any) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -75,7 +75,7 @@ async function externalProposalTest (cipherSuite:CiphersuiteName, t:any) {
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

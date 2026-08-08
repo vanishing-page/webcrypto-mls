@@ -24,6 +24,10 @@
   },
   "include": [
     "example",
+    "example-shared",
+    "example-realistic-demo/client",
+    "example-realistic-demo/protocol.ts",
+    "example-realistic-demo/room-logic.ts",
     "src/**/*",
     "test",
     "lib.es5.d.ts"

@@ -5,8 +5,7 @@ import type { Credential } from '../../src/credential.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    getCiphersuiteFromName,
-    ciphersuites
+    getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { defaultLifetime } from '../../src/lifetime.js'
@@ -15,9 +14,10 @@ import type { RatchetTree } from '../../src/ratchet-tree.js'
 import type { GroupContext } from '../../src/group-context.js'
 import { defaultLifetimeConfig } from '../../src/lifetime-config.js'
 import { defaultAuthenticationService } from '../../src/authentication-service.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
 // Convert test.concurrent.each to individual tests
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test(`should reject structurally unsound ratchet tree - ${cs}`, async (t) => {
         try {
             const cipherSuite = cs as CiphersuiteName
@@ -33,7 +33,7 @@ for (const cs of Object.keys(ciphersuites)) {
                 versions: ['mls10'],
                 ciphersuites: [cipherSuite],
             }
-            const alice = await generateKeyPackage(aliceCredential, aliceCapabilities, defaultLifetime, [], impl)
+            const alice = await generateKeyPackage(aliceCredential, aliceCapabilities, defaultLifetime(), [], impl)
 
             const validLeafNode = alice.publicPackage.leafNode
             // Make the first node a parent node, which is invalid for a leaf position

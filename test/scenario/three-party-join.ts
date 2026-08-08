@@ -6,8 +6,7 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    getCiphersuiteFromName,
-    ciphersuites
+    getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { generateKeyPackage } from '../../src/key-package.js'
@@ -16,8 +15,9 @@ import { checkHpkeKeysMatch } from '../crypto/key-match.js'
 import { testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('3-party join ' + cs, async (t) => {
         try {
             await threePartyJoin(t, cs as CiphersuiteName)
@@ -42,7 +42,7 @@ async function threePartyJoin (t:any, cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -64,7 +64,7 @@ async function threePartyJoin (t:any, cipherSuite:CiphersuiteName) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -76,7 +76,7 @@ async function threePartyJoin (t:any, cipherSuite:CiphersuiteName) {
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

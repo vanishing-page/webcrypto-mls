@@ -6,7 +6,6 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -22,8 +21,9 @@ import { defaultCapabilities } from '../../src/default-capabilities.js'
 import type { WireformatName } from '../../src/wireformat.js'
 import { processMessage } from '../../src/process-messages.js'
 import { acceptAll } from '../../src/incoming-message-action.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('Leave Proposal ' + cs, async (t) => {
         try {
             await leaveProposal(t, cs as CiphersuiteName, true)
@@ -49,7 +49,7 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -72,7 +72,7 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -84,7 +84,7 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

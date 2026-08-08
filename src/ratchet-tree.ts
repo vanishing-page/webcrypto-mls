@@ -313,11 +313,11 @@ export function removeLeaves (tree:RatchetTree, leafIndices:LeafIndex[]) {
 
 export function traverseToRoot<T> (
     tree:RatchetTree,
-    leafIndex:LeafIndex,
+    startIndex:NodeIndex,
     f:(nodeIndex:NodeIndex, node:ParentNode) => T | undefined,
 ):[T, NodeIndex] | undefined {
     const rootIndex = root(leafWidth(tree.length))
-    let currentIndex = leafToNodeIndex(leafIndex)
+    let currentIndex = startIndex
     while (currentIndex !== rootIndex) {
         currentIndex = parent(currentIndex, leafWidth(tree.length))
         const currentNode = tree[currentIndex]
@@ -335,7 +335,7 @@ export function traverseToRoot<T> (
 }
 export function findFirstNonBlankAncestor (tree:RatchetTree, nodeIndex:NodeIndex):NodeIndex {
     return (
-        traverseToRoot(tree, nodeToLeafIndex(nodeIndex), (nodeIndex:NodeIndex, _node:ParentNode) => nodeIndex)?.[0] ??
+        traverseToRoot(tree, nodeIndex, (nodeIndex:NodeIndex, _node:ParentNode) => nodeIndex)?.[0] ??
     root(leafWidth(tree.length))
     )
 }

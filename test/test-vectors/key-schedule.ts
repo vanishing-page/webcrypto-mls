@@ -69,59 +69,61 @@ async function testKeySchedule (
     cipherSuite:CiphersuiteId,
     impl:CiphersuiteImpl,
 ) {
-    await epochs.reduce(
-        async (prevInitSecret, epoch, index) => {
-            const initSecret = await prevInitSecret
+    await epochs.reduce<Promise<Uint8Array>>(async (
+        prevInitSecret,
+        epoch,
+        index
+    ) => {
+        const initSecret = await prevInitSecret
 
-            const gc:GroupContext = {
-                version: 'mls10',
-                cipherSuite: getCiphersuiteNameFromId(cipherSuite),
-                groupId: hexToBytes(groupId),
-                epoch: BigInt(index),
-                treeHash: hexToBytes(epoch.tree_hash),
-                confirmedTranscriptHash: hexToBytes(epoch.confirmed_transcript_hash),
-                extensions: [],
-            }
+        const gc:GroupContext = {
+            version: 'mls10',
+            cipherSuite: getCiphersuiteNameFromId(cipherSuite),
+            groupId: hexToBytes(groupId),
+            epoch: BigInt(index),
+            treeHash: hexToBytes(epoch.tree_hash),
+            confirmedTranscriptHash: hexToBytes(epoch.confirmed_transcript_hash),
+            extensions: [],
+        }
 
-            // Verify that group context matches the provided group_context value
-            t.deepEqual(encodeGroupContext(gc), hexToBytes(epoch.group_context), 'group context should match expected')
+        // Verify that group context matches the provided group_context value
+        t.deepEqual(encodeGroupContext(gc), hexToBytes(epoch.group_context), 'group context should match expected')
 
-            const { keySchedule, joinerSecret, welcomeSecret } = await initializeEpoch(
-                initSecret,
-                hexToBytes(epoch.commit_secret),
-                gc,
-                hexToBytes(epoch.psk_secret),
-                impl.kdf,
-            )
+        const { keySchedule, joinerSecret, welcomeSecret } = await initializeEpoch(
+            initSecret,
+            hexToBytes(epoch.commit_secret),
+            gc,
+            hexToBytes(epoch.psk_secret),
+            impl.kdf,
+        )
 
-            t.deepEqual(joinerSecret, hexToBytes(epoch.joiner_secret), 'joiner secret should match expected')
-            t.deepEqual(welcomeSecret, hexToBytes(epoch.welcome_secret), 'welcome secret should match expected')
-            t.deepEqual(keySchedule.initSecret, hexToBytes(epoch.init_secret), 'init secret should match expected')
-            t.deepEqual(keySchedule.senderDataSecret, hexToBytes(epoch.sender_data_secret), 'sender data secret should match expected')
-            t.deepEqual(keySchedule.encryptionSecret, hexToBytes(epoch.encryption_secret), 'encryption secret should match expected')
-            t.deepEqual(keySchedule.exporterSecret, hexToBytes(epoch.exporter_secret), 'exporter secret should match expected')
-            t.deepEqual(keySchedule.externalSecret, hexToBytes(epoch.external_secret), 'external secret should match expected')
-            t.deepEqual(keySchedule.confirmationKey, hexToBytes(epoch.confirmation_key), 'confirmation key should match expected')
-            t.deepEqual(keySchedule.membershipKey, hexToBytes(epoch.membership_key), 'membership key should match expected')
-            t.deepEqual(keySchedule.resumptionPsk, hexToBytes(epoch.resumption_psk), 'resumption psk should match expected')
-            t.deepEqual(keySchedule.epochAuthenticator, hexToBytes(epoch.epoch_authenticator), 'epoch authenticator should match expected')
+        t.deepEqual(joinerSecret, hexToBytes(epoch.joiner_secret), 'joiner secret should match expected')
+        t.deepEqual(welcomeSecret, hexToBytes(epoch.welcome_secret), 'welcome secret should match expected')
+        t.deepEqual(keySchedule.initSecret, hexToBytes(epoch.init_secret), 'init secret should match expected')
+        t.deepEqual(keySchedule.senderDataSecret, hexToBytes(epoch.sender_data_secret), 'sender data secret should match expected')
+        t.deepEqual(keySchedule.encryptionSecret, hexToBytes(epoch.encryption_secret), 'encryption secret should match expected')
+        t.deepEqual(keySchedule.exporterSecret, hexToBytes(epoch.exporter_secret), 'exporter secret should match expected')
+        t.deepEqual(keySchedule.externalSecret, hexToBytes(epoch.external_secret), 'external secret should match expected')
+        t.deepEqual(keySchedule.confirmationKey, hexToBytes(epoch.confirmation_key), 'confirmation key should match expected')
+        t.deepEqual(keySchedule.membershipKey, hexToBytes(epoch.membership_key), 'membership key should match expected')
+        t.deepEqual(keySchedule.resumptionPsk, hexToBytes(epoch.resumption_psk), 'resumption psk should match expected')
+        t.deepEqual(keySchedule.epochAuthenticator, hexToBytes(epoch.epoch_authenticator), 'epoch authenticator should match expected')
 
-            // Verify the external_pub is the public key output from KEM.DeriveKeyPair(external_secret)
-            const { publicKey } = await impl.hpke.deriveKeyPair(hexToBytes(epoch.external_secret))
-            t.deepEqual(await impl.hpke.exportPublicKey(publicKey), hexToBytes(epoch.external_pub), 'external public key should match expected')
+        // Verify the external_pub is the public key output from KEM.DeriveKeyPair(external_secret)
+        const { publicKey } = await impl.hpke.deriveKeyPair(hexToBytes(epoch.external_secret))
+        t.deepEqual(await impl.hpke.exportPublicKey(publicKey), hexToBytes(epoch.external_pub), 'external public key should match expected')
 
-            // Verify the exporter.secret is the value output from MLS-Exporter(exporter.label, exporter.context, exporter.length)
-            const exporter = await mlsExporter(
-                keySchedule.exporterSecret,
-                epoch.exporter.label,
-                hexToBytes(epoch.exporter.context),
-                epoch.exporter.length,
-                impl,
-            )
-            t.deepEqual(exporter, hexToBytes(epoch.exporter.secret), 'exporter secret should match expected')
+        // Verify the exporter.secret is the value output from MLS-Exporter(exporter.label, exporter.context, exporter.length)
+        const exporter = await mlsExporter(
+            keySchedule.exporterSecret,
+            epoch.exporter.label,
+            hexToBytes(epoch.exporter.context),
+            epoch.exporter.length,
+            impl,
+        )
+        t.deepEqual(exporter, hexToBytes(epoch.exporter.secret), 'exporter secret should match expected')
 
-            return keySchedule.initSecret
-        },
-        Promise.resolve(hexToBytes(initialInitSecret)),
-    )
+        return keySchedule.initSecret
+    },
+    Promise.resolve(hexToBytes(initialInitSecret)))
 }

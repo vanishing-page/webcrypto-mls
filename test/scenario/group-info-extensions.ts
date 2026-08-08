@@ -4,16 +4,16 @@ import { createGroupInfoWithExternalPub } from '../../src/create-commit.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    getCiphersuiteFromName,
-    ciphersuites
+    getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { generateKeyPackage } from '../../src/key-package.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import type { Extension, ExtensionType } from '../../src/extension.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('GroupInfo Custom Extensions ' + cs, async (t) => {
         try {
             await customExtensionTest(t, cs as CiphersuiteName)
@@ -45,7 +45,7 @@ async function customExtensionTest (t:any, cipherSuite:CiphersuiteName) {
         credentialType: 'basic',
         identity: new TextEncoder().encode('alice')
     }
-    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime, [], impl)
+    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('group1')
 

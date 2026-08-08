@@ -5,7 +5,7 @@ import { proposeExternal } from '../../src/external-proposal.js'
 import { UsageError } from '../../src/mls-error.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
-import { ciphersuites, getCiphersuiteFromName } from '../../src/crypto/ciphersuite.js'
+import { getCiphersuiteFromName } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import { generateKeyPackage } from '../../src/key-package.js'
 import type { Proposal } from '../../src/proposal.js'
@@ -14,8 +14,9 @@ import { encodeExternalSenders } from '../../src/external-sender.js'
 import type { Extension } from '../../src/extension.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('proposeExternal rejects Update proposal at construction ' + cs, async (t) => {
         try {
             await proposeExternalUpdateRejected(t, cs as CiphersuiteName)
@@ -51,7 +52,7 @@ async function makeAliceGroupWithExternalSender (cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )
@@ -63,7 +64,7 @@ async function makeAliceGroupWithExternalSender (cipherSuite:CiphersuiteName) {
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )

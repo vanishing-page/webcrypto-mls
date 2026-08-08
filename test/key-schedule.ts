@@ -1,13 +1,14 @@
 import { test } from '@substrate-system/tapzero'
-import { ciphersuites, getCiphersuiteFromName } from '../src/crypto/ciphersuite.js'
+import { getCiphersuiteFromName } from '../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../src/crypto/get-ciphersuite-impl.js'
 import { initializeKeySchedule } from '../src/key-schedule.js'
+import { testCiphersuites } from './helpers/suite-filter.js'
 
-for (const name of Object.keys(ciphersuites)) {
+for (const name of testCiphersuites()) {
     test(`initializeKeySchedule drops epochSecret (${name})`, async (t) => {
         try {
             const cs = await getCipherSuite(
-                getCiphersuiteFromName(name as keyof typeof ciphersuites)
+                getCiphersuiteFromName(name)
             )
 
             const epochSecret = cs.rng.randomBytes(cs.kdf.size)

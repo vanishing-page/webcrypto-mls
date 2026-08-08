@@ -165,6 +165,18 @@ function flattenExtensions (groupContextExtensions:{ proposal:ProposalGroupConte
     }, [] as Extension[])
 }
 
+function validateNoDuplicatePskIds (psk:{ proposal:ProposalPSK }[]):ValidationError | undefined {
+    const multiplePskWithSamePskId = psk.some((a, indexA) =>
+        psk.some(
+            (b, indexB) =>
+                constantTimeEqual(encodePskId(a.proposal.psk.preSharedKeyId), encodePskId(b.proposal.psk.preSharedKeyId)) &&
+        indexA !== indexB,
+        ),
+    )
+
+    if (multiplePskWithSamePskId) return new ValidationError('Commit cannot contain PreSharedKey proposals that reference the same PreSharedKeyID')
+}
+
 async function validateProposals (
     p:Proposals,
     committerLeafIndex:number | undefined,
@@ -233,15 +245,8 @@ async function validateProposals (
 
     if (!everyLeafSupportsGroupExtensions) { return new ValidationError("Added leaf node that doesn't support extension in GroupContext") }
 
-    const multiplePskWithSamePskId = p.psk.some((a, indexA) =>
-        p.psk.some(
-            (b, indexB) =>
-                constantTimeEqual(encodePskId(a.proposal.psk.preSharedKeyId), encodePskId(b.proposal.psk.preSharedKeyId)) &&
-        indexA !== indexB,
-        ),
-    )
-
-    if (multiplePskWithSamePskId) { return new ValidationError('Commit cannot contain PreSharedKey proposals that reference the same PreSharedKeyID') }
+    const duplicatePskError = validateNoDuplicatePskIds(p.psk)
+    if (duplicatePskError !== undefined) return duplicatePskError
 
     const pskProposalError = validatePskProposals(p.psk.map((o) => o.proposal.psk.preSharedKeyId), groupContext)
 
@@ -252,14 +257,11 @@ async function validateProposals (
     if (multipleGroupContextExtensions) { return new ValidationError('Commit cannot contain multiple GroupContextExtensions proposals') }
 
     const allExtensions = flattenExtensions(p.group_context_extensions)
+    const remainingCapabilities = postMutationLeafCapabilities(tree, p)
 
     if (allExtensions.length > 0) {
-        const everyRemainingLeafSupportsNewExtensions = tree.every(
-            (n, nodeIndex) =>
-                n === undefined ||
-                n.nodeType !== 'leaf' ||
-                p.remove.some((r) => r.proposal.remove.removed === nodeToLeafIndex(toNodeIndex(nodeIndex))) ||
-                extensionsSupportedByCapabilities(allExtensions, n.leaf.capabilities),
+        const everyRemainingLeafSupportsNewExtensions = remainingCapabilities.every(
+            (caps) => extensionsSupportedByCapabilities(allExtensions, caps),
         )
 
         if (!everyRemainingLeafSupportsNewExtensions) { return new ValidationError("Existing member doesn't support extension in proposed GroupContextExtensions") }
@@ -271,9 +273,8 @@ async function validateProposals (
         const caps = decodeRequiredCapabilities(requiredCapabilities.extensionData, 0)
         if (caps === undefined) return new CodecError('Could not decode required_capabilities')
 
-        const everyLeafSupportsCapabilities = tree
-            .filter((n) => n !== undefined && n.nodeType === 'leaf')
-            .every((l) => capabiltiesAreSupported(caps[0], l.leaf.capabilities))
+        const everyLeafSupportsCapabilities = remainingCapabilities
+            .every((leafCaps) => capabiltiesAreSupported(caps[0], leafCaps))
 
         if (!everyLeafSupportsCapabilities) return new ValidationError('Not all members support required capabilities')
 
@@ -301,6 +302,27 @@ async function validateExternalSenders (
         const validCredential = await authService.validateCredential(externalSender.credential, externalSender.signaturePublicKey)
         if (!validCredential) return new ValidationError('Could not validate external credential')
     }
+}
+
+/**
+ * The capabilities of every leaf that will remain in the tree once `p`'s
+ * add/update/remove proposals are applied: removed leaves are excluded, and
+ * updated leaves report the capabilities from their update proposal rather
+ * than their current (pre-commit) leaf node. Extension-support checks over
+ * this list run against the post-mutation membership instead of the stale
+ * pre-commit tree.
+ */
+function postMutationLeafCapabilities (tree:RatchetTree, p:Proposals):Capabilities[] {
+    return tree.reduce((acc, n, nodeIndex) => {
+        if (n === undefined || n.nodeType !== 'leaf') return acc
+
+        const leafIndex = nodeToLeafIndex(toNodeIndex(nodeIndex))
+        if (p.remove.some((r) => r.proposal.remove.removed === leafIndex)) return acc
+
+        const update = p.update.find((u) => u.senderLeafIndex === leafIndex)
+        acc.push(update !== undefined ? update.proposal.update.leafNode.capabilities : n.leaf.capabilities)
+        return acc
+    }, [] as Capabilities[])
 }
 
 function capabiltiesAreSupported (caps:RequiredCapabilities, cs:Capabilities):boolean {
@@ -608,7 +630,12 @@ function validatePskProposals (pskIds:PreSharedKeyID[], groupContext:GroupContex
 }
 
 export type ApplyProposalsData =
-  | { kind:'memberCommit'; addedLeafNodes:[LeafIndex, KeyPackage][]; extensions:Extension[] }
+  | {
+      kind:'memberCommit'
+      addedLeafNodes:[LeafIndex, KeyPackage][]
+      extensions:Extension[]
+      hasGroupContextExtensionsProposal:boolean
+  }
   | { kind:'externalCommit'; externalInitSecret:Uint8Array; newMemberLeafIndex:LeafIndex }
   | { kind:'reinit'; reinit:Reinit }
 
@@ -640,8 +667,19 @@ export async function applyProposals (
         return [...acc, p]
     }, [] as ProposalWithSender[])
 
+    const unsupportedCustomProposal = allProposals.find(
+        (cur) =>
+            typeof cur.proposal.proposalType === 'number' &&
+            !state.clientConfig.supportedCustomProposalTypes.includes(cur.proposal.proposalType),
+    )
+    if (unsupportedCustomProposal !== undefined) {
+        throw new ValidationError(
+            `Cannot process commit referencing unsupported custom proposal type ${unsupportedCustomProposal.proposal.proposalType}`,
+        )
+    }
+
     const grouped = allProposals.reduce((acc, cur) => {
-    // this skips any custom proposals
+    // this skips any (opted-in) custom proposals -- they are not applied to the tree
         if (typeof cur.proposal.proposalType === 'number') return acc
         const proposal = acc[cur.proposal.proposalType] ?? []
         return { ...acc, [cur.proposal.proposalType]: [...proposal, cur] }
@@ -718,6 +756,7 @@ export async function applyProposals (
                 kind: 'memberCommit' as const,
                 addedLeafNodes,
                 extensions: newExtensions,
+                hasGroupContextExtensionsProposal: grouped.group_context_extensions.length > 0,
             },
             pskIds,
             needsUpdatePath,
@@ -725,9 +764,18 @@ export async function applyProposals (
             allProposals,
         }
     } else {
+        // RFC 9420 12.4.3.2: an external commit's proposals must all be provided
+        // by value -- a by-reference proposal would let the joiner smuggle in
+        // whatever another member's cached unappliedProposals happens to hold.
+        if (proposals.some((p) => p.proposalOrRefType === 'reference')) {
+            throw new ValidationError('External commit cannot contain proposals by reference')
+        }
+
         throwIfDefined(validateExternalInit(grouped))
 
         throwIfDefined(validatePskProposals(grouped.psk.map((o) => o.proposal.psk.preSharedKeyId), state.groupContext))
+
+        throwIfDefined(validateNoDuplicatePskIds(grouped.psk))
 
         const externalRemove = grouped.remove.at(0)
 
@@ -838,6 +886,12 @@ async function deriveUpdatedPrivateKeyPath (
     return mergePrivateKeyPaths(pkpFromPath, privateKeyPath)
 }
 
+/**
+ * Consumes `privateKeys.initPrivateKey`: RFC 9420 SS16.8 requires an init
+ * key never be reused for a second Welcome, so on success this function
+ * zeroizes the caller's `initPrivateKey` buffer in place. A thrown
+ * validation error leaves it intact so the caller can retry.
+ */
 export async function joinGroup (
     welcome:Welcome,
     keyPackage:KeyPackage,
@@ -962,6 +1016,8 @@ export async function joinGroup (
     if (!confirmationTagVerified) throw new CryptoVerificationError('Could not verify confirmation tag')
 
     const secretTree = await createSecretTree(leafWidth(tree.length), keySchedule.encryptionSecret, cs.kdf)
+
+    privateKeys.initPrivateKey.fill(0)
 
     return {
         groupContext: gi.groupContext,
@@ -1122,6 +1178,10 @@ export async function processProposal (
 }
 
 export function addHistoricalReceiverData (state:ClientState):Map<bigint, EpochReceiverData> {
+    const max = state.clientConfig.keyRetentionConfig.retainKeysForEpochs
+
+    if (max <= 0) return new Map()
+
     const withNew = addToMap(state.historicalReceiverData, state.groupContext.epoch, {
         secretTree: stripHandshakeRatchets(state.secretTree),
         ratchetTree: state.ratchetTree,
@@ -1133,8 +1193,8 @@ export function addHistoricalReceiverData (state:ClientState):Map<bigint, EpochR
     const epochs = [...withNew.keys()]
 
     const result =
-        epochs.length >= state.clientConfig.keyRetentionConfig.retainKeysForEpochs
-            ? removeOldHistoricalReceiverData(withNew, state.clientConfig.keyRetentionConfig.retainKeysForEpochs)
+        epochs.length >= max
+            ? removeOldHistoricalReceiverData(withNew, max)
             : withNew
 
     return result
@@ -1144,6 +1204,8 @@ function removeOldHistoricalReceiverData (
     historicalReceiverData:Map<bigint, EpochReceiverData>,
     max:number,
 ):Map<bigint, EpochReceiverData> {
+    if (max <= 0) return new Map()
+
     const sortedEpochs = [...historicalReceiverData.keys()].sort((a, b) => (a < b ? -1 : 1))
 
     return new Map(sortedEpochs.slice(-max).map((epoch) => [epoch, historicalReceiverData.get(epoch)!]))

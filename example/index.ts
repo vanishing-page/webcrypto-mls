@@ -1,27 +1,51 @@
 import { type FunctionComponent, render } from 'preact'
-import { useCallback } from 'preact/hooks'
-import { useComputed } from '@preact/signals'
+import { useCallback, useEffect } from 'preact/hooks'
+import { useComputed, signal } from '@preact/signals'
 import { html } from 'htm/preact'
+
+/**
+ * Registration only, and not optional. `example-shared/storage-panel.ts`
+ * renders `<substrate-button>`, and both pages this entry loads render
+ * that panel. An undefined custom element does not render: without
+ * this, the button's label would be inert inline text and the control
+ * would be gone.
+ */
+import '@substrate-system/button'
+
 import {
     State,
     type User,
     type Message
 } from './state.js'
 import {
-    createGroup,
-    createCommit,
-    createApplicationMessage,
-    processPublicMessage,
-    encodeMlsMessage,
-    decodeMlsMessage,
-    makePskIndex,
-    bytesToBase64,
-    joinGroup,
-} from '../src/index.js'
-import Debug from '@substrate-system/debug'
-const debug = Debug(import.meta.env.DEV)
+    selectTreeLayout,
+    directPathNodeIndices,
+    rotationKeyChangeCount,
+    selectNodeDetails,
+} from './tree-view.js'
+import { TreeDiagram, TreeNodeDetailPanel } from './tree-diagram.js'
+import { selectParticipants, selectGroupUser } from './participants.js'
+import { PersistenceDemo } from './persistence-demo.js'
+import { MultiDeviceDemo } from './multi-device-demo.js'
+import { Nav } from './nav.js'
+import { isPersistencePath, isMultiDevicePath } from './routing.js'
+import { toLeafIndex } from '../src/treemath.js'
+import {
+    addUserToGroup,
+    sendMessage,
+    createMLSGroup
+} from './demo-actions.js'
+import { bytesToBase64url } from '../src/index.js'
+import { NBSP, SPACE } from '../example-shared/constants.js'
+import { EXAMPLE_USERS } from './example-users.js'
 
 const state = State()
+const basePath = import.meta.env.BASE_URL
+
+const hoveredUser = signal<string | null>(null)
+const selectedNodeIndex = signal<number | null>(null)
+
+window.localStorage.setItem('DEBUG', 'mls,mls:*')
 
 // @ts-expect-error dev
 window.state = state
@@ -34,12 +58,8 @@ const {
     status,
     inputMessage,
     keyPackageInfo,
-    decryptedMessagesAlice,
-    decryptedMessagesBob,
-    decryptedMessagesCarl,
-    messageQueueAlice,
-    messageQueueBob,
-    messageQueueCarl
+    decryptedMessages,
+    messageQueues
 } = state
 
 // Initialize ciphersuite
@@ -47,11 +67,105 @@ await State.init(state)
 
 const Example:FunctionComponent = function () {
     const usersInGroup = useComputed<[string, User][]>(() => {
-        const data = Array.from(state.users.value.entries())
-        return data.filter(([_name, user]) => {
-            return user.state
+        const participants = selectParticipants(state.users.value)
+        return participants.map((name) => {
+            return [name, state.users.value.get(name)!] as [string, User]
         })
     })
+
+    const treeLayout = useComputed(() => {
+        // Read groupId so this recomputes as soon as a group is created,
+        // even before `users` reflects any post-creation change.
+        const groupUser = selectGroupUser(users.value)
+
+        const leafNames = new Map(
+            Array.from(users.value.entries())
+                .filter(([, user]) => user.state)
+                .map(([name, user]) => {
+                    return [
+                        toLeafIndex(user.state!.privatePath.leafIndex),
+                        name,
+                    ] as const
+                })
+        )
+
+        return selectTreeLayout(
+            !!groupId.value,
+            groupUser?.state?.ratchetTree,
+            leafNames
+        )
+    })
+
+    // Every in-group member shares the same epoch, so any member's copy
+    // stands in for the group's current epoch.
+    const currentEpoch = useComputed(() => {
+        const groupUser = selectGroupUser(users.value)
+        const epoch = groupUser?.state?.groupContext.epoch
+        if (epoch === undefined) return null
+        return epoch.toString()
+    })
+
+    // Every in-group member derives the identical epoch authenticator, so
+    // any member's copy stands in for the group's epoch authenticator.
+    const epochAuthenticator = useComputed(() => {
+        const groupUser = selectGroupUser(users.value)
+        const ks = groupUser?.state?.keySchedule
+        if (!ks) return null
+        return bytesToBase64url(ks.epochAuthenticator)
+    })
+
+    const hoveredPath = useComputed(() => {
+        const name = hoveredUser.value
+        if (!name) return new Set<number>()
+
+        const user = users.value.get(name)
+        const path = user?.state?.privatePath
+        const tree = user?.state?.ratchetTree
+        if (!path || !tree) return new Set<number>()
+
+        return directPathNodeIndices(tree, toLeafIndex(path.leafIndex))
+    })
+
+    const panelDetail = useComputed(() => {
+        // Peek (hover/focus) takes precedence over a pinned selection.
+        const hovered = hoveredUser.value
+        if (hovered) {
+            const user = users.value.get(hovered)
+            const path = user?.state?.privatePath
+            const tree = user?.state?.ratchetTree
+            if (path && tree) {
+                const count = rotationKeyChangeCount(
+                    tree,
+                    toLeafIndex(path.leafIndex)
+                )
+                return { kind: 'peek' as const, count }
+            }
+        }
+
+        const index = selectedNodeIndex.value
+        if (index !== null) {
+            const groupUser = selectGroupUser(users.value)
+            const tree = groupUser?.state?.ratchetTree
+            if (tree) {
+                return {
+                    kind: 'node' as const,
+                    details: selectNodeDetails(tree, index),
+                }
+            }
+        }
+
+        return { kind: 'none' as const }
+    })
+
+    useEffect(() => {
+        const onKeyDown = (ev:KeyboardEvent) => {
+            if (ev.key === 'Escape') {
+                selectedNodeIndex.value = null
+            }
+        }
+        document.addEventListener('keydown', onKeyDown)
+        return () => document.removeEventListener('keydown', onKeyDown)
+    }, [])
 
     const createUser = useCallback((ev:MouseEvent) => {
         const btn = ev.target as HTMLButtonElement
@@ -66,297 +180,67 @@ const Example:FunctionComponent = function () {
             const info = `Key Package for ${name}:\n` +
                 `Protocol Version: ${kp.version}\n` +
                 `Cipher Suite: ${kp.cipherSuite}\n` +
-                `Init Key: ${bytesToBase64(kp.leafNode.hpkePublicKey)}`
+                `Init Key: ${bytesToBase64url(kp.leafNode.hpkePublicKey)}`
 
             keyPackageInfo.value = info
         }
     }, [])
 
-    // Add a user to the group
-    const addUserToGroup = async (adderName:string, newMemberName:string) => {
-        if (!ciphersuite.value) {
-            status.value = 'Error: Ciphersuite not initialized'
-            return
-        }
-
-        const adder = users.value.get(adderName)
-        const newMember = users.value.get(newMemberName)
-
-        if (!adder?.state || !newMember?.keyPackage) {
-            status.value = 'Error: Users not ready'
-            return
-        }
-
-        try {
-            status.value = `Adding ${newMemberName} to group...`
-
-            // Create commit with Add proposal
-            const result = await createCommit(
-                { state: adder.state, cipherSuite: ciphersuite.value },
-                {
-                    extraProposals: [
-                        {
-                            proposalType: 'add',
-                            add: { keyPackage: newMember.keyPackage }
-                        }
-                    ],
-                    wireAsPublicMessage: true,
-                    ratchetTreeExtension: true
-                }
-            )
-
-            // Update adder's state
-            users.value = new Map(users.value).set(adderName, {
-                ...adder,
-                state: result.newState
-            })
-
-            // Process the Welcome message for the new member
-            if (result.welcome && newMember.privateKeys) {
-                const newMemberState = await joinGroup(
-                    result.welcome,
-                    newMember.keyPackage,
-                    newMember.privateKeys,
-                    makePskIndex(undefined, {}),
-                    ciphersuite.value
-                )
-                users.value = new Map(users.value).set(newMemberName, {
-                    ...newMember,
-                    state: newMemberState
-                })
-            }
-
-            // Process commit for existing members
-            if (result.commit) {
-                const commitBytes = encodeMlsMessage(result.commit)
-
-                for (const [userName, user] of users.value.entries()) {
-                    if (
-                        userName !== adderName &&
-                        userName !== newMemberName &&
-                        user.state
-                    ) {
-                        try {
-                            const decoded = decodeMlsMessage(commitBytes, 0)
-                            const decodedMessage = decoded?.[0]
-                            if (
-                                decodedMessage?.wireformat ===
-                                'mls_public_message'
-                            ) {
-                                const processResult =
-                                    await processPublicMessage(
-                                        user.state,
-                                        decodedMessage.publicMessage,
-                                        makePskIndex(user.state, {}),
-                                        ciphersuite.value
-                                    )
-                                const updatedUser = {
-                                    ...user,
-                                    state: processResult.newState
-                                }
-                                users.value = new Map(users.value).set(
-                                    userName,
-                                    updatedUser
-                                )
-                            }
-                        } catch (err) {
-                            debug(
-                                `Error processing commit for ${userName}:`,
-                                err
-                            )
-                        }
-                    }
-                }
-            }
-
-            status.value = `${newMemberName} added to group successfully!`
-        } catch (err) {
-            status.value = 'Error adding user: ' +
-                `${err instanceof Error ? err.message : String(err)}`
-        }
-    }
-
-    // Send an application message
-    const sendMessage = async (senderName:string, text:string) => {
-        if (!ciphersuite.value) {
-            status.value = 'Error: Ciphersuite not initialized'
-            return
-        }
-
-        const sender = users.value.get(senderName)
-        if (!sender?.state) {
-            status.value = 'Error: Sender not in group'
-            return
-        }
-
-        try {
-            const messageBytes = new TextEncoder().encode(text)
-            const result = await createApplicationMessage(
-                sender.state,
-                messageBytes,
-                ciphersuite.value,
-                new Uint8Array(0)  // authenticated data
-            )
-
-            const encoded = encodeMlsMessage({
-                wireformat: 'mls_private_message',
-                version: 'mls10',
-                privateMessage: result.privateMessage
-            })
-
-            // Update sender's state
-            users.value = new Map(users.value).set(senderName, {
-                ...sender,
-                state: result.newState
-            })
-
-            // Add message to display (store ciphertext)
-            const messageIndex = messages.value.length
-            messages.value = [...messages.value, {
-                from: senderName,
-                text,
-                ciphertext: encoded, // Store the encrypted message bytes
-                epoch: result.newState.groupContext.epoch,
-                timestamp: Date.now()
-            }]
-
-            // Queue the message separately for each recipient.
-            for (const [userName, user] of users.value.entries()) {
-                if (user.state) {
-                    if (userName === senderName) {
-                        // The sender already knows the plaintext.
-                        if (senderName === 'Alice') {
-                            decryptedMessagesAlice.value = {
-                                ...decryptedMessagesAlice.value,
-                                [messageIndex]: text
-                            }
-                        } else if (senderName === 'Bob') {
-                            decryptedMessagesBob.value = {
-                                ...decryptedMessagesBob.value,
-                                [messageIndex]: text
-                            }
-                        } else if (senderName === 'Carl') {
-                            decryptedMessagesCarl.value = {
-                                ...decryptedMessagesCarl.value,
-                                [messageIndex]: text
-                            }
-                        }
-                    } else {
-                        // For recipients, add to their queue
-                        const queueItem = {
-                            messageIndex,
-                            ciphertext: encoded,
-                            epoch: result.newState.groupContext.epoch
-                        }
-
-                        if (userName === 'Alice') {
-                            messageQueueAlice.value = [
-                                ...messageQueueAlice.value,
-                                queueItem
-                            ]
-                        } else if (userName === 'Bob') {
-                            messageQueueBob.value = [
-                                ...messageQueueBob.value,
-                                queueItem
-                            ]
-                        } else if (userName === 'Carl') {
-                            messageQueueCarl.value = [
-                                ...messageQueueCarl.value,
-                                queueItem
-                            ]
-                        }
-                    }
-                }
-            }
-
-            status.value = `Message sent from ${senderName}`
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err)
-            status.value = `Error sending message: ${message}`
-        }
-    }
-
     // Read signals here so Preact tracks them for reactivity.
     const _messages = messages.value
-    const _aliceDecrypted = decryptedMessagesAlice.value
-    const _bobDecrypted = decryptedMessagesBob.value
-    const _carlDecrypted = decryptedMessagesCarl.value
+    const _decrypted = decryptedMessages.value
+    const _queues = messageQueues.value
     const removeUserFromGroup = State.removeUserFromGroup
-    const participantMessages = [
-        {
-            name: 'Alice',
-            decrypted: decryptedMessagesAlice,
-            queue: messageQueueAlice
-        },
-        {
-            name: 'Bob',
-            decrypted: decryptedMessagesBob,
-            queue: messageQueueBob
-        },
-        {
-            name: 'Carl',
-            decrypted: decryptedMessagesCarl,
-            queue: messageQueueCarl
-        }
-    ]
+    const participants = selectParticipants(users.value)
 
-    const participantColumns = participantMessages.map(({
-        name: participant,
-        decrypted: participantDecrypted,
-        queue: participantQueue
-    }) => {
-        // Force reads for reactivity tracking.
-        const _decrypted = participantDecrypted.value
-        const _queue = participantQueue.value
+    const participantColumns = participants.map((participant) => {
+        const participantDecrypted =
+            decryptedMessages.value[participant] || {}
+        const participantQueue = messageQueues.value[participant] || []
         const participantMessageIndices = new Set([
-            ...participantQueue.value.map(item => item.messageIndex),
-            ...Object.keys(participantDecrypted.value).map(Number)
+            ...participantQueue.map(item => item.messageIndex),
+            ...Object.keys(participantDecrypted).map(Number)
         ])
         const messageBoxes = messages.value.map((msg:Message, idx:number) => {
             if (!participantMessageIndices.has(idx)) return null
 
-            const decryptedObj = participantDecrypted.value
-            const isDecrypted = decryptedObj[idx] !== undefined
-            const decryptedText = decryptedObj[idx] || ''
-            const ciphertext = bytesToBase64(msg.ciphertext).slice(0, 64)
+            const isDecrypted = participantDecrypted[idx] !== undefined
+            const decryptedText = participantDecrypted[idx] || ''
+            const ciphertext = bytesToBase64url(msg.ciphertext).slice(0, 64)
             const timestamp = new Date(msg.timestamp).toLocaleTimeString()
             const canDecrypt = Boolean(users.value.get(participant)?.state)
 
-            return html`
-                <div key=${idx} class="message-box">
-                    <div class="message-header">
-                        <strong>${msg.from}</strong>
-                        <small>Epoch ${msg.epoch.toString()}</small>
-                        <small class="timestamp">${timestamp}</small>
-                    </div>
-                    <div class="ciphertext-section">
-                        <label>Ciphertext:</label>
-                        <code class="ciphertext">${ciphertext}...</code>
-                    </div>
-                    ${isDecrypted ? html`
-                        <div class="decrypted-section">
-                            <label>Decrypted:</label>
-                            <div class="decrypted-text">
-                                ${decryptedText}
-                            </div>
-                        </div>
-                    ` : html`
-                        <button
-                            class="decrypt-btn"
-                            onClick=${() => {
-                                State.decryptMessage(
-                                    state,
-                                    participant,
-                                    idx
-                                )
-                            }}
-                            disabled=${!canDecrypt}
-                        >
-                            Decrypt
-                        </button>
-                    `}
+            return html`<div key=${idx} class="message-box">
+                <div class="message-header">
+                    <strong>${msg.from}</strong>
+                    <small>Epoch ${msg.epoch.toString()}</small>
+                    <small class="timestamp">${timestamp}</small>
                 </div>
-            `
+                <div class="ciphertext-section">
+                    <label>Ciphertext:</label>
+                    <code class="ciphertext">${ciphertext}...</code>
+                </div>
+                ${isDecrypted ? html`
+                    <div class="decrypted-section">
+                        <label>Decrypted:</label>
+                        <div class="decrypted-text">
+                            ${decryptedText}
+                        </div>
+                    </div>
+                ` : html`<button
+                        class="decrypt-btn"
+                        onClick=${() => {
+                            State.decryptMessage(
+                                state,
+                                participant,
+                                idx
+                            )
+                        }}
+                        disabled=${!canDecrypt}
+                    >
+                        Decrypt
+                    </button>`}
+            </div>`
         })
 
         return html`
@@ -366,6 +250,60 @@ const Example:FunctionComponent = function () {
             </div>
         `
     })
+
+    const detail = panelDetail.value
+
+    const statusCard = html`
+        <div class="card status">
+            <div class="status-layout">
+                <div class="status-content">
+                    <h3>Status</h3>
+                    <p class="member-count">
+                        Members in group:${NBSP}${usersInGroup.value.length}
+                    </p>
+                    ${currentEpoch.value !== null ? html`
+                        <p class="current-epoch">
+                            Current epoch:${NBSP}${currentEpoch.value}
+                        </p>
+                    ` : null}
+                    ${epochAuthenticator.value ? html`
+                        <p class="epoch-secret">
+                            <span class="label">Epoch authenticator:</span>${NBSP}
+                            <span class="value">
+                                ${epochAuthenticator.value}
+                            </span>
+                            <br />
+                            <span>
+                                (see <code>example/index.ts:108-116</code>).
+                            </span>
+                        </p>
+                    ` : null}
+                    <p>${status.value}</p>
+                    <${TreeNodeDetailPanel} detail=${detail} />
+                </div>
+                ${keyPackageInfo.value ? html`
+                    <div class="kpinfo">
+                        <h3>Key Package Info</h3>
+                        <pre>${keyPackageInfo.value}</pre>
+                    </div>
+                ` : null}
+            </div>
+        </div>
+    `
+
+    const treeDiagramCard = treeLayout.value ? html`
+        <${TreeDiagram}
+            layout=${treeLayout.value}
+            hoveredPath=${hoveredPath.value}
+            selectedNodeIndex=${selectedNodeIndex.value}
+            onSelectNode=${(nodeIndex:number) => {
+                selectedNodeIndex.value = nodeIndex
+            }}
+            onClear=${() => {
+                selectedNodeIndex.value = null
+            }}
+        />
+    ` : null
 
     return html`
         <div class="container">
@@ -377,20 +315,103 @@ const Example:FunctionComponent = function () {
                 in the browser with WebCrypto APIs.
             </p>
 
-            <div class="card status">
-                <div class="status-layout">
-                    <div class="status-content">
-                        <h3>Status</h3>
-                        <p>${status.value}</p>
-                    </div>
-                    ${keyPackageInfo.value ? html`
-                        <div class="kpinfo">
-                            <h3>Key Package Info</h3>
-                            <pre>${keyPackageInfo.value}</pre>
-                        </div>
-                    ` : null}
+            <p>
+                MLS encrypts content with a single shared
+                symmetric key. Each group member also has an asymmeteric keypair.
+                The per-member asymmetric keys aren't used to
+                encrypt application messages though. They exist to establish
+                and rotate the shared symmetric key efficiently and securely. 
+            </p>
+
+            <p>
+                If you hover a "rotate keys" button below, you will see
+                "rotating keys would change n keys." Regardless of how
+                many keys need to change for a rotation, the application code
+                always broadcasts a single <a href="https://github.com/vanishing-page/webcrypto-mls#commit">
+                commit message</a> to everyone. One message goes to all group
+                participants.
+            </p>
+
+            <h2 id="epochs">Epochs</h2>
+            <p>
+                Each "epoch" (a stable membership state) of an MLS group has a
+                single epoch secret that every member can derive. The${SPACE}
+                <a href="https://github.com/vanishing-page/webcrypto-mls#key-schedule">
+                <strong>key schedule</strong></a>${SPACE}
+                uses it to produce the symmetric keys used for encrypting
+                application messages. When Alice sends to the group, she
+                encrypts under a symmetric key that Bob, Carol, etc. can all
+                derive.
+            </p>
+
+
+            <h2 id="key-rotation">Key Rotation</h2>
+            <p>
+                How does everyone arrive at that shared secret,
+                and why go through all the per-member-key
+                machinery to get it? Why not just distribute one static
+                shared key? Two scenarios:
+            </p>
+
+            <ol>
+                <li>
+                    <strong>Removing a member</strong>. With a static shared key,
+                    once Bob has seen it, he can decrypt everything
+                    encrypted under it forever. "Removing" Bob means picking a
+                    new key and getting it to everyone except Bob.
+                </li>
+
+                <li>
+                    <strong>
+                        Forward secrecy and post-compromise security.
+                    </strong> A static key is a single point of catastrophic
+                    failure: compromise it once and every message, past and
+                    future, is exposed. MLS instead ratchets. Every epoch
+                    derives a fresh secret, and old key material is deleted
+                    (forward secrecy). A compromised member can rotate their
+                    leaf to make the group secure again
+                    (post-compromise "healing").  A static key, by definition,
+                    never heals.
+                </li>
+            </ol>
+
+            <p>
+                Both of these are about the cost of re-keying.
+                Every add, remove, or key rotation operation forces you to
+                re-key the group.
+            </p>
+
+            <p>
+                The most naive approach is to encrypt the new group key
+                separately to each of the N members' public keys. That's O(N)
+                per change.
+            </p>
+
+            <h3 id="tree-kem">Tree KEM</h3>
+            <p>
+                A better option is ${SPACE}
+                <strong><code>
+                    <a href="https://eprint.iacr.org/2025/410">TreeKEM</a>
+                </code></strong> (Tree Key-Encapsulation-Mechanism).
+                In this model, users are arranged in a binary tree structure.
+                For a key change, a node needs to deliver its new secret
+                just to the sibling subtree (<code>O(log N)</code>, not <code>
+                O(N)</code>).
+            </p>
+
+            <p>
+                In a group of 1,000, that's roughly 10 operations instead of
+                1,000. This happens on every membership change and key
+                refresh, so the efficiency gain is magnified when people
+                join or leave the group.
+            </p>
+
+            ${treeDiagramCard ? html`
+                <div class="grid status-row">
+                    ${statusCard}
+                    ${treeDiagramCard}
                 </div>
-            </div>
+            ` : statusCard}
 
             <div class="grid">
                 <!-- User Management -->
@@ -398,27 +419,42 @@ const Example:FunctionComponent = function () {
                     <h3>👤 User Management</h3>
 
                     <div class="controls user">
-                        <button
-                            data-name="Alice"
-                            onClick=${createUser}
-                            disabled=${!ciphersuite.value}
-                        >
-                            Create Alice
-                        </button>
-                        <button
-                            data-name="Bob"
-                            onClick=${createUser}
-                            disabled=${!ciphersuite.value}
-                        >
-                            Create Bob
-                        </button>
-                        <button
-                            data-name="Carl"
-                            onClick=${createUser}
-                            disabled=${!ciphersuite.value}
-                        >
-                            Create Carl
-                        </button>
+                        ${EXAMPLE_USERS.map((name) => {
+                            const user = users.value.get(name)
+                            return user ? html`
+                                <div key=${name} class="rotate-control">
+                                    <span class="rotate-label">${name}</span>
+                                    <button
+                                        onMouseEnter=${() => {
+                                            hoveredUser.value = name
+                                        }}
+                                        onMouseLeave=${() => {
+                                            hoveredUser.value = null
+                                        }}
+                                        onFocus=${() => {
+                                            hoveredUser.value = name
+                                        }}
+                                        onBlur=${() => {
+                                            hoveredUser.value = null
+                                        }}
+                                        onClick=${() => {
+                                            State.rotateKeys(state, name)
+                                        }}
+                                    >
+                                        Rotate Keys
+                                    </button>
+                                </div>
+                            ` : html`
+                                <button
+                                    key=${name}
+                                    data-name=${name}
+                                    onClick=${createUser}
+                                    disabled=${!ciphersuite.value}
+                                >
+                                    Create ${name}
+                                </button>
+                            `
+                        })}
                     </div>
 
                     <h4>Users (${users.value.size})</h4>
@@ -461,53 +497,51 @@ const Example:FunctionComponent = function () {
                                 return html`
                                     <button
                                         key=${name}
-                                        onClick=${() => createMLSGroup(name)}
+                                        onClick=${() =>
+                                            createMLSGroup(state, name)}
                                     >
                                         Start group as ${name}
                                     </button>
-                                    `
-                                })
-                            }
+                                `
+                            })}
                         </div>
                     ` : html`
                         <div>
                             <h4>Group Active</h4>
                             <p>
-                                ID:
-                                ${bytesToBase64(groupId.value).slice(0, 24)}...
+                                ID:${NBSP}
+                                ${bytesToBase64url(groupId.value).slice(0, 24)}...
                             </p>
 
-                            ${usersInGroup.value.length < 3 ? html`
-                                <h4>Add Member</h4>
-                                <div class="controls members">
-                                    ${Array.from(users.value.entries()).map(
-                                        ([adderName, adder]) => {
-                                        return adder.state ? Array.from(
-                                            users.value.entries()
-                                        ).map(([memberName, member]) => {
-                                            const canAdd = !member.state &&
-                                                member.keyPackage
-                                            return canAdd ? html`
-                                                <button
-                                                    key=${adderName + '-' +
-                                                        memberName}
-                                                    onClick=${() => {
-                                                        addUserToGroup(
-                                                            adderName,
-                                                            memberName
-                                                        )
-                                                    }}
-                                                >
-                                                    ${adderName} adds
-                                                    ${memberName}
-                                                </button>
-                                            ` : null
-                                            }
-                                        ) : null
+                            <h4>Add Member</h4>
+                            <div class="controls members">
+                                ${Array.from(users.value.entries()).map(
+                                    ([adderName, adder]) => {
+                                    return adder.state ? Array.from(
+                                        users.value.entries()
+                                    ).map(([memberName, member]) => {
+                                        const canAdd = !member.state &&
+                                            member.keyPackage
+                                        return canAdd ? html`
+                                            <button
+                                                key=${adderName + '-' +
+                                                    memberName}
+                                                onClick=${() => {
+                                                    addUserToGroup(
+                                                        state,
+                                                        adderName,
+                                                        memberName
+                                                    )
+                                                }}
+                                            >
+                                                ${adderName} adds ${memberName}
+                                            </button>
+                                        ` : null
                                         }
-                                    )}
-                                </div>
-                            ` : null}
+                                    ) : null
+                                    }
+                                )}
+                            </div>
 
                             ${usersInGroup.value.length > 1 ? html`
                                 <h4>Remove Member</h4>
@@ -531,7 +565,7 @@ const Example:FunctionComponent = function () {
                                                         )
                                                     }}
                                                 >
-                                                    ${removerName} removes
+                                                    ${removerName} removes${SPACE}
                                                     ${removedName}
                                                 </button>
                                             ` : null
@@ -574,6 +608,7 @@ const Example:FunctionComponent = function () {
                                     onClick=${() => {
                                         if (inputMessage.value.trim()) {
                                             sendMessage(
+                                                state,
                                                 name,
                                                 inputMessage.value
                                             )
@@ -604,7 +639,7 @@ const Example:FunctionComponent = function () {
 
             <!-- Instructions -->
             <div class="card instructions">
-                <h3>How to use</h3>
+                <h2>How to use</h2>
                 <ol>
                     <li>
                         <strong>Create users</strong> with the Alice, Bob,
@@ -627,12 +662,33 @@ const Example:FunctionComponent = function () {
     `
 }
 
+const App:FunctionComponent = function () {
+    const showPersistence = useComputed(() => {
+        return isPersistencePath(state.route.value, basePath)
+    })
+
+    const showMultiDevice = useComputed(() => {
+        return isMultiDevicePath(state.route.value, basePath)
+    })
+
+    const page = showPersistence.value ?
+        html`<${PersistenceDemo} />` :
+        (showMultiDevice.value ?
+            html`<${MultiDeviceDemo} />` :
+            html`<${Example} />`)
+
+    return html`
+        <${Nav} route=${state.route.value} basePath=${basePath} />
+        ${page}
+    `
+}
+
 const root = document.getElementById('root')!
 let currentRender = () => {}
 
 const rerender = () => {
     currentRender = () => {
-        render(html`<${Example} />`, root)
+        render(html`<${App} />`, root)
     }
     currentRender()
 }
@@ -641,44 +697,5 @@ const rerender = () => {
 rerender()
 
 // Re-render when any decrypted message signal changes
-decryptedMessagesAlice.subscribe(() => rerender())
-decryptedMessagesBob.subscribe(() => rerender())
-decryptedMessagesCarl.subscribe(() => rerender())
-
-// Create a new MLS group with the first user
-async function createMLSGroup (creatorName:string) {
-    if (!ciphersuite.value) {
-        status.value = 'Error: Ciphersuite not initialized'
-        return
-    }
-
-    const creator = users.value.get(creatorName)
-    if (!creator?.keyPackage || !creator?.privateKeys) {
-        status.value = 'Error: User not found or incomplete'
-        return
-    }
-
-    try {
-        status.value = `Creating MLS group for ${creatorName}...`
-
-        const newGroupId = ciphersuite.value.rng.randomBytes(32)
-        const state = await createGroup(
-            newGroupId,
-            creator.keyPackage,
-            creator.privateKeys,
-            [],
-            ciphersuite.value
-        )
-
-        users.value = new Map(users.value).set(creatorName, {
-            ...creator,
-            state
-        })
-        groupId.value = newGroupId
-        status.value = 'MLS group created. Group ID:' +
-            `${bytesToBase64(newGroupId).slice(0, 16)}...`
-    } catch (err) {
-        status.value = 'Error creating group: ' +
-            `${err instanceof Error ? err.message : String(err)}`
-    }
-}
+decryptedMessages.subscribe(() => rerender())
+messageQueues.subscribe(() => rerender())

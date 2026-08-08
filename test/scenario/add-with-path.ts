@@ -6,7 +6,6 @@ import { emptyPskIndex } from '../../src/psk-index.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
-    ciphersuites,
     getCiphersuiteFromName
 } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -14,8 +13,9 @@ import { generateKeyPackage } from '../../src/key-package.js'
 import type { ProposalAdd, ProposalRemove } from '../../src/proposal.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testCiphersuites } from '../helpers/suite-filter.js'
 
-for (const cs of Object.keys(ciphersuites)) {
+for (const cs of testCiphersuites()) {
     test('Commit with Add and UpdatePath is decryptable by a pre-existing member ' + cs, async (t) => {
         try {
             await addWithPath(t, cs as CiphersuiteName)
@@ -34,7 +34,7 @@ async function makeMember (name:string, impl:any) {
         credentialType: 'basic',
         identity: new TextEncoder().encode(name),
     }
-    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime, [], impl)
+    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime(), [], impl)
 }
 
 async function addWithPath (t:any, cipherSuite:CiphersuiteName) {
