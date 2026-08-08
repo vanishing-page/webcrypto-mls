@@ -16,6 +16,7 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import { createApplicationMessage, createProposal, processPrivateMessage } from '../../src/index.js'
 import { UsageError } from '../../src/mls-error.js'
+import { defaultClientConfig } from '../../src/client-config.js'
 
 for (const cs of Object.keys(ciphersuites)) {
     test(`Custom Proposals ${cs}`, async (t) => {
@@ -49,23 +50,29 @@ async function customProposalTest (cipherSuite:CiphersuiteName, t:any) {
         credentialType: 'basic',
         identity: new TextEncoder().encode('alice')
     }
-    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime, [], impl)
+    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('group1')
+
+    const clientConfig = {
+        ...defaultClientConfig,
+        supportedCustomProposalTypes: [customProposalType],
+    }
 
     let aliceGroup = await createGroup(
         groupId,
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        clientConfig
     )
 
     const bobCredential:Credential = {
         credentialType: 'basic',
         identity: new TextEncoder().encode('bob')
     }
-    const bob = await generateKeyPackage(bobCredential, capabilities, defaultLifetime, [], impl)
+    const bob = await generateKeyPackage(bobCredential, capabilities, defaultLifetime(), [], impl)
 
     const addBobProposal:ProposalAdd = {
         proposalType: 'add',
@@ -91,6 +98,8 @@ async function customProposalTest (cipherSuite:CiphersuiteName, t:any) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        clientConfig,
     )
 
     const proposalData = new TextEncoder().encode('custom proposal data')

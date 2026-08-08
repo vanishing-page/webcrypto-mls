@@ -49,7 +49,7 @@ async function leafWidthUpdatePath (t:any, cipherSuite:CiphersuiteName) {
         return generateKeyPackage(
             credential,
             defaultCapabilities(),
-            defaultLifetime,
+            defaultLifetime(),
             [],
             impl,
         )
@@ -121,12 +121,19 @@ async function leafWidthUpdatePath (t:any, cipherSuite:CiphersuiteName) {
     t.equal(aliceGroup.ratchetTree.length, 7, 'tree should have 7 nodes (4 leaves)')
 
     // Confirm this tree size actually exercises the divergence: the old,
-    // buggy expression (tree.length / 2, non-integer) disagrees with the
-    // correct leafWidth(tree.length) at this size.
-    const buggyLeafWidth = nodeToLeafIndex(toNodeIndex(aliceGroup.ratchetTree.length))
+    // buggy expression (tree.length / 2, non-integer) is no longer even
+    // computable -- nodeToLeafIndex now rejects non-leaf (odd) node indices
+    // outright (US-014) instead of silently returning a fractional
+    // LeafIndex that would disagree with the correct leafWidth(tree.length).
+    let buggyExpressionThrew = false
+    try {
+        nodeToLeafIndex(toNodeIndex(aliceGroup.ratchetTree.length))
+    } catch {
+        buggyExpressionThrew = true
+    }
     const correctLeafWidth = leafWidth(aliceGroup.ratchetTree.length)
-    t.ok(buggyLeafWidth !== correctLeafWidth,
-        'tree.length / 2 should differ from leafWidth(tree.length) at this size')
+    t.ok(buggyExpressionThrew,
+        'tree.length / 2 should be rejected as a non-leaf node index at this size')
     t.equal(correctLeafWidth, 4, 'leafWidth(7) should be 4')
 
     // An empty-proposal commit still requires an UpdatePath (US-001), which

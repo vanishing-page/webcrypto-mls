@@ -42,7 +42,7 @@ import { protect } from './message-protection.js'
 import { protectPublicMessage } from './message-protection-public.js'
 import { pathToPathSecrets } from './path-secrets.js'
 import type { PrivateKeyPath } from './private-key-path.js'
-import { mergePrivateKeyPaths, updateLeafKey, toPrivateKeyPath } from './private-key-path.js'
+import { mergePrivateKeyPaths, pruneBlankedNodes, updateLeafKey, toPrivateKeyPath } from './private-key-path.js'
 import type { Proposal, ProposalExternalInit } from './proposal.js'
 import type { ProposalOrRef } from './proposal-or-ref-type.js'
 import type { PskIndex } from './psk-index.js'
@@ -130,29 +130,32 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
             ? res.additionalResult.addedLeafNodes.map((l) => leafToNodeIndex(l[0]))
             : []
 
+    const updatedExtensions =
+        res.additionalResult.kind === 'memberCommit' && res.additionalResult.hasGroupContextExtensionsProposal
+            ? res.additionalResult.extensions
+            : state.groupContext.extensions
+
+    const groupContextWithExtensions = { ...state.groupContext, extensions: updatedExtensions }
+
     const [tree, updatePath, pathSecrets, newPrivateKey] = res.needsUpdatePath
         ? await createUpdatePath(
             res.tree,
             toLeafIndex(state.privatePath.leafIndex),
-            state.groupContext,
+            groupContextWithExtensions,
             state.signaturePrivateKey,
             cipherSuite,
             addedLeafNodeIndices,
         )
         : [res.tree, undefined, [] as PathSecret[], undefined]
 
-    const updatedExtensions =
-        res.additionalResult.kind === 'memberCommit' && res.additionalResult.extensions.length > 0
-            ? res.additionalResult.extensions
-            : state.groupContext.extensions
-
-    const groupContextWithExtensions = { ...state.groupContext, extensions: updatedExtensions }
-
-    const privateKeys = mergePrivateKeyPaths(
-        newPrivateKey !== undefined
-            ? updateLeafKey(state.privatePath, await cipherSuite.hpke.exportPrivateKey(newPrivateKey))
-            : state.privatePath,
-        await toPrivateKeyPath(pathToPathSecrets(pathSecrets), state.privatePath.leafIndex, cipherSuite),
+    const privateKeys = pruneBlankedNodes(
+        mergePrivateKeyPaths(
+            newPrivateKey !== undefined
+                ? updateLeafKey(state.privatePath, await cipherSuite.hpke.exportPrivateKey(newPrivateKey))
+                : state.privatePath,
+            await toPrivateKeyPath(pathToPathSecrets(pathSecrets), state.privatePath.leafIndex, cipherSuite),
+        ),
+        tree,
     )
 
     const lastPathSecret = pathSecrets.at(-1)
@@ -480,10 +483,22 @@ export async function applyUpdatePathSecret (
         updateNode,
     } = firstMatchAncestor(tree, toLeafIndex(privatePath.leafIndex), senderLeafIndex, path)
 
-    for (const [i, nodeIndex] of filterNewLeaves(resolution, excludeNodes).entries()) {
+    if (updateNode === undefined) {
+        throw new ValidationError('UpdatePath is missing an UpdatePathNode for the common ancestor')
+    }
+
+    const filteredResolution = filterNewLeaves(resolution, excludeNodes)
+
+    if (updateNode.encryptedPathSecret.length !== filteredResolution.length) {
+        throw new ValidationError(
+            'UpdatePathNode encrypted_path_secret count does not match the copath resolution',
+        )
+    }
+
+    for (const [i, nodeIndex] of filteredResolution.entries()) {
         if (privatePath.privateKeys[nodeIndex] !== undefined) {
             const key = await cs.hpke.importPrivateKey(privatePath.privateKeys[nodeIndex])
-            const ct = updateNode!.encryptedPathSecret[i]!
+            const ct = updateNode.encryptedPathSecret[i]
 
             const pathSecret = await decryptWithLabel(
                 key,
@@ -550,16 +565,20 @@ export async function joinGroupExternal (
     if (!groupInfoSignatureVerified) throw new CryptoVerificationError('Could not verify groupInfo Signature')
 
     const formerLeafIndex = resync
-        ? nodeToLeafIndex(
-            toNodeIndex(
-                ratchetTree.findIndex((n) => {
-                    if (n !== undefined && n.nodeType === 'leaf') {
-                        return clientConfig.keyPackageEqualityConfig.compareKeyPackageToLeafNode(keyPackage, n.leaf)
-                    }
-                    return false
-                }),
-            ),
-        )
+        ? (() => {
+            const foundNodeIndex = ratchetTree.findIndex((n) => {
+                if (n !== undefined && n.nodeType === 'leaf') {
+                    return clientConfig.keyPackageEqualityConfig.compareKeyPackageToLeafNode(keyPackage, n.leaf)
+                }
+                return false
+            })
+            if (foundNodeIndex === -1) {
+                throw new ValidationError(
+                    'resync external join: no prior leaf matches this credential',
+                )
+            }
+            return nodeToLeafIndex(toNodeIndex(foundNodeIndex))
+        })()
         : undefined
 
     const updatedTree = formerLeafIndex !== undefined ? removeLeafNode(ratchetTree, formerLeafIndex) : ratchetTree

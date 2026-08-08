@@ -19,7 +19,10 @@ export const decodeLifetime:Decoder<Lifetime> = mapDecoders([decodeUint64, decod
     notAfter,
 }))
 
-export const defaultLifetime:Lifetime = {
-    notBefore: BigInt(Math.floor(Date.now() / 1000)) - 3600n,
-    notAfter: BigInt(Math.floor(Date.now() / 1000)) + 2592000n, // 30 days
+export function defaultLifetime ():Lifetime {
+    const now = BigInt(Math.floor(Date.now() / 1000))
+    return {
+        notBefore: now - 3600n,
+        notAfter: now + 2592000n, // 30 days
+    }
 }

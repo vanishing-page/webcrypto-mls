@@ -1,3 +1,5 @@
+@import url("@substrate-system/css-normalize");
+
 :root {
     --color-accent: #008aff;
     --color-accent-hover: #0073e6;
@@ -8,6 +10,7 @@
     --color-shadow: #0000001a;
     --color-shadow-strong: #00000021;
     --color-success: #4caf50;
+    --color-surface: #fff;
     --color-surface-info: #e3f2fd;
     --color-surface-muted: #f0f0f0;
     --color-surface-soft: #f9f9f9;
@@ -22,14 +25,111 @@
 
 body {
     color: var(--color-text);
+    font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+}
 
+code {
+    font-size: 0.9rem;
+}
+
+button.reset-btn {
+    margin-bottom: 1rem;
+}
+
+.storage-persistence {
+    margin-bottom: 1rem;
+
+    /* One cell, every message in it, so the tallest one sets the
+       height at whatever width the page happens to be. That is why
+       there is no guessed min-height here any more. */
+    & .persist-result-slot {
+        display: grid;
+
+        & > * {
+            grid-area: 1 / 1;
+        }
+    }
+
+    & .persist-sizer {
+        margin: 0.5rem 0 0;
+        max-width: 44rem;
+        line-height: 1.5;
+        visibility: hidden;
+    }
+
+    & .persist-result {
+        margin: 0.5rem 0 0;
+        max-width: 44rem;
+        line-height: 1.5;
+
+        &.granted {
+            color: var(--color-text-success);
+        }
+    }
+}
+
+.card {
+    &.tree-diagram, &.status {
+        height: 24.5rem;
+    }
+}
+
+a {
+    text-decoration: underline;
+    text-underline-offset: 1px;
+    transition: all 0.2s;
+
+    &:hover {
+        text-underline-offset: 3px;
+    }
+}
+
+ol {
+    & li {
+        line-height: 1.6;
+        margin-bottom: 1rem;
+    }
 }
 
 .container {
     padding: 20px;
-    font-family: system-ui, sans-serif;
-    max-width: 1200px;
+    max-width: 90vw;
     margin: 0 auto;
+    padding-top: 0;
+
+    & > p {
+        margin-bottom: 1rem;
+    }
+}
+
+.site-nav {
+    margin-bottom: 20px;
+    padding: 1rem;
+    border-bottom: 1px solid;
+
+    & ul {
+        display: flex;
+        gap: 1.5rem;
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    & a {
+        display: inline-block;
+        padding-bottom: 0.25rem;
+        text-decoration: none;
+        border-bottom: 2px solid var(--color-transparent);
+
+        &:hover {
+            color: var(--color-text);
+        }
+
+        &.active {
+            color: var(--color-accent);
+            border-bottom-color: var(--color-accent);
+        }
+    }
 }
 
 input, & button {
@@ -78,6 +178,18 @@ button {
     display: flex;
     flex-wrap: wrap;
     gap: 1rem;
+
+    &.user {
+        & .rotate-control {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        & button {
+            height: 2rem;
+        }
+    }
 }
 
 .list.users {
@@ -112,6 +224,238 @@ button {
     }
 }
 
+.list.user-devices {
+    padding: 0;
+
+    & > li {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--color-border-subtle);
+
+        & > button.person {
+            width: 6rem;
+            flex-shrink: 0;
+            text-align: left;
+            font-weight: bold;
+            border: 1px dashed black;
+            padding-left: 0.5rem;
+
+            &.selected {
+                border-color: var(--color-accent);
+                border-style: solid;
+                background-color: var(--color-surface-info);
+                color: var(--color-accent);
+            }
+
+            &:hover, &:focus-visible {
+                border-color: var(--color-accent);
+                border-style: solid;
+            }
+        }
+    }
+
+    & .devices {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin: 0;
+        padding: 0;
+
+        & li {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        & .client-id {
+            color: var(--color-text-muted);
+        }
+
+        & .in-group {
+            padding: 0 0.375rem;
+            border-radius: 0.25rem;
+            background-color: var(--color-surface-success);
+            color: var(--color-text-success);
+        }
+
+        /* A button, drawn as a link: rotating is an action, but it sits
+           inside a dense row of labels where a bordered control would
+           read as the row's subject rather than something to do to it. */
+        & .rotate {
+            padding: 0;
+            border: none;
+            background: var(--color-transparent);
+            color: var(--color-accent);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+
+            &:not(:disabled) {
+                &:hover, &:focus-visible {
+                    background: var(--color-transparent);
+                    text-underline-offset: 4px;
+                    transform: translateY(0);
+                    border-color: var(--color-transparent);
+                }
+
+                /* The base button rule paints the outline accent on
+                   hover, which boxes in something that should read as a
+                   link. Pointing at it moves the underline instead.
+                   Keyboard focus keeps its ring: it is the only thing
+                   telling that user where they are. */
+                &:hover:not(:focus-visible) {
+                    outline-color: var(--color-transparent);
+                }
+            }
+
+            &:disabled {
+                color: var(--color-text-subtle);
+                text-decoration: none;
+            }
+        }
+    }
+}
+
+.devices-section {
+    margin-top: 1rem;
+    border-top: 1px solid var(--color-border-subtle);
+
+    & h4 {
+        margin: 0.5rem 0 0;
+    }
+
+    & .whose {
+        margin: 0;
+        color: var(--color-text-muted);
+    }
+
+    & .device-rows {
+        margin: 0.5rem 0 0;
+        padding: 0;
+        list-style: none;
+
+        & li {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.125rem 0;
+        }
+
+        & .device {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            width: 100%;
+            text-align: left;
+            border-color: var(--color-transparent);
+
+            &.selected {
+                border-color: var(--color-accent);
+                background-color: var(--color-surface-info);
+                color: var(--color-accent);
+            }
+        }
+
+        & .membership {
+            color: var(--color-text-muted);
+
+            &.in-group {
+                padding: 0 0.375rem;
+                border-radius: 0.25rem;
+                background-color: var(--color-surface-success);
+                color: var(--color-text-success);
+            }
+        }
+
+        & .storage {
+            &.persisted {
+                padding: 0 0.375rem;
+                border-radius: 0.25rem;
+                background-color: var(--color-surface-info);
+                color: var(--color-accent);
+            }
+        }
+    }
+}
+
+.card.group-ops {
+    & h4 {
+        margin: 0.5rem 0;
+    }
+}
+
+.card.messenger.multi-device {
+    & .send-as.selected {
+        border-color: var(--color-accent);
+        background-color: var(--color-surface-info);
+        color: var(--color-accent);
+    }
+
+    & .send-with {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--color-border-subtle);
+
+        & .prompt {
+            margin: 0 0 0.5rem;
+            color: var(--color-text-muted);
+        }
+
+        & .send-with-device {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+    }
+}
+
+.card.message-history.multi-device {
+    /* Seven people, not three, so the columns wrap rather than
+       squeezing into a fixed three-up grid. */
+    & .message-columns {
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    }
+
+    & .decrypt-with {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+
+        & > label {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--color-text-supporting);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+    }
+
+    & .device-section {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding-left: 0.5rem;
+        border-left: 2px solid var(--color-border-soft);
+
+        & .device-heading {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--color-text-supporting);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        & .not-in-group {
+            margin: 0;
+            color: var(--color-text-muted);
+        }
+    }
+}
+
 .status-layout {
     width: 100%;
     display: flex;
@@ -121,6 +465,8 @@ button {
 .status-content,
 .kpinfo {
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .kpinfo {
@@ -141,27 +487,320 @@ button {
     margin-bottom: 20px;
 }
 
+h2, h3 {
+    margin-bottom: 0.5rem;
+}
+
+p {
+    line-height: 1.6;
+    margin-top: 0;
+    text-wrap: pretty;
+}
+
 .card {
-    min-height: 15rem;
+    min-height: 16.8rem;
     border: 1px solid var(--color-border);
     padding: 15px;
     margin-bottom: 20px;
 
+    & p {
+        margin-top: 0;
+    }
+
+    & h3 {
+        margin-top: 0;
+        margin-bottom: 0.5rem;
+    }
+
+    &.users {
+        & h4 {
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+    }
+
     &.status {
         background: var(--color-surface-muted);
-        min-height: 8rem;
+
+        /* The card is a fixed height, so make it a column and let the
+           body area be the one scroll region. Without this the detail
+           panel overflows past the card's bottom edge. */
         display: flex;
-        justify-content: space-between;
+        flex-direction: column;
+        overflow: hidden;
+
+        & > .status-layout,
+        & > .detail {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+        }
+
+        & .member-count {
+            font-weight: bold;
+        }
+
+        & .current-epoch {
+            font-weight: bold;
+        }
+
+        & .epoch-secret {
+            & .label {
+                font-weight: bold;
+            }
+
+            & .value {
+                font-family: monospace;
+                word-break: break-all;
+            }
+        }
+
+        & .detail {
+            margin-top: 0.5rem;
+            padding-top: 0.5rem;
+            border-top: 1px solid var(--color-border-subtle);
+
+            & .pubkey {
+                font-family: monospace;
+                word-break: break-all;
+            }
+
+            & .root-note {
+                margin-top: 0.5rem;
+            }
+
+            & .node-json {
+                margin-top: 0.5rem;
+
+                & .node-json-label {
+                    font-weight: bold;
+                    margin-bottom: 0.25rem;
+                }
+
+                & pre {
+                    margin: 0;
+                    padding: 10px;
+                    background: var(--color-surface-soft);
+                    border: 1px solid var(--color-border);
+                    font-size: 1rem;
+                    white-space: pre-wrap;
+                    overflow-wrap: anywhere;
+                }
+            }
+        }
+    }
+
+    /* Both cards present the shared `CardHeader`: the device card is
+       what the tree card becomes while a device is selected. */
+    &.tree-diagram,
+    &.device-info {
+        & .tree-header {
+            display: flex;
+            align-items: start;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+    }
+
+    &.device-info {
+        & .who {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+
+            & .owner {
+                color: var(--color-text-muted);
+            }
+        }
+
+        & .membership.in-group {
+            /* A paragraph, so it would otherwise stripe the whole card
+               width in the success colour. */
+            width: fit-content;
+            padding: 0 0.375rem;
+            border-radius: 0.25rem;
+            background-color: var(--color-surface-success);
+            color: var(--color-text-success);
+        }
+
+        & .device-state {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.25rem 1rem;
+            margin: 0;
+
+            & dt {
+                color: var(--color-text-muted);
+            }
+
+            & dd {
+                margin: 0;
+                overflow-wrap: anywhere;
+            }
+        }
+
+        & .device-actions {
+            margin-top: 1rem;
+        }
     }
 
     &.messenger {
         min-height: 10rem;
+    }
+
+    /* The list of member operations grows with the square of the group
+       size, so cap it near the height of a full user panel and let the
+       overflow scroll instead of stretching the row. */
+    &.groups {
+        max-height: 28rem;
+        overflow-y: auto;
+
+        & h4 {
+            margin: 0.5rem 0;
+        }
     }
 }
 
 .card.instructions {
     background: var(--color-surface-info);
     margin-top: 30px;
+}
+
+/* A 21-member group rounds up to 32 leaf slots, so its tree is wider
+   than the page however tightly it is laid out. Draw it at natural size
+   inside this wrapper and scroll sideways, rather than scaling every
+   node down until the diagram is unreadable. */
+.tree-scroll {
+    margin-top: 20px;
+
+    & .card.tree-diagram {
+        height: auto;
+    }
+
+    & .tree-svg-scroll {
+        overflow-x: auto;
+    }
+
+    & .tree-svg {
+        margin: 0;
+        max-width: none;
+        max-height: none;
+    }
+}
+
+/* The status row pairs the status card with the tree beside it. In that
+   column the tree keeps the status card's height and scrolls inside
+   itself, both ways, rather than setting the column's size. */
+.status-row {
+    & .tree-scroll {
+        margin-top: 0;
+        min-width: 0;
+
+        & .card.tree-diagram {
+            height: 24.5rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        & .tree-svg-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+        }
+    }
+
+    /* The device card stands in for the tree in the same slot. */
+    & .card.device-info {
+        height: 24.5rem;
+        overflow-y: auto;
+    }
+}
+
+.tree-svg {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+    max-height: 320px;
+
+    & .tree-edge {
+        stroke: var(--color-border);
+        stroke-width: 2;
+    }
+
+    & .tree-edge.on-path {
+        stroke: var(--color-accent);
+    }
+
+    & .tree-node circle {
+        stroke-width: 1.5;
+    }
+
+    & .tree-node.leaf circle {
+        fill: var(--color-success);
+        stroke: var(--color-text);
+    }
+
+    & .tree-node.parent circle {
+        fill: var(--color-surface-muted);
+        stroke: var(--color-text);
+    }
+
+    & .tree-node.blank circle {
+        fill: var(--color-transparent);
+        stroke: var(--color-border-soft);
+        stroke-dasharray: 3 3;
+    }
+
+    & .tree-node.on-path circle:not(.hit) {
+        stroke: var(--color-accent);
+    }
+
+    & .tree-node text {
+        fill: var(--color-text);
+        font-size: 1rem;
+        pointer-events: none;
+    }
+
+    & .tree-node.selectable {
+        cursor: pointer;
+    }
+
+    /* Leaves that reveal their label on demand: hidden until the leaf is
+       hovered or focused, then outlined in the page colour so the one
+       visible label stays readable where it crosses a neighbouring node
+       or edge. */
+    & .tree-node.hide-label .leaf-label {
+        visibility: hidden;
+    }
+
+    & .tree-node.hide-label:hover .leaf-label,
+    & .tree-node.hide-label:focus .leaf-label,
+    & .tree-node.hide-label:focus-visible .leaf-label {
+        visibility: visible;
+        paint-order: stroke;
+        stroke: var(--color-surface);
+        stroke-width: 5;
+        stroke-linejoin: round;
+    }
+
+    & .tree-node circle.hit {
+        fill: var(--color-transparent);
+        stroke: none;
+    }
+
+    & .tree-node.selected circle:not(.hit) {
+        stroke: var(--color-accent);
+        stroke-width: 3;
+    }
+
+    & .tree-node.selectable:focus {
+        outline: none;
+    }
+
+    & .tree-node.selectable:focus-visible circle:not(.hit) {
+        stroke: var(--color-accent);
+        stroke-width: 3;
+    }
 }
 
 .flex {
@@ -227,14 +866,19 @@ button {
 .message-header {
     display: flex;
     align-items: center;
-    gap: 8px;
     flex-wrap: wrap;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--color-border-subtle);
 
+    & .from-machine {
+        flex-basis: 100%;
+        color: var(--color-text);
+    }
+
     & strong {
         color: var(--color-accent);
         font-size: 0.95rem;
+        margin-right: 1rem;
     }
 
     & small {
@@ -309,19 +953,35 @@ button {
     }
 }
 
-.message-boxes::-webkit-scrollbar {
+.message-boxes::-webkit-scrollbar,
+.card.groups::-webkit-scrollbar,
+.status-content::-webkit-scrollbar,
+.card.status > .status-layout::-webkit-scrollbar,
+.card.status > .detail::-webkit-scrollbar {
     width: 6px;
 }
 
-.message-boxes::-webkit-scrollbar-track {
+.message-boxes::-webkit-scrollbar-track,
+.card.groups::-webkit-scrollbar-track,
+.status-content::-webkit-scrollbar-track,
+.card.status > .status-layout::-webkit-scrollbar-track,
+.card.status > .detail::-webkit-scrollbar-track {
     background: var(--color-surface-soft);
 }
 
-.message-boxes::-webkit-scrollbar-thumb {
+.message-boxes::-webkit-scrollbar-thumb,
+.card.groups::-webkit-scrollbar-thumb,
+.status-content::-webkit-scrollbar-thumb,
+.card.status > .status-layout::-webkit-scrollbar-thumb,
+.card.status > .detail::-webkit-scrollbar-thumb {
     background: var(--color-text-subtle);
 }
 
-.message-boxes::-webkit-scrollbar-thumb:hover {
+.message-boxes::-webkit-scrollbar-thumb:hover,
+.card.groups::-webkit-scrollbar-thumb:hover,
+.status-content::-webkit-scrollbar-thumb:hover,
+.card.status > .status-layout::-webkit-scrollbar-thumb:hover,
+.card.status > .detail::-webkit-scrollbar-thumb:hover {
     background: var(--color-text-supporting);
 }
 
@@ -329,6 +989,25 @@ button {
     .grid,
     .message-columns {
         grid-template-columns: 1fr;
+    }
+
+    .card.status,
+    .card.tree-diagram,
+    .status-row .tree-scroll .card.tree-diagram,
+    .status-row .card.device-info {
+        height: auto;
+    }
+
+    .card.groups {
+        max-height: none;
+        overflow-y: visible;
+    }
+
+    .card.status > .status-layout,
+    .card.status > .detail,
+    .status-content,
+    .kpinfo {
+        overflow-y: visible;
     }
 
     .status-layout {

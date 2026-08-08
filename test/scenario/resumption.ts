@@ -42,7 +42,7 @@ async function resumption (t:any, cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -64,7 +64,7 @@ async function resumption (t:any, cipherSuite:CiphersuiteName) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -100,7 +100,7 @@ async function resumption (t:any, cipherSuite:CiphersuiteName) {
     const bobNewKeyPackage = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -108,7 +108,7 @@ async function resumption (t:any, cipherSuite:CiphersuiteName) {
     const aliceNewKeyPackage = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

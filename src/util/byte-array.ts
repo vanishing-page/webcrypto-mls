@@ -8,6 +8,13 @@ export function bytesToBuffer (b:Uint8Array):ArrayBuffer {
     return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
 }
 
+export function bytesToBase64url (bytes:Uint8Array):string {
+    return bytesToBase64(bytes)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '')
+}
+
 export function bytesToBase64 (bytes:Uint8Array):string {
     if (typeof Buffer !== 'undefined') {
         return Buffer.from(bytes).toString('base64')
@@ -16,6 +23,15 @@ export function bytesToBase64 (bytes:Uint8Array):string {
         bytes.forEach((b) => (binary += String.fromCharCode(b)))
         return globalThis.btoa(binary)
     }
+}
+
+export function base64urlToBytes (input:string):Uint8Array {
+    const base64 = input
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+        .padEnd(input.length + (4 - input.length % 4) % 4, '=')
+
+    return base64ToBytes(base64)
 }
 
 export function base64ToBytes (base64:string):Uint8Array {

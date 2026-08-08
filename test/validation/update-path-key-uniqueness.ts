@@ -54,7 +54,7 @@ async function makeMember (name:string, impl:any) {
         credentialType: 'basic',
         identity: new TextEncoder().encode(name),
     }
-    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime, [], impl)
+    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime(), [], impl)
 }
 
 async function rejectsLeafKeyCollision (t:any, cipherSuite:CiphersuiteName) {

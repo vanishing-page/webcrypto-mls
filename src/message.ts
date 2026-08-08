@@ -107,7 +107,22 @@ export const encodeMlsMessage:Encoder<MLSMessage> = contramapEncoders(
     (w) => [w.version, w] as const,
 )
 
-export const decodeMlsMessage:Decoder<MLSMessage> = mapDecoders(
+const decodeMlsMessageLoose:Decoder<MLSMessage> = mapDecoders(
     [decodeProtocolVersion, decodeMlsMessageContent],
     (version, mc) => ({ ...mc, version }),
 )
+
+/**
+ * Top-level entry point for decoding an MLSMessage. Unlike a decoder
+ * embedded inside a larger structure, a full MLSMessage is never itself
+ * followed by more of another structure on the wire -- so any bytes left
+ * over after a complete decode indicate malformed or tampered input and
+ * are rejected rather than silently ignored.
+ */
+export const decodeMlsMessage:Decoder<MLSMessage> = (b, offset) => {
+    const result = decodeMlsMessageLoose(b, offset)
+    if (result === undefined) return undefined
+    const [message, length] = result
+    if (offset + length !== b.length) return undefined
+    return [message, length]
+}

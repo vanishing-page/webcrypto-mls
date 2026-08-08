@@ -63,25 +63,45 @@ export async function createSecretTree (leafWidth:number, encryptionSecret:Uint8
 
 /**
  * Returns a copy of `tree` with every leaf's handshake ratchet secret
- * zeroized and replaced with an empty placeholder. Used when snapshotting
- * a superseded epoch's SecretTree for historical receiver data: a
- * commit/proposal from a former epoch is always rejected regardless of
- * whether it can be decrypted (see processPrivateMessage), so retaining a
- * usable handshake ratchet for old epochs would be retained key material
- * with no forward-secrecy benefit.
+ * replaced with an empty placeholder. Used when snapshotting a superseded
+ * epoch's SecretTree for historical receiver data: a commit/proposal from
+ * a former epoch is always rejected regardless of whether it can be
+ * decrypted (see processPrivateMessage), so retaining a usable handshake
+ * ratchet for old epochs would be retained key material with no
+ * forward-secrecy benefit.
+ *
+ * This does NOT mutate the input tree or its buffers -- `ClientState` is
+ * functional and node objects are shared across state versions (see
+ * `updateArray`), so the caller may still hold a live reference to the
+ * `ClientState` this tree came from. Zeroizing in place here would corrupt
+ * that still-live state's handshake ratchets out from under it. Callers
+ * that can prove the source tree is being discarded (no other reference
+ * remains) should call `zeroHandshakeRatchets` on it explicitly to reclaim
+ * the forward-secrecy benefit.
  */
 export function stripHandshakeRatchets (tree:SecretTree):SecretTree {
     return tree.map((node) => {
         if (node === undefined) return undefined
-
-        node.handshake.secret.fill(0)
-        for (const secret of Object.values(node.handshake.unusedGenerations)) secret.fill(0)
 
         return {
             application: node.application,
             handshake: { secret: new Uint8Array(0), generation: node.handshake.generation, unusedGenerations: {} },
         }
     })
+}
+
+/**
+ * Zeroizes every leaf's handshake ratchet secret (current and unused
+ * generations) in place. Only call this on a tree that is provably no
+ * longer referenced by any live `ClientState` -- see `stripHandshakeRatchets`.
+ */
+export function zeroHandshakeRatchets (tree:SecretTree):void {
+    for (const node of tree) {
+        if (node === undefined) continue
+
+        node.handshake.secret.fill(0)
+        for (const secret of Object.values(node.handshake.unusedGenerations)) secret.fill(0)
+    }
 }
 
 async function deriveChildren (tree:Uint8Array[], nodeIndex:NodeIndex, kdf:Kdf):Promise<Uint8Array[]> {
@@ -154,8 +174,15 @@ function removeOldGenerations (
         .map(Number)
         .sort((a, b) => (a < b ? -1 : 1))
 
+    const kept = sortedGenerations.slice(-max)
+    const keptSet = new Set(kept)
+
+    for (const generation of sortedGenerations) {
+        if (!keptSet.has(generation)) historicalReceiverData[generation]!.fill(0)
+    }
+
     return Object.fromEntries(
-        sortedGenerations.slice(-max).map((generation) => [generation, historicalReceiverData[generation]!]),
+        kept.map((generation) => [generation, historicalReceiverData[generation]!]),
     )
 }
 
@@ -283,6 +310,13 @@ async function createRatchetResultWithSecret (
     ratchetState:GenerationSecret,
 ):Promise<ConsumeRatchetResult> {
     const { nonce, key } = await createKeyAndNonce(secret, generation, reuseGuard, cs)
+
+    // `secret` (the just-consumed ratchet secret, whether it was the node's
+    // current secret or a retained out-of-order generation) has already been
+    // used to derive `nextSecret`/the key and nonce above, and is not
+    // referenced anywhere in `ratchetState` or the returned `newTree` -- it
+    // is safe to wipe here rather than rely on garbage collection.
+    secret.fill(0)
 
     const newNode =
         contentType === 'application' ? { ...node, application: ratchetState } : { ...node, handshake: ratchetState }

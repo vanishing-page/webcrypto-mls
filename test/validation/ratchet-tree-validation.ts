@@ -33,7 +33,7 @@ for (const cs of Object.keys(ciphersuites)) {
                 versions: ['mls10'],
                 ciphersuites: [cipherSuite],
             }
-            const alice = await generateKeyPackage(aliceCredential, aliceCapabilities, defaultLifetime, [], impl)
+            const alice = await generateKeyPackage(aliceCredential, aliceCapabilities, defaultLifetime(), [], impl)
 
             const validLeafNode = alice.publicPackage.leafNode
             // Make the first node a parent node, which is invalid for a leaf position

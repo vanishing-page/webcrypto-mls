@@ -45,7 +45,7 @@ async function customExtensionTest (t:any, cipherSuite:CiphersuiteName) {
         credentialType: 'basic',
         identity: new TextEncoder().encode('alice')
     }
-    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime, [], impl)
+    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('group1')
 

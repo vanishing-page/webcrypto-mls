@@ -90,6 +90,24 @@ test("decodeUint64 fails for an array that's too small", (t) => {
     )
 })
 
+test('encodeUint8 throws on out-of-range input', (t) => {
+    t.throws(() => encodeUint8(256), 'should throw for value above uint8 max')
+    t.throws(() => encodeUint8(-1), 'should throw for negative value')
+    t.throws(() => encodeUint8(1.5), 'should throw for non-integer value')
+})
+
+test('encodeUint16 throws on out-of-range input', (t) => {
+    t.throws(() => encodeUint16(65536), 'should throw for value above uint16 max')
+    t.throws(() => encodeUint16(-1), 'should throw for negative value')
+    t.throws(() => encodeUint16(1.5), 'should throw for non-integer value')
+})
+
+test('encodeUint32 throws on out-of-range input', (t) => {
+    t.throws(() => encodeUint32(4294967296), 'should throw for value above uint32 max')
+    t.throws(() => encodeUint32(-1), 'should throw for negative value')
+    t.throws(() => encodeUint32(1.5), 'should throw for non-integer value')
+})
+
 function uint8RoundTrip (t:any, num:number) {
     const encoded = encodeUint8(num)
     const decoded = decodeUint8(encoded, 0)

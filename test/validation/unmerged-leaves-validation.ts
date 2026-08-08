@@ -40,7 +40,7 @@ for (const cs of Object.keys(ciphersuites)) {
                 versions: ['mls10'],
                 ciphersuites: [cipherSuite],
             }
-            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime, [], impl)
+            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime(), [], impl)
             const leafNode = kp.publicPackage.leafNode
 
             // 4-leaf tree. Leaf index 1 (node 2) is unmerged under both its
@@ -94,7 +94,7 @@ for (const cs of Object.keys(ciphersuites)) {
                 versions: ['mls10'],
                 ciphersuites: [cipherSuite],
             }
-            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime, [], impl)
+            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime(), [], impl)
             const leafNode = kp.publicPackage.leafNode
 
             // 2-leaf tree. The root (node 1) claims leaf index 1 (node 2) is

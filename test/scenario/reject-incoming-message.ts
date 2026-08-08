@@ -44,7 +44,7 @@ async function rejectIncomingMessagesTest (t:any, cipherSuite:CiphersuiteName, p
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -67,7 +67,7 @@ async function rejectIncomingMessagesTest (t:any, cipherSuite:CiphersuiteName, p
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

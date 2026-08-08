@@ -58,7 +58,7 @@ async function largeGroupFullLifecycle (cipherSuite:CiphersuiteName, initialSize
     const creatorKP = await generateKeyPackage(
         creatorCred,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -173,7 +173,7 @@ async function addMember (memberStates:MemberState[], index:number, impl:Ciphers
     const newKP = await generateKeyPackage(
         newCred,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

@@ -1,0 +1,434 @@
+{
+  "project": "webcrypto-mls",
+  "branchName": "ralph/multi-device-demo",
+  "description": "Multi-device Demo - a third example page at /multi-device giving each of the seven EXAMPLE_USERS three devices (phone, laptop, desktop), each a distinct MLS client with its own key package, leaf, and ClientState. Demonstrates that MLS has no notion of a 'user': one person maps to N leaves, and a message sent from Alice's phone must be decrypted separately by Alice's laptop. The person-to-device grouping lives only in demo application code. No changes to src/, and no behavior change to the main demo or the persistence demo. Source PRD: tasks/prd-multi-device-demo.md",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Device model module",
+      "description": "As a developer, I need a pure module describing the three devices and the client-id encoding, so every other story builds on one definition and it can be unit tested in Node without a browser.",
+      "acceptanceCriteria": [
+        "New example/devices.ts exports DEVICES, an ordered list of three devices: phone (icon 📱), laptop (icon 💻), desktop (icon 🖥️), each with id, label, and icon",
+        "Exports clientId(user, deviceId) producing 'Alice/phone'",
+        "Exports parseClientId(id) returning { user, deviceId }, or null for a string that is not a valid client id (unknown device id, missing separator, empty user)",
+        "Exports userClientIds(user) returning that user's three ids in DEVICES order",
+        "The module imports nothing from preact, @preact/signals, or the DOM",
+        "New test/example/devices.ts covers the round trip parseClientId(clientId(u, d)) for every device, and rejection of malformed ids",
+        "test/example/devices.ts is registered in test/index.ts via a side-effect import",
+        "Typecheck passes",
+        "Lint passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Per-demo indexedDB store factory",
+      "description": "As a developer, I need each persisting demo to own its own indexedDB database, so that two pages cannot read, overwrite, or delete each other's records. persistence-storage.ts currently hardcodes DB_NAME and loadAllMembers() returns the whole store, so two demos sharing it would classify each other's records as stale and delete them.",
+      "acceptanceCriteria": [
+        "example/persistence-storage.ts exports createMemberStore({ dbName }) returning saveMember, deleteMember, loadAllMembers, and deleteDatabase bound to that database",
+        "The pure exports memberKey, restoredUsersFromRecords, partitionPersistedNames, partitionRestorableRecords, and the PersistedMember type remain top-level exports with unchanged signatures, so test/example/persistence-storage.ts needs no changes",
+        "example/persistence-demo.ts builds its store with dbName: 'mls-persistence-demo' and behaves identically to before",
+        "The module-level saveMember / deleteMember / loadAllMembers / deleteDatabase exports are removed, so no call site can use the unbound versions",
+        "grep confirms no remaining call site imports the removed unbound exports",
+        "Typecheck passes",
+        "Lint passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill: existing persistence demo data still loads after the refactor"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Route, nav entry, and stub page",
+      "description": "As a visitor, I want a 'Multi-device' link in the site nav that takes me to /multi-device, so the third demo is reachable the same way the other two are. This story ships a minimal placeholder page; later stories fill it in.",
+      "acceptanceCriteria": [
+        "example/routing.ts exports isMultiDevicePath(href, basePath), matching the shape of isPersistencePath (exact match and sub-path match, query string ignored)",
+        "navItems() returns a third item, label 'Multi-device', href '<base>/multi-device'",
+        "Exactly one nav item is active on each of the three routes: the main demo link is no longer active while on /multi-device",
+        "New example/multi-device-demo.ts exports a MultiDeviceDemo component rendering a page heading and nothing else yet",
+        "example/index.ts renders MultiDeviceDemo for that route",
+        "build-example in package.json copies public/index.html to public/multi-device/index.html, as it already does for persistence",
+        "test/example/routing.ts covers isMultiDevicePath",
+        "test/example/nav.ts covers three-way active selection",
+        "Typecheck passes",
+        "Lint passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Page state, user list, and device creation",
+      "description": "As a visitor, I want to create each person's three devices in one click, so a person's clients exist before any group operation.",
+      "acceptanceCriteria": [
+        "multi-device-demo.ts builds its state with createDemoState() and keys the users map by client id, so createUser, addUserToGroup, and rotateKeys in demo-actions.ts are reused unchanged",
+        "A User Management card lists the seven EXAMPLE_USERS",
+        "'Create <user>'s devices' generates three key packages, one per device, each with its own non-extractable Ed25519 signature keypair, using the same approach as createPersistentUser in persistence-demo.ts",
+        "After creation, the page shows that person's three devices exist",
+        "A Status card renders and shows the demo status line",
+        "No changes to src/",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Start a group as a person's household",
+      "description": "As a visitor, I want to start the group as one person, so the group begins with that person's phone and their laptop and desktop are added to it.",
+      "acceptanceCriteria": [
+        "A Group Operations card offers 'Start group as <user>' for each person whose devices have been created",
+        "The action creates the group from that person's phone client, then adds their laptop and desktop",
+        "After the action, all three of that person's devices are in the group at the same epoch",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Add and remove a household in one commit",
+      "description": "As a visitor, I want to add or remove a whole household in one click, so I can populate a 21-member tree without 21 interactions and see all three leaves appear together.",
+      "acceptanceCriteria": [
+        "Group Operations offers '<adder> adds <user>'s devices', issuing a single commit carrying one add proposal per device of that person not already in the group, so the epoch advances once",
+        "Group Operations offers '<remover> removes <user>'s devices', issuing a single commit carrying one remove proposal per in-group device of that person",
+        "The committing client for any household action is that user's first in-group device in DEVICES order",
+        "The Status panel reports members as a client count with the household count alongside, e.g. 'Members in group: 21 (7 people x 3 devices)'",
+        "Adding all seven households yields 21 in-group clients at one epoch per household added",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Tighter tree layout in a scrollable container",
+      "description": "As a visitor, I want the ratchet tree to stay legible at 21 leaves. 21 members round up to 32 leaf slots, which at the default nodeSpacing of 60 is 1860px wide and five levels deep.",
+      "acceptanceCriteria": [
+        "The multi-device page calls selectTreeLayout with tighter layout options via the existing TreeViewLayoutOptions, with no change to the layout math in tree-view.ts",
+        "The SVG sits in a horizontally scrollable container on this page and renders at natural size rather than being scaled to fit",
+        "Blank leaf positions still render as blanks (32 slots, 11 blank at 21 members)",
+        "The main demo and persistence demo diagrams are visually unchanged",
+        "New CSS follows the existing nested-selector style in style.css and uses variables already defined there",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill at a full 21-leaf tree"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Hover and focus reveal leaf labels",
+      "description": "As a visitor, I want a leaf's label revealed on hover or focus rather than 21 labels colliding at once, so the diagram stays readable.",
+      "acceptanceCriteria": [
+        "Label visibility is a TreeDiagram option that defaults to the current always-visible behavior, so the main demo and persistence demo keep their labels",
+        "On the multi-device page leaf labels are hidden by default; hovering a leaf reveals its label and moving away hides it again",
+        "Keyboard focus reveals the label too, so the diagram is not mouse-only",
+        "Because only one label is visible at a time, the revealed label is the full description: the person's name, the device label, and the device icon",
+        "A revealed label stays legible where it overlaps neighboring nodes and edges",
+        "Each leaf's aria-label names the person and device, so a screen reader gets what a hover reveals",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill at a full 21-leaf tree"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Select a person to see their Devices section",
+      "description": "As a visitor, I want to click a person in User Management and see their three devices in the Status panel, so I can see which devices exist.",
+      "acceptanceCriteria": [
+        "Each person's name in User Management is an activatable control by mouse and keyboard, and the selected one is visually marked",
+        "Selecting a person renders a 'Devices' section in the Status panel, positioned above the tree-node detail block, so it appears above 'All properties' whenever both are shown",
+        "The section lists three rows, each with the device icon and its text label",
+        "Each row indicates whether that device is in the group yet",
+        "Selecting a different person replaces the selection",
+        "A person with no devices created yet still shows three rows, all marked as not in the group",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Highlight a selected person's leaves and direct paths",
+      "description": "As a visitor, I want selecting a person to highlight all of their in-group leaves and each leaf's direct path, so I can see one person occupying several leaves.",
+      "acceptanceCriteria": [
+        "Selecting a person highlights each of their in-group leaves and each of those leaves' direct paths, reusing the existing on-path styling",
+        "The highlight is derived from the existing directPathNodeIndices helper, unioned across the person's in-group leaves",
+        "Selecting a person with no in-group devices highlights nothing and does not error",
+        "The main demo's and persistence demo's single-path hover highlighting is unchanged",
+        "Any new pure selection logic lives in its own module with a matching test under test/example/, registered in test/index.ts",
+        "Typecheck passes",
+        "Lint passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Extract the card header shell from TreeDiagram",
+      "description": "As a developer, I need TreeDiagram's card header (title plus Clear button) to become a small shared shell, so a Device Info panel can present the same header with a different title. Pure refactor, no behavior change.",
+      "acceptanceCriteria": [
+        "A shared component renders the card header with a configurable title and the existing Clear button",
+        "TreeDiagram consumes the shared shell rather than rendering its own header",
+        "The main demo and persistence demo cards are visually and behaviorally unchanged: same markup classes, same Clear behavior",
+        "grep confirms the header markup is defined in exactly one place",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill that the main demo tree card header and Clear button still work"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Device Info replaces the tree",
+      "description": "As a visitor, I want to click one of a person's devices and see that device's own MLS state in place of the tree diagram, so I can inspect a single client.",
+      "acceptanceCriteria": [
+        "Each device row in the Devices section is clickable by mouse and keyboard",
+        "While a device is selected, the right-hand card's heading reads 'Device Info' instead of 'Ratchet Tree' and its body shows that device's information in place of the SVG",
+        "Device Info shows the device icon and label, the owner's name, the client id, whether it is in the group, and for an in-group device its leaf index, node index, epoch, and HPKE public key",
+        "A device with no group state shows a short explanation instead of key material rather than erroring",
+        "The Clear button remains in the header while a device is selected",
+        "Clear deselects the topmost selection: the device if one is selected, otherwise the tree node; Escape does the same",
+        "Clearing a device selection restores the tree diagram with any previously selected tree node still selected",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Rotate one device's keys",
+      "description": "As a visitor, I want to rotate the keys of a single device, so I can see that a rotation touches only that device's direct path and not the person's other devices.",
+      "acceptanceCriteria": [
+        "Device Info has a 'Rotate keys' button for an in-group device",
+        "The button calls the existing rotateKeys action in demo-actions.ts with that device's client id",
+        "After rotating, the epoch advances once and the status line names the device that rotated, e.g. \"Alice's phone rotated keys\"",
+        "The person's other two devices are unchanged apart from the shared epoch advance",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Pure helper: choose the committing client for a device removal",
+      "description": "As a developer, I need a tested pure helper that picks which client commits a single-device removal, since MLS does not let a member commit their own removal.",
+      "acceptanceCriteria": [
+        "A pure exported function takes the set of in-group client ids and the target client id and returns the committing client id, or null when none exists",
+        "It prefers another in-group device belonging to the same person, in DEVICES order",
+        "It falls back to any other in-group client when the person has no other in-group device",
+        "It returns null when the target is the only in-group client",
+        "The module imports nothing from preact, @preact/signals, or the DOM",
+        "A matching test file under test/example/ covers all four cases and is registered in test/index.ts",
+        "Typecheck passes",
+        "Lint passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Remove one device from the group",
+      "description": "As a visitor, I want to remove a single device from the group, so I can play out the lost-phone case: revoke one client and see the person's other devices carry on.",
+      "acceptanceCriteria": [
+        "Device Info has a 'Remove from group' button for an in-group device",
+        "The action calls the existing removeUserFromGroup with the target device's client id, using the committing client chosen by the US-014 helper",
+        "The status line names both clients, e.g. \"Alice's laptop removed Alice's phone\"",
+        "The button is unavailable when no other client is in the group to commit the removal, with a short explanation rather than a failing click",
+        "After removal the tree shows a blank at that leaf, and the person's remaining devices stay in the group at the new epoch",
+        "Removing the currently selected device clears the device selection, so Device Info does not linger on a client no longer in the group",
+        "The removed device remains listed in the person's Devices section, marked as not in the group",
+        "Removal regenerates that device's key package and signature keypair, since removeUserFromGroup clears the client's state but leaves its consumed key package in place and MLS forbids reusing a key package",
+        "After removal, adding that person's devices again re-adds the removed device using its fresh key package and leaves the devices already in the group alone",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Two-step send",
+      "description": "As a visitor, I want to choose the person and then the device I am sending from, so it is explicit that a message originates from one client and not from a person.",
+      "acceptanceCriteria": [
+        "A Send Message card has a message input and a row of 'Send as <person>' buttons, disabled while the input is empty, matching the other demos",
+        "Clicking 'Send as Alice' reveals a second row reading 'Send with:' followed by one button per device, showing icon and label",
+        "Only that person's in-group devices are enabled in the second row",
+        "Clicking a device button sends the message from that client and clears both the input and the pending sender, hiding the second row",
+        "Clicking a different 'Send as <person>' while a row is open switches the pending sender rather than opening a second row",
+        "The message's history header identifies the sending device, not just the person",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Pure per-person message view model",
+      "description": "As a developer, I need a tested pure module that folds the per-client message queues into one row per person per message, so the Message History UI has a single tested source of truth for what each device's decrypt state is.",
+      "acceptanceCriteria": [
+        "A pure exported function takes the demo users map and a message and returns, per person, whether any of their devices has that message queued or decrypted, plus one entry per device with: device, in-group flag, decrypted flag, and sender flag",
+        "The sending device is reported as already decrypted, since that client composed the plaintext",
+        "A device not in the group is reported as such, so the UI can omit its Decrypt button",
+        "A key helper produces a stable per-person-per-message identity for tracking expansion state",
+        "The module imports nothing from preact, @preact/signals, or the DOM",
+        "A matching test file under test/example/ covers the sender's own devices, another person's devices, and a person with an out-of-group device, and is registered in test/index.ts",
+        "Typecheck passes",
+        "Lint passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Two-step decrypt",
+      "description": "As a visitor, I want to decrypt a message separately on each of a person's devices, so I can see that MLS gives no device a free pass because it belongs to the same person as the sender.",
+      "acceptanceCriteria": [
+        "Message History has one column per person, not one per device",
+        "A person's column shows a message box if any of their devices has that message queued or decrypted",
+        "A box starts collapsed, showing the CIPHERTEXT section and a single 'Decrypt' button, matching the current layout",
+        "Clicking that button replaces the button with a 'DECRYPT WITH:' label followed by three sections, one per device",
+        "Each device section has an all-caps heading styled like the existing CIPHERTEXT and DECRYPTED headings, and contains a 'Decrypt' button",
+        "Clicking a device's 'Decrypt' replaces that section's button with a 'DECRYPTED:' heading and the plaintext, styled like the current decrypted block",
+        "The sending device's section shows as already decrypted; the sender's other two devices show Decrypt buttons and must be decrypted individually",
+        "A device not in the group shows no Decrypt button",
+        "Expansion state is tracked per person per message, so expanding one box does not expand others",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Persist a single device",
+      "description": "As a visitor, I want to persist an individual device to indexedDB, so the page shows that each device stores its own client state independently.",
+      "acceptanceCriteria": [
+        "The page uses createMemberStore({ dbName: 'mls-multi-device-demo' })",
+        "Device Info has a 'Persist' button for an in-group device, which saves that device's client state",
+        "Each row in the Devices section shows whether that device is persisted",
+        "Using this page leaves persistence demo records untouched, and vice versa",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Re-sync persisted devices after every state-advancing action",
+      "description": "As a visitor, I want persisted devices kept current, so a reload restores them at the group's present epoch rather than a stale one.",
+      "acceptanceCriteria": [
+        "Every action that advances group state (add household, remove household, remove device, rotate, send, decrypt) re-saves each already-persisted device",
+        "The same sync drops the record of a device that is no longer in the group, reusing partitionPersistedNames",
+        "The sync is implemented in one place and called from each action rather than duplicated per call site",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill: persist a device, advance the epoch, and confirm the stored record advances with it"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Restore persisted devices on load",
+      "description": "As a visitor, I want persisted devices restored on reload, so the page comes back at the current epoch without recreating anything.",
+      "acceptanceCriteria": [
+        "On load, persisted devices are restored and the person-to-device grouping is rebuilt by parsing each record's client id with parseClientId, so no separate mapping is written to indexedDB",
+        "A restored record whose name is not a valid client id is treated as stale and deleted rather than restored",
+        "Stale-record handling otherwise reuses partitionRestorableRecords, as the persistence demo does",
+        "A restore failure is caught and reported into the status line, never allowed to escape module evaluation",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill, including a hard reload that restores every persisted device at the current epoch"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "Reset and storage-persistence status",
+      "description": "As a visitor, I want to clear this page's stored data and to see and request persistent storage, matching the persistence demo.",
+      "acceptanceCriteria": [
+        "The page has a Reset button that deletes only the mls-multi-device-demo database",
+        "After Reset, persistence demo records are still present",
+        "The page shows the current storage-persistence status and a 'Request persistent storage' button, reusing storage-persistence.ts unchanged",
+        "Granted and denied results are reported with the same messaging the persistence demo uses",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 22,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Page explainer",
+      "description": "As a visitor, I want the page to tell me what it is demonstrating, so the 21-leaf tree reads as a lesson rather than as clutter.",
+      "acceptanceCriteria": [
+        "The page has an intro paragraph stating that MLS has one leaf per client, that the person-to-device grouping exists only in this demo's application code, and that the library is never told about it",
+        "A 'How to use' card lists the setup order: create devices, start a group, add households, select a person, select a device",
+        "Styling reuses existing card classes and variables in style.css; the two existing demos are not restyled",
+        "Typecheck passes",
+        "Lint passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": ""
+    }
+  ]
+}

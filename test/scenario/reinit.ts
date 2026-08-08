@@ -44,7 +44,7 @@ async function reinit (t:any, cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -66,7 +66,7 @@ async function reinit (t:any, cipherSuite:CiphersuiteName) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -131,12 +131,12 @@ async function reinit (t:any, cipherSuite:CiphersuiteName) {
 
     const newImpl = await getCipherSuite(getCiphersuiteFromName(newCiphersuite))
 
-    const bobNewKeyPackage = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime, [], newImpl)
+    const bobNewKeyPackage = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime(), [], newImpl)
 
     const aliceNewKeyPackage = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         newImpl,
     )

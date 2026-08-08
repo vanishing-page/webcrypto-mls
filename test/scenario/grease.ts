@@ -46,7 +46,7 @@ async function greaseTest (cipherSuite:CiphersuiteName, t:any) {
         ...defaultCapabilities(),
         extensions: greased.map((n) => extensionTypeToNumber(n.extensionType)),
     }
-    const alice = await generateKeyPackage(aliceCredential, caps, defaultLifetime, greased, impl)
+    const alice = await generateKeyPackage(aliceCredential, caps, defaultLifetime(), greased, impl)
 
     const groupId = new TextEncoder().encode('group1')
 
@@ -65,7 +65,7 @@ async function greaseTest (cipherSuite:CiphersuiteName, t:any) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

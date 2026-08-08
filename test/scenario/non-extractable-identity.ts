@@ -52,7 +52,7 @@ async function nonExtractableIdentityFlow (t:Test) {
     const creatorKP = await generateKeyPackage(
         creatorCred,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -92,7 +92,7 @@ async function nonExtractableIdentityFlow (t:Test) {
     const joinerKP = await generateKeyPackage(
         joinerCred,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

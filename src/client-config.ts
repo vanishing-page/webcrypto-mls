@@ -15,6 +15,20 @@ export interface ClientConfig {
     keyPackageEqualityConfig:KeyPackageEqualityConfig
     paddingConfig:PaddingConfig
     authService:AuthenticationService
+
+    /**
+     * Custom (application-defined) proposal types the application knows how
+     * to interpret. RFC 9420 SS12.1 requires that a proposal type not
+     * understood by an implementation MUST cause the commit referencing it
+     * to be rejected -- an application can only accept a custom proposal
+     * type by explicitly opting in here. Opted-in custom proposals are
+     * otherwise unvalidated and untouched by tree-mutation logic; the
+     * application is responsible for interpreting `proposalData` itself.
+     * Custom proposals sent/received standalone (outside a commit) are
+     * always accepted into `unappliedProposals` regardless of this list --
+     * only committing them is gated.
+     */
+    supportedCustomProposalTypes:number[]
 }
 
 export const defaultClientConfig = {
@@ -23,4 +37,5 @@ export const defaultClientConfig = {
     keyPackageEqualityConfig: defaultKeyPackageEqualityConfig,
     paddingConfig: defaultPaddingConfig,
     authService: defaultAuthenticationService,
+    supportedCustomProposalTypes: [],
 }

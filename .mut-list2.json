@@ -1,0 +1,46 @@
+[
+  ["example-realistic-demo/client/timeline.ts",
+   "the pre-join placeholder count is off by one",
+   "            count: input.priorCount,",
+   "            count: input.priorCount + 1,"],
+
+  ["example-realistic-demo/client/timeline.ts",
+   "the join boundary is strict instead of inclusive",
+   "        if (entry.seq <= input.joinCursor) continue",
+   "        if (entry.seq < input.joinCursor) continue"],
+
+  ["example-realistic-demo/client/timeline.ts",
+   "a run of misses never ends",
+   "        run = null\n        items.push({",
+   "        items.push({"],
+
+  ["example-realistic-demo/client/timeline.ts",
+   "a run's seq does not follow the last miss",
+   "                run.seq = entry.seq",
+   ""],
+
+  ["example-realistic-demo/client/timeline.ts",
+   "an unnamed sender shows its wire identity",
+   "            from: input.names[entry.sender] ?? 'unknown',",
+   "            from: input.names[entry.sender] ?? entry.sender,"],
+
+  ["example-shared/persistence-storage.ts",
+   "a record with no cursor counts as restorable",
+   "        typeof record.cursor === 'number' &&\n        Number.isFinite(record.cursor)",
+   "        true"],
+
+  ["example-shared/persistence-storage.ts",
+   "a groupless session gains a state key holding undefined",
+   "    if (!state) return { ...rest }",
+   "    if (!state) return { ...rest, state: undefined }"],
+
+  ["example-shared/persistence-storage.ts",
+   "a groupless record restores with a group anyway",
+   "    if (!session.state) return user",
+   ""],
+
+  ["example-shared/persistence-storage.ts",
+   "the session object store is never created",
+   "            if (!db.objectStoreNames.contains(SESSION_STORE_NAME)) {\n                db.createObjectStore(SESSION_STORE_NAME)\n            }",
+   ""]
+]

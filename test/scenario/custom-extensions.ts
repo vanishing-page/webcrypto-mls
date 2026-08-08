@@ -49,7 +49,7 @@ async function customExtensionTest (cipherSuite:CiphersuiteName, t:any) {
         credentialType: 'basic',
         identity: new TextEncoder().encode('alice')
     }
-    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime, [], impl)
+    const alice = await generateKeyPackage(aliceCredential, capabilities, defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('group1')
 
@@ -66,7 +66,7 @@ async function customExtensionTest (cipherSuite:CiphersuiteName, t:any) {
         credentialType: 'basic',
         identity: new TextEncoder().encode('bob')
     }
-    const bob = await generateKeyPackage(bobCredential, capabilities, defaultLifetime, [], impl)
+    const bob = await generateKeyPackage(bobCredential, capabilities, defaultLifetime(), [], impl)
 
     const addBobProposal:ProposalAdd = {
         proposalType: 'add',
@@ -110,7 +110,7 @@ async function customExtensionTest (cipherSuite:CiphersuiteName, t:any) {
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

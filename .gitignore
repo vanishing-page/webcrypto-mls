@@ -3,9 +3,13 @@ bundle.js
 .DS_Store
 test/*.js
 dist
+.wrangler
 .env
 public
-docs/*
-!docs/design-plans/
 .claude
 .test-bundle.cjs
+.mut-bundle.cjs
+notes
+.playwright-mcp
+ralph_claude.md
+PROMPT.md

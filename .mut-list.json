@@ -1,0 +1,61 @@
+[
+  ["example-realistic-demo/client/session.ts",
+   "restore does not derive removed",
+   "            state.removed.value =\n                user.state?.groupActiveState.kind === 'removedFromGroup'",
+   "            state.removed.value = false"],
+
+  ["example-realistic-demo/client/session.ts",
+   "restore marks every record removed",
+   "            state.removed.value =\n                user.state?.groupActiveState.kind === 'removedFromGroup'",
+   "            state.removed.value = true"],
+
+  ["example-realistic-demo/client/session.ts",
+   "a gone route is treated as an ask for the stored room",
+   "    if (asked.kind === 'gone') return false",
+   "    if (asked.kind === 'gone') return true"],
+
+  ["example-realistic-demo/client/session.ts",
+   "the bare origin no longer lets the record win",
+   "    if (asked.kind === 'setup') return true",
+   "    if (asked.kind === 'setup') return false"],
+
+  ["example-realistic-demo/client/group-lock.ts",
+   "the lock runs jobs immediately instead of queueing",
+   "            const result = tail.then(() => job())",
+   "            const result = job()"],
+
+  ["example-realistic-demo/client/group-lock.ts",
+   "a rejected job poisons the queue",
+   "            tail = result.then(() => {}, () => {})",
+   "            tail = result.then(() => {})"],
+
+  ["example-realistic-demo/client/apply-entry.ts",
+   "applying an entry does not take the lock",
+   "    return (entry:LogEntry) => lock.run(() => apply(entry))",
+   "    return (entry:LogEntry) => apply(entry)"],
+
+  ["example-realistic-demo/client/apply-entry.ts",
+   "the echo is matched positionally instead of by ciphertext",
+   "        const index = pending.findIndex(sent => {\n            return sent.payload === entry.payload\n        })",
+   "        const index = pending.length === 0 ? -1 : 0"],
+
+  ["example-realistic-demo/client/chat.ts",
+   "a send does not take the lock",
+   "            return lock.run(() => encryptAndSend(text)).catch(err => {",
+   "            return Promise.resolve(encryptAndSend(text)).catch(err => {"],
+
+  ["example-realistic-demo/client/chat.ts",
+   "the payload is not kept beside the plaintext",
+   "                { payload, text: trimmed }",
+   "                { payload: '', text: trimmed }"],
+
+  ["example-realistic-demo/client/approvals.ts",
+   "an approval does not take the lock",
+   "        last = lock.run(() => commit(request))",
+   "        last = Promise.resolve(commit(request))"],
+
+  ["example-realistic-demo/client/approvals.ts",
+   "a removal does not take the lock",
+   "            last = lock.run(() => removeMember(member))",
+   "            last = Promise.resolve(removeMember(member))"]
+]

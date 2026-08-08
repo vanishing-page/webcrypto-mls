@@ -189,6 +189,9 @@ export async function protect (
         encodePrivateMessageContent(config)(content),
     )
 
+    key.fill(0)
+    nonce.fill(0)
+
     const senderData:SenderData = {
         leafIndex,
         generation,
@@ -247,6 +250,9 @@ export async function unprotectPrivateMessage (
     }
 
     const decrypted = await cs.hpke.decryptAead(key, nonce, encodePrivateContentAAD(aad), msg.ciphertext)
+
+    key.fill(0)
+    nonce.fill(0)
 
     const pmc = decodePrivateMessageContent(msg.contentType)(decrypted, 0)?.[0]
 

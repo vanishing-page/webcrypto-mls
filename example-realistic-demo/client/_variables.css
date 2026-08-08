@@ -1,0 +1,95 @@
+/* Design tokens for the realistic demo.
+ *
+ * The palette stays in the family with `example/style.css` -- the accent
+ * is still #008aff -- but it is expressed in OKLCH at that colour's own
+ * hue, 253.5, so the neutrals are tinted toward the brand rather than
+ * being gray. Copied rather than imported for the reason given at the
+ * top of `style.css`: this is a separate application, and sharing a
+ * sheet would tie the two appearances together.
+ *
+ * One deliberate departure from the family. White text on #008aff is
+ * 3.45:1, which fails WCAG AA, so every control that carries white text
+ * uses `--color-accent-ink` (5.6:1) instead. #008aff is kept for marks
+ * that are not text, which is where the family resemblance actually
+ * lives. Every ratio in the comments below was computed, not judged.
+ */
+:root {
+   /* Surfaces, lightest first. */
+   --color-paper: oklch(98.5% 0.004 253.5);
+   --color-surface: oklch(96.2% 0.007 253.5);
+   --color-sunken: oklch(93.5% 0.009 253.5);
+
+   /* Rules. Hairlines do the work cards would otherwise do. */
+   --color-rule: oklch(88.5% 0.012 253.5);
+   --color-rule-strong: oklch(76% 0.02 253.5);
+
+   /* Text. One quieter tone, not two: labels, sequence numbers and
+      marks all take `muted`, and at 6.9:1 it is safe for prose. */
+   --color-ink: black;
+   /* --color-ink: oklch(21.5% 0.024 253.5); */
+   --color-ink-muted: oklch(45.5% 0.028 253.5);    /*  6.9:1 on paper */
+
+   /* The family accent, unchanged, for marks that are not text. */
+   --color-accent: #008aff;
+   --color-accent-ink: oklch(52% 0.16 253.5);      /*  5.6:1 with white */
+   --color-accent-deep: oklch(45% 0.14 253.5);     /*  7.5:1 with white */
+   --color-accent-wash: oklch(95.5% 0.02 253.5);
+
+   /* Connected right now. Never used as the only signal. */
+   --color-live: oklch(52% 0.125 152);             /*  4.9:1 on paper */
+   --color-live-wash: oklch(95.5% 0.03 152);
+
+   /* The decision worth pausing over: re-admitting someone removed,
+      and a key package that is not the asker's own. */
+   --color-flag: oklch(52% 0.16 40);               /*  5.6:1 on paper */
+   --color-flag-wash: oklch(96% 0.022 60);
+
+   --color-on-accent: oklch(99% 0.002 253.5);
+
+   /* Three registers, all of them already on the machine -- nothing is
+      downloaded to draw this page. The display stack is the one the
+      other demos use, which is where the family resemblance lives;
+      what is new is the split.
+
+      Display sets the interface: headings, labels, controls. The body
+      serif sets everything meant to be read, so a paragraph is
+      visibly a different kind of thing from a control. Mono means the
+      value was produced by a machine -- a room id, an epoch, a
+      sequence number -- and is never used to make prose look
+      technical. */
+   --font-display: 'Gill Sans', 'Gill Sans MT', Calibri,
+      'Trebuchet MS', sans-serif;
+   --font-body: 'Iowan Old Style', 'Palatino Linotype', Palatino,
+      Georgia, 'Times New Roman', serif;
+   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo,
+      Consolas, 'DejaVu Sans Mono', monospace;
+
+   /* Sizes are not tokens. Every `font-size` on this page states its
+      own value in rems, at the rule that sets it, so reading a rule
+      tells you how big the thing is without a second lookup. The scale
+      is still a scale -- 1rem for labels and machine values, 1.125rem
+      for prose, 1.375rem for a lead or an h3, and a clamp on the h1 --
+      and nothing goes below 1rem, per the house rule. */
+
+   --leading-tight: 1.15;
+   --leading-snug: 1.35;
+   --leading-body: 1.6;
+   --leading-loose: 1.68;
+
+   --tracking-label: 0.09em;
+   --tracking-tight: -0.015em;
+
+   /* One measure for everything that is read, and one gutter down the
+      left of the log for the numbers the room gave its entries --
+      wide enough for a five-figure sequence at the mono size. */
+   --measure: 40rem;
+   --seq: 3.5rem;
+
+   /* Square, throughout. A radius here would be the first decorative
+      decision, and there is no second one that stops. */
+   --radius: 0;
+   --hairline: 1px;
+
+   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+   --duration: 90ms;
+}

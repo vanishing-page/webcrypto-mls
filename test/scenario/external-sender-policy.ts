@@ -54,7 +54,7 @@ async function makeAliceGroupWithExternalSender (cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )
@@ -66,7 +66,7 @@ async function makeAliceGroupWithExternalSender (cipherSuite:CiphersuiteName) {
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )

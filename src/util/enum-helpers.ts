@@ -1,3 +1,5 @@
+import { CodecError } from '../mls-error.js'
+
 export function enumNumberToKey<S extends string> (t:Record<S, number>):(n:number) => S | undefined {
     return (n) => (Object.values(t).includes(n) ? (reverseMap(t)[n] as S) : undefined)
 }
@@ -22,7 +24,13 @@ export function openEnumNumberToKey<S extends string> (rec:Record<S, number>):(n
 export function openEnumNumberEncoder<S extends string> (rec:Record<S, number>):(s:S) => number {
     return (s) => {
         const x = rec[s]
-        if (x === undefined) return Number(s)
-        else return x
+        if (x !== undefined) return x
+        const n = Number(s)
+        if (!Number.isInteger(n)) {
+            throw new CodecError(
+                `Cannot encode unknown enum value "${s}" as a number`,
+            )
+        }
+        return n
     }
 }

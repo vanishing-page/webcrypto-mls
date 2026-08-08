@@ -49,7 +49,7 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -72,7 +72,7 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -84,7 +84,7 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

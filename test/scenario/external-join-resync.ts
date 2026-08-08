@@ -3,6 +3,7 @@ import { createGroup, joinGroup, makePskIndex } from '../../src/client-state.js'
 import { createGroupInfoWithExternalPubAndRatchetTree, joinGroupExternal, createCommit } from '../../src/create-commit.js'
 import { processPublicMessage } from '../../src/process-messages.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
+import { ValidationError } from '../../src/mls-error.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import {
@@ -30,6 +31,77 @@ for (const cs of Object.keys(ciphersuites)) {
             throw error
         }
     })
+
+    test(`External join Resync with no matching leaf throws ValidationError ${cs}`, async (t) => {
+        try {
+            await externalJoinResyncNoMatchTest(cs as CiphersuiteName, t)
+        } catch (error:any) {
+            if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+}
+
+async function externalJoinResyncNoMatchTest (cipherSuite:CiphersuiteName, t:any) {
+    const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
+
+    const aliceCredential:Credential = {
+        credentialType: 'basic',
+        identity: new TextEncoder().encode('alice')
+    }
+    const alice = await generateKeyPackage(
+        aliceCredential,
+        defaultCapabilities(),
+        defaultLifetime(),
+        [],
+        impl
+    )
+
+    const groupId = new TextEncoder().encode('group1')
+
+    const aliceGroup = await createGroup(
+        groupId,
+        alice.publicPackage,
+        alice.privatePackage,
+        [],
+        impl
+    )
+
+    const groupInfo = await createGroupInfoWithExternalPubAndRatchetTree(aliceGroup, [], impl)
+
+    // eve was never a member of the group, so resync has no prior leaf to match
+    const eveCredential:Credential = {
+        credentialType: 'basic',
+        identity: new TextEncoder().encode('eve')
+    }
+    const eve = await generateKeyPackage(
+        eveCredential,
+        defaultCapabilities(),
+        defaultLifetime(),
+        [],
+        impl
+    )
+
+    let thrown:unknown
+    try {
+        await joinGroupExternal(
+            groupInfo,
+            eve.publicPackage,
+            eve.privatePackage,
+            true,
+            impl,
+        )
+    } catch (error) {
+        thrown = error
+    }
+
+    t.ok(
+        thrown instanceof ValidationError,
+        'resync external join with no matching leaf should throw ValidationError',
+    )
 }
 
 async function externalJoinResyncTest (cipherSuite:CiphersuiteName, t:any) {
@@ -42,7 +114,7 @@ async function externalJoinResyncTest (cipherSuite:CiphersuiteName, t:any) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -64,7 +136,7 @@ async function externalJoinResyncTest (cipherSuite:CiphersuiteName, t:any) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )
@@ -76,7 +148,7 @@ async function externalJoinResyncTest (cipherSuite:CiphersuiteName, t:any) {
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl
     )

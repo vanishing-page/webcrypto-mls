@@ -1,7 +1,19 @@
 import type { Decoder } from './tls-decoder.js'
 import type { Encoder } from './tls-encoder.js'
+import { CodecError } from '../mls-error.js'
+
+function assertUintRange (n:number, bits:number):void {
+    const max = 2 ** bits - 1
+    if (!Number.isInteger(n) || n < 0 || n > max) {
+        throw new CodecError(
+            `Cannot encode ${n} as an unsigned ${bits}-bit integer: ` +
+            `must be an integer in range [0, ${max}]`,
+        )
+    }
+}
 
 export const encodeUint8:Encoder<number> = (n) => {
+    assertUintRange(n, 8)
     const buffer = new ArrayBuffer(1)
     const view = new DataView(buffer)
     view.setUint8(0, n)
@@ -14,6 +26,7 @@ export const decodeUint8:Decoder<number> = (b, offset) => {
 }
 
 export const encodeUint16:Encoder<number> = (n) => {
+    assertUintRange(n, 16)
     const buffer = new ArrayBuffer(2)
     const view = new DataView(buffer)
     view.setUint16(0, n)
@@ -30,6 +43,7 @@ export const decodeUint16:Decoder<number> = (b, offset) => {
 }
 
 export const encodeUint32:Encoder<number> = (n) => {
+    assertUintRange(n, 32)
     const buffer = new ArrayBuffer(4)
     const view = new DataView(buffer)
     view.setUint32(0, n)

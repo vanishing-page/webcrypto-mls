@@ -2,6 +2,8 @@
     "extends": "./tsconfig.json",
     "exclude": [
         "example",
+        "example-shared",
+        "example-realistic-demo",
         "test"
     ]
 }

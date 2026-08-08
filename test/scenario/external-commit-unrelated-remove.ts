@@ -203,14 +203,14 @@ async function externalCommitUnrelatedRemoveTest (cipherSuite:CiphersuiteName, t
     const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
 
     const aliceCredential:Credential = { credentialType: 'basic', identity: new TextEncoder().encode('alice') }
-    const alice = await generateKeyPackage(aliceCredential, defaultCapabilities(), defaultLifetime, [], impl)
+    const alice = await generateKeyPackage(aliceCredential, defaultCapabilities(), defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('group1')
 
     let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
 
     const bobCredential:Credential = { credentialType: 'basic', identity: new TextEncoder().encode('bob') }
-    const bob = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime, [], impl)
+    const bob = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime(), [], impl)
 
     const addBobProposal:ProposalAdd = { proposalType: 'add', add: { keyPackage: bob.publicPackage } }
 
@@ -234,7 +234,7 @@ async function externalCommitUnrelatedRemoveTest (cipherSuite:CiphersuiteName, t
     // mallory is an outsider who is not a member of the group, and has no
     // relation to bob's leaf whatsoever.
     const malloryCredential:Credential = { credentialType: 'basic', identity: new TextEncoder().encode('mallory') }
-    const mallory = await generateKeyPackage(malloryCredential, defaultCapabilities(), defaultLifetime, [], impl)
+    const mallory = await generateKeyPackage(malloryCredential, defaultCapabilities(), defaultLifetime(), [], impl)
 
     const groupInfo = await createGroupInfoWithExternalPubAndRatchetTree(aliceGroup, [], impl)
 

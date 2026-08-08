@@ -57,7 +57,7 @@ async function tamperedUnmergedLeaves (t:any, cipherSuite:CiphersuiteName) {
         return generateKeyPackage(
             credential,
             defaultCapabilities(),
-            defaultLifetime,
+            defaultLifetime(),
             [],
             impl,
         )

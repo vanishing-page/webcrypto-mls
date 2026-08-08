@@ -1,6 +1,6 @@
 import { decodeUint16, decodeUint32, encodeUint16, encodeUint32 } from './codec/number.js'
 import type { Decoder } from './codec/tls-decoder.js'
-import { flatMapDecoder, mapDecoder, mapDecoders, orDecoder } from './codec/tls-decoder.js'
+import { flatMapDecoder, mapDecoder, mapDecoders } from './codec/tls-decoder.js'
 import type { Encoder } from './codec/tls-encoder.js'
 import { contramapEncoder, contramapEncoders } from './codec/tls-encoder.js'
 import { decodeVarLenData, decodeVarLenType, encodeVarLenData, encodeVarLenType } from './codec/variable-length.js'
@@ -12,11 +12,12 @@ import type { KeyPackage } from './key-package.js'
 import { decodeKeyPackage, encodeKeyPackage } from './key-package.js'
 import type { PreSharedKeyID } from './presharedkey.js'
 import { decodePskId, encodePskId } from './presharedkey.js'
-import { decodeDefaultProposalType, encodeDefaultProposalType } from './default-proposal-type.js'
+import { defaultProposalTypes, encodeDefaultProposalType } from './default-proposal-type.js'
 import type { ProtocolVersionName } from './protocol-version.js'
 import { decodeProtocolVersion, encodeProtocolVersion } from './protocol-version.js'
 import type { LeafNodeUpdate } from './leaf-node.js'
 import { decodeLeafNodeUpdate, encodeLeafNode } from './leaf-node.js'
+import { enumNumberToKey } from './util/enum-helpers.js'
 
 export interface Add {
     keyPackage:KeyPackage
@@ -228,8 +229,12 @@ export function decodeProposalCustom (proposalType:number):Decoder<ProposalCusto
     return mapDecoder(decodeVarLenData, (proposalData) => ({ proposalType, proposalData }))
 }
 
-export const decodeProposal:Decoder<Proposal> = orDecoder(
-    flatMapDecoder(decodeDefaultProposalType, (proposalType):Decoder<Proposal> => {
+const decodeDefaultProposalTypeName = enumNumberToKey(defaultProposalTypes)
+
+export const decodeProposal:Decoder<Proposal> = flatMapDecoder(
+    decodeUint16,
+    (n):Decoder<Proposal> => {
+        const proposalType = decodeDefaultProposalTypeName(n)
         switch (proposalType) {
             case 'add':
                 return decodeProposalAdd
@@ -245,7 +250,8 @@ export const decodeProposal:Decoder<Proposal> = orDecoder(
                 return decodeProposalExternalInit
             case 'group_context_extensions':
                 return decodeProposalGroupContextExtensions
+            default:
+                return decodeProposalCustom(n)
         }
-    }),
-    flatMapDecoder(decodeUint16, (n) => decodeProposalCustom(n)),
+    },
 )

@@ -78,7 +78,7 @@ async function makeMember (name:string, impl:Awaited<ReturnType<typeof getCipher
         credentialType: 'basic',
         identity: new TextEncoder().encode(name),
     }
-    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime, [], impl)
+    return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime(), [], impl)
 }
 
 async function applicationUsageAllowed (cipherSuite:CiphersuiteName, t:any) {

@@ -1,0 +1,15 @@
+{
+    "extends": "../tsconfig.json",
+    "compilerOptions": {
+        "types": [],
+        "lib": ["ES2022"],
+        "moduleResolution": "Bundler",
+        "noEmit": true
+    },
+    "include": [
+        "index.ts",
+        "protocol.ts",
+        "room-logic.ts",
+        "worker-configuration.d.ts"
+    ]
+}

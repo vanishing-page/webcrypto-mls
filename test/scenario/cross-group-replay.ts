@@ -43,7 +43,7 @@ async function crossGroupReplayTest (cipherSuite:CiphersuiteName, t:any) {
     const alice = await generateKeyPackage(
         aliceCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )
@@ -55,7 +55,7 @@ async function crossGroupReplayTest (cipherSuite:CiphersuiteName, t:any) {
     const bob = await generateKeyPackage(
         bobCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )
@@ -67,7 +67,7 @@ async function crossGroupReplayTest (cipherSuite:CiphersuiteName, t:any) {
     const charlie = await generateKeyPackage(
         charlieCredential,
         defaultCapabilities(),
-        defaultLifetime,
+        defaultLifetime(),
         [],
         impl,
     )
