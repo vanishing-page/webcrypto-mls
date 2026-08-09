@@ -20,7 +20,9 @@ This implementation uses the
 [webcyrpto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API),
 which means it is usable in the browser.
 
-[See a live demo](https://vanishing-page.github.io/webcrypto-mls/)
+* [See a live demo](https://vanishing-page.github.io/webcrypto-mls/)
+* [See the `example-realistic-demo`](https://webcrypto-mls.nichoth.workers.dev/)
+  folder, deployed to Cloudflare.
 
 <details><summary><h2>Contents</h2></summary>
 
@@ -1267,8 +1269,4 @@ cp ./node_modules/@vanishing.page/webcrypto-mls/dist/index.min.js ./public/mls.m
 #### HTML
 ```html
 <script type="module" src="/mls.min.js"></script>
-```
-
-```
-/ed3d-plan-and-execute:execute-implementation-plan /Users/nick/code/webcrypto-mls/docs/implementation-plans/2026-08-06-room-you-section/ /Users/nick/code/webcrypto-mls/
 ```
