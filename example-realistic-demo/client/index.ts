@@ -52,7 +52,18 @@ import { persistOutcome } from '../../example-shared/storage-panel.js'
 
 const state = createRealisticState()
 
-if (isDev()) {
+/**
+ * Development only. `state` holds live group secrets, so a build must not
+ * hand them to anything that can reach the global scope.
+ *
+ * The test is `import.meta.env.DEV` and nothing else. It is true only
+ * under `vite` the dev server, and Vite replaces it with the literal
+ * `false` in every build, which is what lets the whole block be dropped
+ * rather than merely skipped. A `MODE !== 'production'` test would look
+ * equivalent and is not -- any build run under a named mode other than
+ * `production` would ship the assignment.
+ */
+if (import.meta.env.DEV) {
     // @ts-expect-error dev
     window.state = state
     localStorage.setItem('DEBUG', 'webcrypto-mls,webcrypto-mls:*')
@@ -413,10 +424,6 @@ if (root) {
         state.status.value = `Could not start: ${err}`
         render(html`<p class="status">${state.status.value}</p>`, root)
     }
-}
-
-function isDev ():boolean {
-    return !!(import.meta.env.DEV || import.meta.env.MODE !== 'production')
 }
 
 function CurrentView () {

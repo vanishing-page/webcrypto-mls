@@ -17,6 +17,7 @@ import { processMessage } from '../../src/process-messages.js'
 import { encodeExternalSenders } from '../../src/external-sender.js'
 import type { WireformatName } from '../../src/wireformat.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('Reject incoming message ' + cs, async (t) => {
@@ -57,7 +58,8 @@ async function rejectIncomingMessagesTest (t:any, cipherSuite:CiphersuiteName, p
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -99,6 +101,8 @@ async function rejectIncomingMessagesTest (t:any, cipherSuite:CiphersuiteName, p
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     const bobProposeExtensions:Proposal = {

@@ -30,6 +30,7 @@ import type { Extension } from '../../src/extension.js'
 import type { LeafNode } from '../../src/leaf-node.js'
 import { proposeExternal } from '../../src/index.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 function withAuthService (
     state:ClientState,
@@ -67,7 +68,8 @@ for (const cs of testCiphersuites()) {
                 alice.publicPackage,
                 alice.privatePackage,
                 [],
-                impl
+                impl,
+                testClientConfig
             )
 
             const bobCredential:Credential = {
@@ -127,6 +129,8 @@ for (const cs of testCiphersuites()) {
                 emptyPskIndex,
                 impl,
                 aliceGroup.ratchetTree,
+                undefined,
+                testClientConfig
             )
 
             t.deepEqual(bobGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'bob should have same epoch authenticator as alice')
@@ -138,6 +142,8 @@ for (const cs of testCiphersuites()) {
                 emptyPskIndex,
                 impl,
                 aliceGroup.ratchetTree,
+                undefined,
+                testClientConfig
             )
 
             t.deepEqual(charlieGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'charlie should have same epoch authenticator as alice')

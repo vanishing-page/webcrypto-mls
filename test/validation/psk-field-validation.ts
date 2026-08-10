@@ -18,6 +18,7 @@ import { ValidationError } from '../../src/mls-error.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 function isSkippableError (error:any):boolean {
     return error?.name === 'NotSupportedError' || error?.name === 'DependencyError'
@@ -88,7 +89,7 @@ async function applicationUsageAllowed (cipherSuite:CiphersuiteName, t:any) {
     const bob = await makeMember('bob', impl)
 
     const groupId = new TextEncoder().encode('app-psk-group')
-    const newGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    const newGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     const pskNonce = impl.rng.randomBytes(impl.kdf.size)
     const pskSecret = impl.rng.randomBytes(impl.kdf.size)
@@ -133,6 +134,7 @@ async function applicationUsageAllowed (cipherSuite:CiphersuiteName, t:any) {
         impl,
         commitResult.newState.ratchetTree,
         undefined,
+        testClientConfig
     )
 
     t.equal(bobGroup.groupContext.epoch, 1n, 'bob should have joined at epoch 1')
@@ -143,13 +145,13 @@ async function validatesAllResumptionPsks (cipherSuite:CiphersuiteName, t:any) {
 
     const alice = await makeMember('alice', impl)
     const groupId = new TextEncoder().encode('branch-source-group')
-    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     const aliceNew = await makeMember('alice', impl)
     const bobNew = await makeMember('bob', impl)
 
     const newGroupId = new TextEncoder().encode('branch-target-group')
-    const newGroup = await createGroup(newGroupId, aliceNew.publicPackage, aliceNew.privatePackage, [], impl)
+    const newGroup = await createGroup(newGroupId, aliceNew.publicPackage, aliceNew.privatePackage, [], impl, testClientConfig)
 
     const goodPsk = makeResumptionPsk(aliceGroup, 'branch', impl)
     const goodPskEpoch = aliceGroup.groupContext.epoch
@@ -197,6 +199,7 @@ async function validatesAllResumptionPsks (cipherSuite:CiphersuiteName, t:any) {
             impl,
             commitResult.newState.ratchetTree,
             aliceGroup,
+            testClientConfig
         )
         t.fail('should have thrown ValidationError for the second (bad) resumption PSK')
     } catch (error) {

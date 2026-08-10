@@ -17,6 +17,7 @@ import type { FramedContentAuthDataCommit } from '../../src/framed-content.js'
 import type { AuthenticatedContentCommit } from '../../src/authenticated-content.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 // Regression test for US-004: a malicious committer can truncate an
 // UpdatePathNode's encrypted_path_secret vector below what the copath
@@ -62,7 +63,7 @@ async function tooFewCiphertextsTest (cipherSuite:CiphersuiteName, t:any) {
 
     const groupId = new TextEncoder().encode('group1')
 
-    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     const addBobProposal:ProposalAdd = { proposalType: 'add', add: { keyPackage: bob.publicPackage } }
     const addCharlieProposal:ProposalAdd = { proposalType: 'add', add: { keyPackage: charlie.publicPackage } }
@@ -85,6 +86,8 @@ async function tooFewCiphertextsTest (cipherSuite:CiphersuiteName, t:any) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     // A plain, empty-proposal commit still carries an UpdatePath.

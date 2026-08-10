@@ -572,26 +572,33 @@ values, so it is not structured-clone friendly and must be re-attached after
 restoring from storage.
 ([`src/client-config.ts`](../src/client-config.ts))
 
-**`AuthenticationService`** -- The `validateCredential` hook. The default
-accepts every credential unconditionally, which is only safe for local
-testing; production applications must supply a real one.
+**`AuthenticationService`** -- The `validateCredential` hook. There is no
+usable default: `defaultClientConfig` carries
+`failClosedAuthenticationService`, which throws a `UsageError` the first
+time a credential decision is needed, so every application has to supply
+a real one. `unsafeAcceptAllAuthenticationService` accepts everything and
+is for local testing only. The hook's third argument is the credential
+currently at the leaf being replaced, which is what an application needs
+to enforce identity continuity across an Update.
 ([`src/authentication-service.ts`](../src/authentication-service.ts))
 
 **`KeyRetentionConfig`** -- How long to keep old message keys around for
 out-of-order delivery: generations per ratchet, epochs of history, and a cap
 on how far forward a ratchet may be advanced in one step. Defaults are 10, 4,
-and 200.
+and 200. A retention count of `0` means retain nothing, not retain everything.
 ([`src/key-retention-config.ts`](../src/key-retention-config.ts))
 
 **`LifetimeConfig`** -- A cap on how long a key package lifetime window may
 span (`maximumTotalLifetime`, default one month), and whether to enforce that
 window on leaf nodes received from peers as well as ones generated locally
-(`validateLifetimeOnReceive`, default `false`, recommended `true` in
-production).
+(`validateLifetimeOnReceive`, default `true`; set it to `false` only to opt
+out, e.g. when the local clock cannot be trusted).
 ([`src/lifetime-config.ts`](../src/lifetime-config.ts))
 
 **`PaddingConfig`** -- Either `padUntilLength` (pad short messages up to a
-floor, default 256 bytes) or `alwaysPad` (add a fixed number of bytes).
+floor, default 256 bytes, hiding length only below that floor) or
+`alwaysPad` (add a fixed number of bytes to every message, which hides no
+length at all, since an observer subtracts the constant).
 ([`src/padding-config.ts`](../src/padding-config.ts))
 
 **`KeyPackageEqualityConfig`** -- How to decide two key packages, or a key

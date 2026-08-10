@@ -20,6 +20,7 @@ import { testCiphersuites } from '../helpers/suite-filter.js'
 
 import type { ProtocolVersionName } from '../../src/protocol-version.js'
 import { ValidationError } from '../../src/mls-error.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 // Convert test.concurrent.each to individual tests
 for (const cs of testCiphersuites()) {
@@ -47,7 +48,8 @@ for (const cs of testCiphersuites()) {
                 alice.publicPackage,
                 alice.privatePackage,
                 [],
-                impl
+                impl,
+                testClientConfig
             )
 
             const bobCredential:Credential = {
@@ -86,6 +88,8 @@ for (const cs of testCiphersuites()) {
                 emptyPskIndex,
                 impl,
                 aliceGroup.ratchetTree,
+                undefined,
+                testClientConfig
             )
 
             const bobCommitResult = await createCommit({

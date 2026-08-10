@@ -30,7 +30,11 @@ test('every setup step says what to do and why', t => {
 })
 
 test('HowToUse renders one ordered list item per step', t => {
-    const tree = HowToUse({ steps: [] }, {})
+    // no `steps` prop, which is what asks for the default order. Passing
+    // `[]` here is what this test used to do, and `[]` is a caller
+    // asking for no steps at all, so it measured the empty list against
+    // the default's length and had been failing ever since.
+    const tree = HowToUse({}, {})
 
     t.equal(
         findByClass(tree, 'card instructions').length,

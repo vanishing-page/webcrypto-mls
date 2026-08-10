@@ -15,6 +15,7 @@ import type { Credential } from '../../src/credential.js'
 import type { ProposalAdd } from '../../src/proposal.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 test('Mixed provider non-extractable identity interop (AC3.3)',
     async (t:Test) => {
@@ -84,7 +85,8 @@ async function mixedProviderInterop (t:Test) {
         aKeyPackage.publicPackage,
         aKeyPackage.privatePackage,
         [],
-        implA
+        implA,
+        testClientConfig
     )
 
     // Member B: noble provider with generated key package
@@ -127,6 +129,8 @@ async function mixedProviderInterop (t:Test) {
         emptyPskIndex,
         implB,
         aUpdatedState.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     // A sends application message

@@ -36,11 +36,20 @@ export interface PendingRequest {
     standing:Standing
 }
 
+/**
+ * The last three are the join-request limits, kept apart rather than
+ * folded into one refusal: an oversized key package is a bug in the
+ * requester, a full queue is the room's state, and a rate limit is
+ * temporary. See `classifyJoinRequest` in `room-logic.ts`.
+ */
 export type ErrorReason =
     | 'room-exists'
     | 'not-creator'
     | 'not-member'
     | 'bad-message'
+    | 'key-package-too-large'
+    | 'too-many-pending'
+    | 'rate-limited'
 
 export type ClientMessage =
     | {
@@ -134,6 +143,65 @@ function isStr (v:unknown):v is string {
     return typeof v === 'string'
 }
 
+/**
+ * Length bounds, in wire characters -- these count UTF-16 code units of
+ * the JSON string, not decoded bytes, because the room stores and
+ * forwards exactly what it was given and never decodes a payload.
+ *
+ * Bounding is separate from parsing on purpose. Without it every string
+ * here is checked for its type and nothing else, so an admitted member
+ * can append a multi-megabyte `mls` payload that the room persists for
+ * three days and re-broadcasts to every peer on every reconnect. The
+ * question the type checks answer is who may write; these answer how
+ * large a write may be.
+ *
+ * Every bound is generous against real traffic:
+ *
+ * - An identity is the base64url of a signature public key: 43
+ *   characters for Ed25519, 178 for the largest NIST curve MLS defines.
+ *   512 leaves several times that.
+ * - A creator token is a `crypto.randomUUID()`, 36 characters.
+ * - A payload is base64 of one MLSMessage. Application messages are a
+ *   few hundred bytes; a commit with an UpdatePath grows with the group,
+ *   on the order of a kilobyte per member. 256 KiB is a room of
+ *   thousands, which this demo will never be, and still refuses the
+ *   megabyte writes an unbounded field invites.
+ *
+ * A display name has no bound of its own because it has no field of its
+ * own -- it rides inside a key package as a basic credential, so it is
+ * bounded by whatever bounds the key package.
+ *
+ * `MAX_WIRE_MESSAGE_LENGTH` is the whole-frame wall, checked before
+ * `JSON.parse` so an enormous frame costs no parse. It sits above
+ * `MAX_PAYLOAD_LENGTH` because a legal maximum-size payload still has to
+ * fit inside a legal frame, with its JSON envelope.
+ *
+ * A join request's key package is bounded here at `MAX_PAYLOAD_LENGTH`,
+ * which is the structural wall rather than the real rule.
+ * `MAX_KEY_PACKAGE_LENGTH` in `room-logic.ts` is much tighter and is
+ * what a requester is actually held to; keeping the wall loose is what
+ * lets a merely-too-big key package be answered `key-package-too-large`
+ * instead of a bare `bad-message`.
+ */
+export const MAX_IDENTITY_LENGTH = 512
+export const MAX_CREATOR_TOKEN_LENGTH = 128
+export const MAX_PAYLOAD_LENGTH = 256 * 1024
+export const MAX_WIRE_MESSAGE_LENGTH = MAX_PAYLOAD_LENGTH + 64 * 1024
+
+// A string of at most `max` characters. The bound is inclusive: a value
+// of exactly `max` is legal, and one character more is not.
+function isBounded (v:unknown, max:number):v is string {
+    return isStr(v) && v.length <= max
+}
+
+function isIdentity (v:unknown):v is string {
+    return isBounded(v, MAX_IDENTITY_LENGTH)
+}
+
+function isPayload (v:unknown):v is string {
+    return isBounded(v, MAX_PAYLOAD_LENGTH)
+}
+
 // Rejects NaN and Infinity, which survive a `typeof === 'number'` check
 // and would otherwise corrupt a cursor or a seq comparison.
 function isNum (v:unknown):v is number {
@@ -150,7 +218,10 @@ const ERROR_REASONS:readonly string[] = [
     'room-exists',
     'not-creator',
     'not-member',
-    'bad-message'
+    'bad-message',
+    'key-package-too-large',
+    'too-many-pending',
+    'rate-limited'
 ]
 
 export function isEntryKind (v:unknown):v is EntryKind {
@@ -165,17 +236,17 @@ export function isLogEntry (v:unknown):v is LogEntry {
     return (
         isObject(v) &&
         isNum(v.seq) &&
-        isStr(v.sender) &&
+        isIdentity(v.sender) &&
         isEntryKind(v.kind) &&
-        isStr(v.payload)
+        isPayload(v.payload)
     )
 }
 
 export function isPendingRequest (v:unknown):v is PendingRequest {
     return (
         isObject(v) &&
-        isStr(v.identity) &&
-        isStr(v.keyPackage) &&
+        isIdentity(v.identity) &&
+        isPayload(v.keyPackage) &&
         isNum(v.requestedAt) &&
         isStr(v.standing) &&
         ['stranger', 'pre-approved', 'previously-removed']
@@ -188,20 +259,21 @@ export function isClientMessage (v:unknown):v is ClientMessage {
 
     switch (v.type) {
         case 'create':
-            return isStr(v.identity)
+            return isIdentity(v.identity)
         case 'hello':
-            return isStr(v.identity) && isNum(v.cursor) &&
-                (v.creatorToken === undefined || isStr(v.creatorToken))
+            return isIdentity(v.identity) && isNum(v.cursor) &&
+                (v.creatorToken === undefined ||
+                    isBounded(v.creatorToken, MAX_CREATOR_TOKEN_LENGTH))
         case 'mls':
-            return isEntryKind(v.kind) && isStr(v.payload)
+            return isEntryKind(v.kind) && isPayload(v.payload)
         case 'join-request':
-            return isStr(v.identity) && isStr(v.keyPackage)
+            return isIdentity(v.identity) && isPayload(v.keyPackage)
         case 'approve':
         case 'deny':
         case 'removed':
-            return isStr(v.identity)
+            return isIdentity(v.identity)
         case 'welcome':
-            return isStr(v.to) && isStr(v.payload)
+            return isIdentity(v.to) && isPayload(v.payload)
         default:
             return false
     }
@@ -212,7 +284,8 @@ export function isRoomMessage (v:unknown):v is RoomMessage {
 
     switch (v.type) {
         case 'created':
-            return isStr(v.creatorToken) && isNum(v.expiresAt)
+            return isBounded(v.creatorToken, MAX_CREATOR_TOKEN_LENGTH) &&
+                isNum(v.expiresAt)
         case 'no-room':
             return true
         case 'room-state':
@@ -224,13 +297,13 @@ export function isRoomMessage (v:unknown):v is RoomMessage {
         case 'entry':
             return isLogEntry(v.entry)
         case 'welcome-you':
-            return isStr(v.payload) && isNum(v.cursor) &&
+            return isPayload(v.payload) && isNum(v.cursor) &&
                 isNum(v.priorCount)
         case 'pending':
             return Array.isArray(v.requests) &&
                 v.requests.every(isPendingRequest)
         case 'roster':
-            return Array.isArray(v.live) && v.live.every(isStr)
+            return Array.isArray(v.live) && v.live.every(isIdentity)
         case 'error':
             return isErrorReason(v.reason)
         default:

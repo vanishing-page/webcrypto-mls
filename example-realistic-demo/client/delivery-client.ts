@@ -7,6 +7,7 @@ import {
 } from '../protocol.js'
 import { advanceCursor, reconnectDelay } from './delivery-cursor.js'
 import { createEntryQueue, type EntryQueue } from './entry-queue.js'
+import { isMalformedEntry } from './malformed-entry.js'
 import type { RealisticState } from './state.js'
 
 /**
@@ -58,7 +59,26 @@ export function createDeliveryClient (
 
     const queue = createEntryQueue<LogEntry>({
         apply: opts.applyEntry,
-        onError (_err, entry) {
+        onError (err, entry) {
+            // Not an MLS message at all, whatever its sender called it.
+            // `kind` is asserted by the sender and the room cannot check
+            // it, so treating this as a failed commit would let one line
+            // of garbage stop every member's queue at the same seq
+            // forever -- the reconnect replays from the same cursor and
+            // fails on the same entry. Skipping it costs nothing: no
+            // group state moved, because none could.
+            if (isMalformedEntry(err)) {
+                batch(() => {
+                    state.status.value =
+                        'Skipped an entry that is not a group message.'
+                    state.cursor.value = advanceCursor(
+                        state.cursor.value,
+                        entry.seq
+                    )
+                })
+                return 'continue'
+            }
+
             // A commit that will not process is fatal for group state.
             // Advancing past it would corrupt the epoch silently, so
             // stop and say so.

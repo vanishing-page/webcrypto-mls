@@ -21,6 +21,7 @@ import type { RequiredCapabilities } from '../../src/required-capabilities.js'
 import { encodeRequiredCapabilities } from '../../src/required-capabilities.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('Commit adding required_capabilities the committer\'s own ' +
@@ -76,6 +77,7 @@ async function committerLeafDoesNotSupportOwnRequiredCapabilities (
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     const addBobCommitResult = await createCommit(
@@ -97,6 +99,8 @@ async function committerLeafDoesNotSupportOwnRequiredCapabilities (
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     const requiredCapabilities:RequiredCapabilities = {

@@ -22,6 +22,7 @@ import type { WireformatName } from '../../src/wireformat.js'
 import { processMessage } from '../../src/process-messages.js'
 import { acceptAll } from '../../src/incoming-message-action.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('Leave Proposal ' + cs, async (t) => {
@@ -62,7 +63,8 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -123,6 +125,9 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
         bob.privatePackage,
         emptyPskIndex,
         impl,
+        undefined,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(bobGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'should match')
@@ -133,6 +138,9 @@ async function leaveProposal (t:any, cipherSuite:CiphersuiteName, publicMessage:
         charlie.privatePackage,
         emptyPskIndex,
         impl,
+        undefined,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(charlieGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'should match')

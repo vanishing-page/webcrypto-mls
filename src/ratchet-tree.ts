@@ -233,9 +233,21 @@ export function removeLeafNode (tree:RatchetTree, removedLeafIndex:LeafIndex) {
 
 /**
  * When the right subtree of the tree no longer has any non-blank nodes, it can be safely removed
+ *
+ * A Remove that blanks the last non-blank node leaves nothing to condense.
+ * That is remotely triggerable -- a resync external join into a
+ * single-member group asks for exactly this -- so it has to read as a
+ * rejected message (`ValidationError`), not as a library bug
+ * (`InternalError`, which is what `extendRatchetTree` would throw).
  */
 function condenseRatchetTreeAfterRemove (tree:RatchetTree) {
-    return extendRatchetTree(stripBlankNodes(tree))
+    const stripped = stripBlankNodes(tree)
+
+    if (stripped.length === 0) {
+        throw new ValidationError('Cannot remove the only remaining leaf of a group')
+    }
+
+    return extendRatchetTree(stripped)
 }
 
 export function resolution (tree:(Node | undefined)[], nodeIndex:NodeIndex):NodeIndex[] {

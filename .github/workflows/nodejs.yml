@@ -18,9 +18,9 @@ jobs:
       uses: actions/setup-node@v5
       with:
         node-version: ${{ env.NODE_VERSION }}
-    - name: npm install, build, lint
+    - name: npm ci, build, lint
       run: |
-        npm install
+        npm ci
         npm run build --if-present
         npm run lint
       env:
@@ -63,8 +63,8 @@ jobs:
       uses: actions/setup-node@v5
       with:
         node-version: ${{ env.NODE_VERSION }}
-    - name: npm install
-      run: npm install
+    - name: npm ci
+      run: npm ci
       env:
         CI: true
     - name: Run tap tests

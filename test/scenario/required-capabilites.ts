@@ -17,6 +17,7 @@ import type { RequiredCapabilities } from '../../src/required-capabilities.js'
 import { encodeRequiredCapabilities } from '../../src/required-capabilities.js'
 import { ValidationError as _ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('Required Capabilities extension ' + cs, async (t) => {
@@ -81,6 +82,7 @@ async function requiredCapatabilitiesTest (t:any, cipherSuite:CiphersuiteName) {
         alice.privatePackage,
         [requiredCapabilitiesExtension],
         impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -129,6 +131,8 @@ async function requiredCapatabilitiesTest (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(bobGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'epoch authenticators should match')
@@ -186,6 +190,7 @@ async function requiredCapabilitiesWithRemovalTest (t:any, cipherSuite:Ciphersui
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -222,6 +227,8 @@ async function requiredCapabilitiesWithRemovalTest (t:any, cipherSuite:Ciphersui
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     const requiredCapabilities:RequiredCapabilities = {

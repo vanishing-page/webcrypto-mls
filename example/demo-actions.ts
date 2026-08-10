@@ -21,6 +21,7 @@ import {
 import { unprotectPrivateMessage } from '../src/message-protection.js'
 import type { DemoState } from './demo-state.js'
 import type { DemoUser } from '../example-shared/demo-user.js'
+import { demoClientConfig } from '../example-shared/demo-client-config.js'
 
 /**
  * Group-messaging actions (create user, start group, add member, send
@@ -112,7 +113,8 @@ export async function createMLSGroup (
             creator.keyPackage,
             creator.privateKeys,
             [],
-            ciphersuite.value
+            ciphersuite.value,
+            demoClientConfig
         )
 
         batch(() => {
@@ -179,7 +181,10 @@ export async function addUserToGroup (
                 newMember.keyPackage,
                 newMember.privateKeys,
                 makePskIndex(undefined, {}),
-                ciphersuite.value
+                ciphersuite.value,
+                undefined,
+                undefined,
+                demoClientConfig
             )
             users.value = new Map(users.value).set(newMemberName, {
                 ...newMember,
@@ -551,7 +556,10 @@ export async function addUsersToGroup (
                     target.keyPackage,
                     privateKeys,
                     makePskIndex(undefined, {}),
-                    ciphersuite.value
+                    ciphersuite.value,
+                    undefined,
+                    undefined,
+                    demoClientConfig
                 )
 
                 next = new Map(next).set(target.name, {

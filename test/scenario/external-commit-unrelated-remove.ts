@@ -49,9 +49,9 @@ import { leafWidth, nodeToLeafIndex, toLeafIndex } from '../../src/treemath.js'
 import { initializeEpoch } from '../../src/key-schedule.js'
 import { createSecretTree } from '../../src/secret-tree.js'
 import { protectPublicMessage } from '../../src/message-protection-public.js'
-import { defaultClientConfig } from '../../src/client-config.js'
 import { CryptoVerificationError, UsageError, ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`External commit Remove targeting unrelated member is rejected ${cs}`, async (t) => {
@@ -94,8 +94,8 @@ async function forgeExternalCommitWithRemove (
         await validateRatchetTree(
             ratchetTree,
             groupInfo.groupContext,
-            defaultClientConfig.lifetimeConfig,
-            defaultClientConfig.authService,
+            testClientConfig.lifetimeConfig,
+            testClientConfig.authService,
             groupInfo.groupContext.treeHash,
             cs,
         ),
@@ -103,7 +103,7 @@ async function forgeExternalCommitWithRemove (
 
     const signaturePublicKey = getSignaturePublicKeyFromLeafIndex(ratchetTree, toLeafIndex(groupInfo.signer))
     const signerCredential = getCredentialFromLeafIndex(ratchetTree, toLeafIndex(groupInfo.signer))
-    const credentialVerified = await defaultClientConfig.authService.validateCredential(signerCredential, signaturePublicKey)
+    const credentialVerified = await testClientConfig.authService.validateCredential(signerCredential, signaturePublicKey)
     if (!credentialVerified) throw new ValidationError('Could not validate credential')
 
     const groupInfoSignatureVerified = await verifyGroupInfoSignature(groupInfo, signaturePublicKey, cs.signature)
@@ -185,7 +185,7 @@ async function forgeExternalCommitWithRemove (
         keySchedule: epochSecrets.keySchedule,
         unappliedProposals: {},
         groupActiveState: { kind: 'active' },
-        clientConfig: defaultClientConfig,
+        clientConfig: testClientConfig,
     }
 
     const authenticatedContent:AuthenticatedContentCommit = {
@@ -207,7 +207,7 @@ async function externalCommitUnrelatedRemoveTest (cipherSuite:CiphersuiteName, t
 
     const groupId = new TextEncoder().encode('group1')
 
-    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     const bobCredential:Credential = { credentialType: 'basic', identity: new TextEncoder().encode('bob') }
     const bob = await generateKeyPackage(bobCredential, defaultCapabilities(), defaultLifetime(), [], impl)
@@ -227,6 +227,9 @@ async function externalCommitUnrelatedRemoveTest (cipherSuite:CiphersuiteName, t
         bob.privatePackage,
         emptyPskIndex,
         impl,
+        undefined,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(bobGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'bob should have matching epoch authenticator')

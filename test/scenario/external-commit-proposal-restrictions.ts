@@ -15,6 +15,7 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`External commit rejects proposal delivered by reference ${cs}`, async (t) => {
@@ -64,7 +65,8 @@ async function setupSoloGroup (cipherSuite:CiphersuiteName) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     return { impl, aliceGroup }

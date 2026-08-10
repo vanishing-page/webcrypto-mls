@@ -15,6 +15,7 @@ import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { toLeafIndex } from '../../src/treemath.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 // RFC 9420 SS7.6: the HPKEPublicKey values in an UpdatePath's nodes MUST be
 // distinct from every public key already present in the ratchet tree
@@ -71,6 +72,7 @@ async function rejectsLeafKeyCollision (t:any, cipherSuite:CiphersuiteName) {
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     const addBob = await createCommit(
@@ -142,6 +144,7 @@ async function rejectsIntraPathDuplicate (t:any, cipherSuite:CiphersuiteName) {
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     const addAll = await createCommit(

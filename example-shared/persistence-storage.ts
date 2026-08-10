@@ -1,13 +1,9 @@
 import {
     type ClientState,
     type KeyPackage,
-    type PrivateKeyPackage,
-    defaultAuthenticationService,
-    defaultPaddingConfig,
-    defaultKeyPackageEqualityConfig,
-    defaultLifetimeConfig,
-    defaultKeyRetentionConfig
+    type PrivateKeyPackage
 } from '../src/index.js'
+import { demoClientConfig } from './demo-client-config.js'
 import { toLeafIndex, leafToNodeIndex } from '../src/treemath.js'
 import {
     constantTimeEqual
@@ -50,15 +46,16 @@ function openDb (dbName:string):Promise<IDBDatabase> {
 // and gets re-derived on restore rather than persisted.
 type PersistableClientState = Omit<ClientState, 'clientConfig'>
 
+// A shallow copy rather than `demoClientConfig` itself, so a restored
+// state can have a field swapped out without every other state seeing it.
+// The values it copies are shared, which is fine -- they are the library
+// defaults and nothing here mutates them. What matters is that it is the
+// same config the demos
+// create and join groups with: a restored state that authenticated
+// differently from the live one would accept or refuse peers the original
+// would not.
 function freshClientConfig ():ClientState['clientConfig'] {
-    return {
-        keyRetentionConfig: defaultKeyRetentionConfig,
-        lifetimeConfig: defaultLifetimeConfig,
-        keyPackageEqualityConfig: defaultKeyPackageEqualityConfig,
-        paddingConfig: defaultPaddingConfig,
-        authService: defaultAuthenticationService,
-        supportedCustomProposalTypes: []
-    }
+    return { ...demoClientConfig }
 }
 
 export interface PersistedMember {

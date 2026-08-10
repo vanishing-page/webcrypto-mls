@@ -14,6 +14,7 @@ import { defaultLifetimeConfig } from '../../src/lifetime-config.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('reject over-long KeyPackage lifetime on commit ' + cs, async (t) => {
@@ -52,7 +53,8 @@ async function rejectsOverLongLifetime (t:any, cipherSuite:CiphersuiteName) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {

@@ -69,7 +69,113 @@ for (const cs of testCiphersuites()) {
 
             const error = validateUnmergedLeaves(tree)
 
-            t.equal(error, undefined, 'should not reject a tree where the leaf merely needs to be present (not array-equal) in every ancestor unmerged_leaves list')
+            t.equal(error, undefined, 'should not reject a tree where the leaf merely needs to be present (not array-equal) in every node between it and the parent under inspection')
+        } catch (error:any) {
+            if (shouldSkip(error)) {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+
+    test(`should accept a tree where an ancestor above the parent under inspection omits the leaf - ${cs}`, async (t) => {
+        try {
+            const cipherSuite = cs as CiphersuiteName
+            const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
+            const credential:Credential = {
+                credentialType: 'basic',
+                identity: new TextEncoder().encode('alice'),
+            }
+            const capabilities:Capabilities = {
+                extensions: [],
+                credentials: ['basic'],
+                proposals: [],
+                versions: ['mls10'],
+                ciphersuites: [cipherSuite],
+            }
+            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime(), [], impl)
+            const leafNode = kp.publicPackage.leafNode
+
+            // 4-leaf tree. Leaf index 1 (node 2) is unmerged under its
+            // immediate parent (node 1) only. The root (node 3) is non-blank
+            // and does NOT list the leaf, which is what an ordinary Add
+            // followed by the committer clearing its filtered direct path
+            // produces. RFC 9420 7.9 only constrains nodes strictly between
+            // the leaf and the parent under inspection, so this is valid.
+            const tree:RatchetTree = [
+                { nodeType: 'leaf', leaf: leafNode },
+                {
+                    nodeType: 'parent',
+                    parent: { hpkePublicKey: new Uint8Array(), parentHash: new Uint8Array(), unmergedLeaves: [1] },
+                },
+                { nodeType: 'leaf', leaf: leafNode },
+                {
+                    nodeType: 'parent',
+                    parent: { hpkePublicKey: new Uint8Array(), parentHash: new Uint8Array(), unmergedLeaves: [] },
+                },
+                { nodeType: 'leaf', leaf: leafNode },
+                undefined,
+                { nodeType: 'leaf', leaf: leafNode },
+            ]
+
+            const error = validateUnmergedLeaves(tree)
+
+            t.equal(error, undefined, 'should not require ancestors above the inspected parent to list the leaf')
+        } catch (error:any) {
+            if (shouldSkip(error)) {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+
+    test(`should reject a non-blank node between the leaf and the parent that omits the leaf - ${cs}`, async (t) => {
+        try {
+            const cipherSuite = cs as CiphersuiteName
+            const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
+            const credential:Credential = {
+                credentialType: 'basic',
+                identity: new TextEncoder().encode('alice'),
+            }
+            const capabilities:Capabilities = {
+                extensions: [],
+                credentials: ['basic'],
+                proposals: [],
+                versions: ['mls10'],
+                ciphersuites: [cipherSuite],
+            }
+            const kp = await generateKeyPackage(credential, capabilities, defaultLifetime(), [], impl)
+            const leafNode = kp.publicPackage.leafNode
+
+            // 4-leaf tree. The root (node 3) lists leaf index 1 as unmerged,
+            // but node 1 -- non-blank and strictly between leaf 1 and the
+            // root -- does not. That is the case 7.9 actually forbids.
+            const tree:RatchetTree = [
+                { nodeType: 'leaf', leaf: leafNode },
+                {
+                    nodeType: 'parent',
+                    parent: { hpkePublicKey: new Uint8Array(), parentHash: new Uint8Array(), unmergedLeaves: [] },
+                },
+                { nodeType: 'leaf', leaf: leafNode },
+                {
+                    nodeType: 'parent',
+                    parent: { hpkePublicKey: new Uint8Array(), parentHash: new Uint8Array(), unmergedLeaves: [1] },
+                },
+                { nodeType: 'leaf', leaf: leafNode },
+                undefined,
+                { nodeType: 'leaf', leaf: leafNode },
+            ]
+
+            const error = validateUnmergedLeaves(tree)
+
+            t.ok(error instanceof ValidationError, 'should return a ValidationError')
+            t.equal(
+                error?.message,
+                'non-blank intermediate node must list leaf node in its unmerged_leaves',
+                'should have correct error message',
+            )
         } catch (error:any) {
             if (shouldSkip(error)) {
                 t.comment(`Skipping ${cs}: ${error.message}`)

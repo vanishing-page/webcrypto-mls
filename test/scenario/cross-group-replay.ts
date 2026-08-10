@@ -17,6 +17,7 @@ import { encodeExternalSenders } from '../../src/external-sender.js'
 import type { Extension } from '../../src/extension.js'
 import { proposeAddExternal } from '../../src/external-proposal.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`Cross-group replay rejected ${cs}`, async (t) => {
@@ -90,6 +91,7 @@ async function crossGroupReplayTest (cipherSuite:CiphersuiteName, t:any) {
         alice.privatePackage,
         [extension],
         impl,
+        testClientConfig
     )
 
     // Group B: bob, same external sender charlie, different groupId
@@ -100,6 +102,7 @@ async function crossGroupReplayTest (cipherSuite:CiphersuiteName, t:any) {
         bob.privatePackage,
         [extension],
         impl,
+        testClientConfig
     )
 
     // charlie proposes to add itself in group A

@@ -185,6 +185,29 @@ The lock's tail deliberately never rejects. Chaining onto a rejected
 promise would skip every job behind a failure -- one refused send would
 silence the page for the rest of the session.
 
+## A join request is the one write a stranger can cause
+
+`onJoinRequest` asks only that the room exist, deliberately -- the join
+flow is open. That makes it the only handler whose limits are about
+volume rather than authority, and they live in `classifyJoinRequest` in
+`room-logic.ts`: a size ceiling on the key package, a cap on distinct
+pending identities, and a per-socket interval. A refusal writes nothing,
+including the throttle, so a refused request can never be the storage
+growth the limits exist to stop.
+
+The throttle is socket-scoped and rides `SocketState`, not a table.
+Identities are free to mint, so a per-identity limit throttles nobody;
+opening a socket is the cost a flooder actually pays. Because it lives
+in the attachment, `attach` has to carry it across every rewrite --
+otherwise `hello` clears it and one `hello` per request is the reset.
+Any future field with that property gets the same treatment.
+
+The cap counts rows, not requests: `pending` is keyed by identity, so a
+repeat request from an identity already queued replaces its own row and
+is allowed through a full queue. Probe checks 24 and 25 prove the Worker
+consults the rule; the cap itself is proved in Node, where sixty-five
+requests cost nothing.
+
 ## Nothing binds the two halves of a join request but the creator
 
 A `join-request` carries `identity` and `keyPackage` as separate fields
@@ -349,6 +372,26 @@ predicate reads the array, not the type), and a case in
 `test/example-realistic-demo/protocol.ts` for both `isErrorReason` and
 `isRoomMessage`.
 
+## Adding a wire field that carries a string
+
+Every string on this socket is length-bounded, and the bound lives with
+the narrowing predicate in `protocol.ts`, not in the handler. Use
+`isIdentity` for anything that is a signature public key and `isPayload`
+for anything base64 the room forwards without decoding; reach for the
+raw `isStr` only for a field neither describes, and then give it its own
+exported `MAX_*` constant. A new field added with a bare `isStr` is the
+regression the M1 finding described, and nothing fails to warn you.
+
+The frame wall in `index.ts` (`MAX_WIRE_MESSAGE_LENGTH`, checked before
+`JSON.parse`) has to stay above `MAX_PAYLOAD_LENGTH`, or a legal
+maximum-size payload can never fit inside a legal frame.
+
+A join request's key package is deliberately bounded twice: loosely in
+`protocol.ts` and tightly by `MAX_KEY_PACKAGE_LENGTH` in `room-logic.ts`.
+Tightening the structural bound to match would turn
+`key-package-too-large` into a bare `bad-message` and break probe check
+24.
+
 ## The ledger
 
 Two rows per identity at most, `admitted` and `removed`, keyed together.
@@ -440,6 +483,33 @@ therefore throw. A handler that fails is treated as `'stop'`, since an
 entry whose failure nobody handled is exactly the case where advancing
 past it would corrupt the epoch. Adding a call inside `drain` means
 guarding it too.
+
+## A failed entry is two different failures
+
+`onError` in `delivery-client.ts` decides between them and the room's
+survival depends on getting it right. An entry whose payload is not an
+MLS message at all is skipped: the cursor advances and the queue carries
+on, because no group state could have moved. An entry that decodes and
+then fails to process stops the queue, because an epoch really did pass
+that this client could not follow.
+
+Nothing on `LogEntry` distinguishes them. `kind` is asserted by the
+sender and the room stores it verbatim beside a payload it holds as an
+opaque string, so any admitted member can write `{kind:'commit',
+payload:'AAAA'}`. Read as a failed commit it stops every other member's
+queue at that seq permanently -- `hello` resends the same cursor, the
+replay serves the same entry, and it fails identically for ever. This
+was security-audit.md H2.
+
+The answer is `MalformedEntryError` in `malformed-entry.ts`, thrown by
+`processEntry` from the decode step only and recognised by
+`isMalformedEntry`. Anything that widens where it is thrown -- wrapping
+the `processMessage` call, say -- turns a real desync into a silent skip
+and is the more dangerous of the two mistakes. The base64 decode is
+inside that step deliberately: `atob` throws on a payload that is not
+base64 in a browser while node's `Buffer` quietly drops the bad
+characters, so a catch that looks unreachable in the Node suite is the
+path a browser actually takes.
 
 ## `processMessage` refuses nothing on your behalf
 
@@ -619,3 +689,28 @@ the alarm handler, a real clipboard paste, the deployed origin, and the
 wording of the page's disclosures. Its coverage map is
 `docs/implementation-plans/2026-07-27-realistic-demo/ac-coverage.md`. If
 you add a criterion or a check, add the row there too.
+
+## Security headers, and the one exit the Worker has
+
+The default export's `fetch` is two lines: call `route`, then hand what
+comes back to `withSecurityHeaders`. Add a reply by adding a branch to
+`route`, never by returning from `fetch`, or that reply is the one that
+ships without a policy. The policy itself is `securityHeaders` in
+`room-logic.ts`, pure and unit tested like every other rule there.
+
+Because the headers come from the Worker, `run_worker_first` is `true`
+and the Worker serves the client itself through the `ASSETS` binding.
+A page served without touching the Worker would carry no headers, so
+scoping `run_worker_first` back to `/api/*` silently drops the policy
+from the SPA shell and every asset while leaving the API looking fine.
+
+`Content-Security-Policy` is `default-src 'none'` with `'self'` for
+scripts and styles, which holds only while the client has no inline
+script and no `style=` attribute. Adding either breaks the page in a
+browser and in nothing else -- the Node suite and `probe.mjs` both still
+pass -- so a change that touches how the client is rendered wants a load
+of :8787 with the console open.
+
+Any edit to `wrangler.jsonc` needs `npm run types:realistic` rerun and
+the regenerated `worker-configuration.d.ts` committed, or the new binding
+does not exist as far as the Worker typecheck is concerned.

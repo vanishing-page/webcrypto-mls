@@ -8,7 +8,8 @@ import {
     applyProposals,
     nextEpochContext,
     exportSecret,
-    checkCanSendHandshakeMessages
+    checkCanSendHandshakeMessages,
+    validateExternalSenders
 } from './client-state.js'
 import type { AuthenticatedContentCommit } from './authenticated-content.js'
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
@@ -534,6 +535,13 @@ export async function joinGroupExternal (
         keyPackage.leafNode.capabilities,
     )
     if (!allExtensionsSupported) throw new UsageError('client does not support every extension in the GroupContext')
+
+    throwIfDefined(
+        await validateExternalSenders(
+            groupInfo.groupContext.extensions,
+            clientConfig.authService,
+        ),
+    )
 
     const { enc, secret: initSecret } = await exportSecret(externalPub.extensionData, cs)
 

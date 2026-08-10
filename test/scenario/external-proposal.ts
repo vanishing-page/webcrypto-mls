@@ -25,6 +25,7 @@ import { encodeExternalSenders } from '../../src/external-sender.js'
 import type { Extension } from '../../src/extension.js'
 import { proposeExternal } from '../../src/external-proposal.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`External Proposal ${cs}`, async (t) => {
@@ -92,7 +93,7 @@ async function externalProposalTest (cipherSuite:CiphersuiteName, t:any) {
         extensionData: encodeExternalSenders([externalSender]),
     }
 
-    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [extension], impl)
+    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [extension], impl, testClientConfig)
 
     const addBobProposal:ProposalAdd = {
         proposalType: 'add',
@@ -120,6 +121,8 @@ async function externalProposalTest (cipherSuite:CiphersuiteName, t:any) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     // external pub not really necessary here
