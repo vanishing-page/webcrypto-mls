@@ -31,20 +31,30 @@ export const RoomLink:FunctionComponent<RoomLinkProps> = function ({
                 value=${url}
                 aria-label="Room URL"
             />
-            <substrate-button
-                class="copy"
-                type="button"
-                aria-label="Copy room URL"
-                onClick=${onCopy}
-            >Copy</substrate-button>
-            <!-- The live region persists even when empty so assistive
-            technology can observe the state change. The resulting empty
-            flex item is deliberate. -->
-            <span
-                class="copied"
-                role="status"
-                data-copied=${copied}
-            >${copied ? 'Copied' : ''}</span>
+            <div class="copy-control">
+                <!-- The word is always in the layout, above the button,
+                and only turns visible on a copy, so nothing on the row
+                moves when it appears. Hidden from assistive technology
+                because the live region below says the same thing. -->
+                <span
+                    class="copied"
+                    aria-hidden="true"
+                    data-copied=${copied}
+                >Copied</span>
+                <substrate-button
+                    class="copy"
+                    type="button"
+                    aria-label="Copy room URL"
+                    onClick=${onCopy}
+                >Copy</substrate-button>
+                <!-- What assistive technology hears. It persists even
+                when empty so the text swap is observable; a visibility
+                change on its own is not reliably announced. -->
+                <span
+                    class="copy-status"
+                    role="status"
+                >${copied ? 'Copied' : ''}</span>
+            </div>
         </div>
     `
 }

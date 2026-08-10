@@ -300,14 +300,39 @@ substrate-input.room-url input {
         min-width: 0;
     }
 
+    /* The confirmation stacks above the button rather than sitting
+       beside it, and holds its space whether or not a copy has
+       happened, so the row never reflows. */
+    & .copy-control {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
     & .copied {
-        align-self: center;
         color: var(--color-live);
         font-family: var(--font-display);
         font-size: 1rem;
         font-weight: 600;
         letter-spacing: var(--tracking-label);
         text-transform: uppercase;
+        visibility: hidden;
+
+        &[data-copied="true"] {
+            visibility: visible;
+        }
+    }
+
+    /* Heard and not seen: the live region whose text swap is what gets
+       announced. Taken out of the picture the same way the composer's
+       label is. */
+    & .copy-status {
+        clip-path: inset(50%);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        white-space: nowrap;
+        width: 1px;
     }
 }
 
