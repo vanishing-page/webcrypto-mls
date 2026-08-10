@@ -1,5 +1,5 @@
 import type { AuthenticationService } from './authentication-service.js'
-import { defaultAuthenticationService } from './authentication-service.js'
+import { failClosedAuthenticationService } from './authentication-service.js'
 import type { KeyPackageEqualityConfig } from './key-package-equality-config.js'
 import { defaultKeyPackageEqualityConfig } from './key-package-equality-config.js'
 import type { KeyRetentionConfig } from './key-retention-config.js'
@@ -14,6 +14,15 @@ export interface ClientConfig {
     lifetimeConfig:LifetimeConfig
     keyPackageEqualityConfig:KeyPackageEqualityConfig
     paddingConfig:PaddingConfig
+
+    /**
+     * How a credential arriving from a peer is authenticated. There is no
+     * usable default: `defaultClientConfig` carries
+     * `failClosedAuthenticationService`, which throws a `UsageError` the
+     * first time a credential decision is needed. Supply a real
+     * implementation, or -- for local testing only -- the explicitly named
+     * `unsafeAcceptAllAuthenticationService`.
+     */
     authService:AuthenticationService
 
     /**
@@ -36,6 +45,6 @@ export const defaultClientConfig = {
     lifetimeConfig: defaultLifetimeConfig,
     keyPackageEqualityConfig: defaultKeyPackageEqualityConfig,
     paddingConfig: defaultPaddingConfig,
-    authService: defaultAuthenticationService,
+    authService: failClosedAuthenticationService,
     supportedCustomProposalTypes: [],
 }

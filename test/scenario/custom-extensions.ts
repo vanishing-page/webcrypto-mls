@@ -16,6 +16,7 @@ import type { Capabilities } from '../../src/capabilities.js'
 import type { Extension, ExtensionType } from '../../src/extension.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`Custom Extensions ${cs}`, async (t) => {
@@ -60,7 +61,7 @@ async function customExtensionTest (cipherSuite:CiphersuiteName, t:any) {
         extensionData,
     }
 
-    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [customExtension], impl)
+    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [customExtension], impl, testClientConfig)
 
     const bobCredential:Credential = {
         credentialType: 'basic',
@@ -94,6 +95,8 @@ async function customExtensionTest (cipherSuite:CiphersuiteName, t:any) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(

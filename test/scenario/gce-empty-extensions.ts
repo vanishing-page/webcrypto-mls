@@ -14,6 +14,7 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import type { Proposal } from '../../src/proposal.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('An empty GroupContextExtensions proposal clears group extensions ' + cs, async (t) => {
@@ -59,6 +60,7 @@ async function emptyGroupContextExtensionsClearsExtensions (
         alice.privatePackage,
         [{ extensionType: 'application_id', extensionData: new Uint8Array([1, 2, 3]) }],
         impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -87,6 +89,8 @@ async function emptyGroupContextExtensionsClearsExtensions (
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     t.equal(aliceGroup.groupContext.extensions.length, 1, 'alice starts with one group extension')

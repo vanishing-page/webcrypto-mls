@@ -4,7 +4,7 @@
  * Operational probe for realistic-demo room verification.
  * Tests AC1.1, AC1.3, AC1.4, AC1.5, AC2.4, AC8.3, AC9.1, AC9.2 and the
  * phase 5 join, ledger, authorization and expiry criteria by running
- * twenty-three checks against a live Worker. Uses a fresh random room ID
+ * twenty-six checks against a live Worker. Uses a fresh random room ID
  * per run.
  */
 
@@ -1096,6 +1096,118 @@ await check(23, 'an unshared path is served the page, not a 404',
       api.status === 404,
       `the SPA fallback swallowed the API: got ${api.status}, not 404`
     )
+  })
+
+// The join-request limits. The cap itself is proved in Node against
+// classifyJoinRequest, where sixty-five requests cost nothing; what these
+// two checks prove is that the Worker actually consults the rule and that
+// a refusal writes nothing.
+let limited
+await check(24, 'an oversized key package is refused and stored nowhere',
+  async () => {
+    limited = await openSocket(roomId2)
+    limited.send(JSON.stringify({
+      type: 'join-request',
+      identity: 'BIG',
+      // One over MAX_KEY_PACKAGE_LENGTH.
+      keyPackage: 'A'.repeat(16 * 1024 + 1)
+    }))
+    const refusal = await waitForMessage(limited, 'error')
+    assert(
+      refusal.reason === 'key-package-too-large',
+      `expected key-package-too-large, got ${refusal.reason}`
+    )
+
+    // A request that is allowed, from another socket, is what makes the
+    // creator's list arrive. BIG's absence from it is the assertion: the
+    // refusal above stored nothing.
+    const ok = await openSocket(roomId2)
+    ok.send(JSON.stringify({
+      type: 'join-request',
+      identity: 'OK1',
+      keyPackage: KEY_PACKAGE_1
+    }))
+    const pending = await waitForMatch(creator, 'pending',
+      m => m.requests.some(r => r.identity === 'OK1'))
+    assert(
+      !pending.requests.some(r => r.identity === 'BIG'),
+      'the oversized request was stored anyway'
+    )
+    ok.close()
+    await waitForClose(ok)
+  })
+
+await check(25, 'a second join request from one socket is rate limited',
+  async () => {
+    // Same socket as check 24, whose only request so far was refused --
+    // so its throttle window has never started, and this one is allowed.
+    limited.send(JSON.stringify({
+      type: 'join-request',
+      identity: 'RL',
+      keyPackage: KEY_PACKAGE_1
+    }))
+    await waitForMatch(creator, 'pending',
+      m => m.requests.some(r => r.identity === 'RL'))
+
+    limited.send(JSON.stringify({
+      type: 'join-request',
+      identity: 'RL2',
+      keyPackage: KEY_PACKAGE_2
+    }))
+    const refusal = await waitForMessage(limited, 'error')
+    assert(
+      refusal.reason === 'rate-limited',
+      `expected rate-limited, got ${refusal.reason}`
+    )
+    limited.close()
+    await waitForClose(limited)
+  })
+
+// The wire length bounds (security-audit M1). The bounds themselves are
+// proved in Node against isClientMessage; what this proves is that the
+// Worker consults them, and that a refused oversized write is not
+// merely unacknowledged but unstored. The creator is used deliberately:
+// every other gate lets a creator through, so this is the one socket on
+// which only the size rule can refuse.
+await check(26, 'an oversized mls payload is refused and stored nowhere',
+  async () => {
+    const entries = collect(creator, 'entry')
+    const errors = collect(creator, 'error')
+
+    // One over MAX_PAYLOAD_LENGTH, inside the frame wall, so this is
+    // refused by the per-field bound after being parsed.
+    const huge = 'A'.repeat(256 * 1024 + 1)
+    creator.send(JSON.stringify({
+      type: 'mls', kind: 'application', payload: huge
+    }))
+
+    // Over MAX_WIRE_MESSAGE_LENGTH, so this one is refused on frame
+    // length alone and never parsed.
+    creator.send(JSON.stringify({
+      type: 'mls', kind: 'application', payload: 'A'.repeat(400 * 1024)
+    }))
+
+    const errs = await errors
+    assert(
+      errs.length === 2 && errs.every(e => e.reason === 'bad-message'),
+      `expected two bad-message, got ${JSON.stringify(errs)}`
+    )
+
+    const seen = await entries
+    assert(
+      !seen.some(m => m.entry.payload.length > 256 * 1024),
+      'an oversized payload still reached the log'
+    )
+
+    // A payload at the limit is accepted, so the bound is a ceiling and
+    // not a ban on large-but-legal MLS traffic.
+    const atLimit = 'B'.repeat(256 * 1024)
+    const accepted = waitForMatch(creator, 'entry',
+      m => m.entry.payload === atLimit)
+    creator.send(JSON.stringify({
+      type: 'mls', kind: 'application', payload: atLimit
+    }))
+    await accepted
   })
 
 creator.close()

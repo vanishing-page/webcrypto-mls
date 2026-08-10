@@ -137,6 +137,100 @@ export function countApplicationsAtOrBelow (
 }
 
 /**
+ * How many distinct identities may sit in the pending queue at once.
+ *
+ * A join request is the one write a complete stranger can cause: the
+ * handler asks only that the room exist. `pending` is keyed by identity,
+ * so every fresh random identity is a new row, and a scripted client can
+ * mint identities as fast as it can open sockets. The cap is what turns
+ * that from unbounded storage growth into a queue that fills and then
+ * refuses.
+ *
+ * Sixty-four is far more than a demo room's creator would ever work
+ * through by hand, and small enough that a filled queue is a rounding
+ * error against the storage a room already holds.
+ */
+export const MAX_PENDING_REQUESTS = 64
+
+/**
+ * The longest a join request's key package may be, measured in the
+ * characters that arrive on the wire -- the room stores the base64 it was
+ * given and never decodes it.
+ *
+ * A real MLS KeyPackage is a few hundred bytes to a couple of kilobytes
+ * depending on the ciphersuite and credential, so 16 KiB leaves room for
+ * a large credential and still refuses the megabyte payloads the cap
+ * alone would happily store sixty-four of.
+ */
+export const MAX_KEY_PACKAGE_LENGTH = 16 * 1024
+
+/**
+ * The shortest gap between two join requests from one socket.
+ *
+ * The client publishes exactly one request per socket it opens, so this
+ * costs an honest requester nothing; what it costs is the loop that holds
+ * one socket open and asks thousands of times a second. Reconnecting is
+ * the only way to reset it, and that is deliberate -- a reconnect is
+ * exactly when a legitimate re-publish happens.
+ */
+export const JOIN_REQUEST_INTERVAL_MS = 1000
+
+/**
+ * Why a join request was refused, or `ok`. Each limit gets its own answer
+ * rather than a shared refusal, because they mean different things to the
+ * requester: an oversized key package is the client's bug, a full queue
+ * is the room's state, and a rate limit is temporary.
+ */
+export type JoinRequestVerdict =
+    | 'ok'
+    | 'key-package-too-large'
+    | 'too-many-pending'
+    | 'rate-limited'
+
+/**
+ * Whether a join request may be recorded.
+ *
+ * The order decides which reason wins when more than one limit applies,
+ * and it runs most-specific-first: an oversized key package is named as
+ * such even from a throttled socket into a full queue, because that is
+ * the one refusal waiting will never resolve.
+ *
+ * `alreadyPending` is what keeps the cap counting rows rather than
+ * requests: a repeat request from a queued identity replaces its own row
+ * and grows the queue by nothing, so refusing it would strand a requester
+ * whose key package changed behind a queue they are already in.
+ *
+ * A `lastRequestAt` in the future is treated as no prior request. The
+ * timestamp survives a hibernation and the clock that produced it is not
+ * guaranteed to be the one comparing it, so the alternative is a socket
+ * locked out until the clock catches up.
+ */
+export function classifyJoinRequest (req:{
+    keyPackageLength:number
+    pendingCount:number
+    alreadyPending:boolean
+    lastRequestAt:number|null
+    now:number
+}):JoinRequestVerdict {
+    if (req.keyPackageLength > MAX_KEY_PACKAGE_LENGTH) {
+        return 'key-package-too-large'
+    }
+
+    if (req.lastRequestAt !== null) {
+        const elapsed = req.now - req.lastRequestAt
+        if (elapsed >= 0 && elapsed < JOIN_REQUEST_INTERVAL_MS) {
+            return 'rate-limited'
+        }
+    }
+
+    if (!req.alreadyPending && req.pendingCount >= MAX_PENDING_REQUESTS) {
+        return 'too-many-pending'
+    }
+
+    return 'ok'
+}
+
+/**
  * Room ids are generated with nanoid, whose default alphabet is
  * `A-Za-z0-9_-`. Ten characters is 60 bits, which is far more than a
  * demo room needs to avoid collisions.
@@ -190,4 +284,57 @@ export function isValidRoomId (id:unknown):id is string {
     if (id.length !== ROOM_ID_LENGTH) return false
     if (!/^[A-Za-z0-9_-]+$/.test(id)) return false
     return !isReservedRoomId(id)
+}
+
+/**
+ * The socket scheme that matches a page scheme. Anything not listed --
+ * `file:` in a test, some future scheme -- gets no socket source at all
+ * rather than a guess, so the policy can never be widened by an origin
+ * this does not understand.
+ */
+const SOCKET_SCHEME:Record<string, string> = {
+    'http:': 'ws:',
+    'https:': 'wss:'
+}
+
+/**
+ * The response headers every reply carries, API and static asset alike.
+ * Defense in depth: no injection vector is known, and the policy is what
+ * would keep a future one from reaching the group state on `window`.
+ *
+ * `origin` is the origin the request arrived at, which is what makes the
+ * `connect-src` socket source exact -- `ws://localhost:8787` in
+ * development, `wss://<host>` in production -- rather than a scheme
+ * wildcard. CSP 3 says `'self'` already covers a same-origin socket, but
+ * not every browser in the field implements that, and naming the origin
+ * costs nothing.
+ *
+ * `default-src 'none'` means every directive not listed below is denied,
+ * so the app's own scripts, styles and socket are the whole of what is
+ * permitted. There is no inline script or style attribute anywhere in
+ * the client, which is what lets `script-src` and `style-src` stay at
+ * `'self'` with no `unsafe-inline`.
+ */
+export function securityHeaders (origin:string):Record<string, string> {
+    const url = new URL(origin)
+    const scheme = SOCKET_SCHEME[url.protocol]
+    const socket = scheme ? ` ${scheme}//${url.host}` : ''
+
+    const policy = [
+        "default-src 'none'",
+        "script-src 'self'",
+        "style-src 'self'",
+        "img-src 'self'",
+        "font-src 'self'",
+        `connect-src 'self'${socket}`,
+        "base-uri 'none'",
+        "form-action 'none'",
+        "frame-ancestors 'none'"
+    ].join('; ')
+
+    return {
+        'Content-Security-Policy': policy,
+        'X-Frame-Options': 'DENY',
+        'X-Content-Type-Options': 'nosniff'
+    }
 }

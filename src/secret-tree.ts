@@ -166,20 +166,33 @@ function updateUnusedGenerations (s:GenerationSecret, retainGenerationsMax:numbe
     return result
 }
 
+/**
+ * Returns the most recent `max` generations of `historicalReceiverData`,
+ * dropping the rest.
+ *
+ * Dropped secrets are released to the garbage collector rather than
+ * zeroized: every buffer in this record was ratcheted out of a secret a
+ * prior `GenerationSecret` still holds, and `ClientState` is functional,
+ * so the caller may still be using the state those buffers came from.
+ * Wiping them here corrupted that live state (see security-audit.md C1).
+ *
+ * A `max` of 0 or less means "retain nothing". It needs its own branch:
+ * `slice(-0)` is `slice(0)`, which returns the whole array, so without
+ * the guard the setting retained every generation forever (see
+ * security-audit.md H1). `removeOldHistoricalReceiverData` in
+ * `client-state.ts` has the same guard.
+ */
 function removeOldGenerations (
     historicalReceiverData:Record<number, Uint8Array>,
     max:number,
 ):Record<number, Uint8Array> {
+    if (max <= 0) return {}
+
     const sortedGenerations = Object.keys(historicalReceiverData)
         .map(Number)
         .sort((a, b) => (a < b ? -1 : 1))
 
     const kept = sortedGenerations.slice(-max)
-    const keptSet = new Set(kept)
-
-    for (const generation of sortedGenerations) {
-        if (!keptSet.has(generation)) historicalReceiverData[generation]!.fill(0)
-    }
 
     return Object.fromEntries(
         kept.map((generation) => [generation, historicalReceiverData[generation]!]),
@@ -235,6 +248,8 @@ export async function ratchetToGeneration (
                 contentType,
                 cs,
                 ratchetState,
+                // `desired` belongs to the input tree's unusedGenerations
+                false,
             )
         }
 
@@ -248,7 +263,21 @@ export async function ratchetToGeneration (
         cs.kdf,
     )
 
-    return createRatchetResult(node, index, currentSecret, senderData.reuseGuard, tree, contentType, cs)
+    // ratchetUntil returns its input unchanged when there is nothing to
+    // ratchet past, so only a forward step produces a secret this call
+    // allocated and therefore owns
+    const ownsSecret = senderData.generation > ratchet.generation
+
+    return createRatchetResult(
+        node,
+        index,
+        currentSecret,
+        senderData.reuseGuard,
+        tree,
+        contentType,
+        cs,
+        ownsSecret,
+    )
 }
 
 export async function consumeRatchet (
@@ -263,9 +292,16 @@ export async function consumeRatchet (
     const currentSecret = ratchetForContentType(node, contentType)
     const reuseGuard = cs.rng.randomBytes(4) as ReuseGuard
 
-    return createRatchetResult(node, index, currentSecret, reuseGuard, tree, contentType, cs)
+    // the secret being consumed here is the input tree's live node secret,
+    // which the caller's ClientState still references
+    return createRatchetResult(node, index, currentSecret, reuseGuard, tree, contentType, cs, false)
 }
 
+/**
+ * `ownsSecret` says whether `currentSecret.secret` was allocated by this
+ * call chain. Only then may it be zeroized -- see
+ * `createRatchetResultWithSecret`.
+ */
 async function createRatchetResult (
     node:SecretTreeNode,
     index:number,
@@ -274,6 +310,7 @@ async function createRatchetResult (
     tree:SecretTree,
     contentType:ContentTypeName,
     cs:CiphersuiteImpl,
+    ownsSecret:boolean,
 ):Promise<ConsumeRatchetResult> {
     const nextSecret = await deriveTreeSecret(
         currentSecret.secret,
@@ -295,9 +332,22 @@ async function createRatchetResult (
         contentType,
         cs,
         ratchetState,
+        ownsSecret,
     )
 }
 
+/**
+ * `ownsSecret` says whether `secret` was allocated by this call chain.
+ *
+ * A ratchet secret that came in with `tree` -- the node's live current
+ * secret, or one of its retained out-of-order generations -- is still
+ * referenced by the caller's `ClientState`, because `ClientState` is
+ * functional and every operation returns a new state beside the old one.
+ * Zeroizing such a buffer left that live state ratcheting from an
+ * all-zero secret with its generation counter unchanged, so a send from
+ * it derived its AEAD key from a constant (security-audit.md C1). Only a
+ * secret this call derived itself is safe to wipe.
+ */
 async function createRatchetResultWithSecret (
     node:SecretTreeNode,
     index:number,
@@ -308,15 +358,11 @@ async function createRatchetResultWithSecret (
     contentType:ContentTypeName,
     cs:CiphersuiteImpl,
     ratchetState:GenerationSecret,
+    ownsSecret:boolean,
 ):Promise<ConsumeRatchetResult> {
     const { nonce, key } = await createKeyAndNonce(secret, generation, reuseGuard, cs)
 
-    // `secret` (the just-consumed ratchet secret, whether it was the node's
-    // current secret or a retained out-of-order generation) has already been
-    // used to derive `nextSecret`/the key and nonce above, and is not
-    // referenced anywhere in `ratchetState` or the returned `newTree` -- it
-    // is safe to wipe here rather than rely on garbage collection.
-    secret.fill(0)
+    if (ownsSecret) secret.fill(0)
 
     const newNode =
         contentType === 'application' ? { ...node, application: ratchetState } : { ...node, handshake: ratchetState }

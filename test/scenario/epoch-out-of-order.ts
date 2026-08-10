@@ -23,8 +23,8 @@ import { defaultKeyRetentionConfig } from '../../src/key-retention-config.js'
 import type { CiphersuiteImpl, CiphersuiteName } from '../../src/crypto/ciphersuite.js'
 import type { KeyRetentionConfig } from '../../src/key-retention-config.js'
 import { ValidationError } from '../../src/mls-error.js'
-import { defaultClientConfig } from '../../src/client-config.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`Out of order epoch ${cs}`, async (t) => {
@@ -99,7 +99,8 @@ async function setupTestParticipants (
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -143,7 +144,7 @@ async function setupTestParticipants (
         impl,
         undefined,
         undefined,
-        { ...defaultClientConfig, keyRetentionConfig: retainConfig ?? defaultKeyRetentionConfig },
+        { ...testClientConfig, keyRetentionConfig: retainConfig ?? defaultKeyRetentionConfig },
     )
 
     return { aliceGroup, bobGroup, impl }

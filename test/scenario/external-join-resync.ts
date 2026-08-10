@@ -17,6 +17,7 @@ import { testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`External join Resync ${cs}`, async (t) => {
@@ -67,7 +68,8 @@ async function externalJoinResyncNoMatchTest (cipherSuite:CiphersuiteName, t:any
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const groupInfo = await createGroupInfoWithExternalPubAndRatchetTree(aliceGroup, [], impl)
@@ -93,6 +95,8 @@ async function externalJoinResyncNoMatchTest (cipherSuite:CiphersuiteName, t:any
             eve.privatePackage,
             true,
             impl,
+            undefined,
+            testClientConfig
         )
     } catch (error) {
         thrown = error
@@ -126,7 +130,8 @@ async function externalJoinResyncTest (cipherSuite:CiphersuiteName, t:any) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -186,6 +191,9 @@ async function externalJoinResyncTest (cipherSuite:CiphersuiteName, t:any) {
         bob.privatePackage,
         emptyPskIndex,
         impl,
+        undefined,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(bobGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'bob should have matching epoch authenticator')
@@ -196,6 +204,9 @@ async function externalJoinResyncTest (cipherSuite:CiphersuiteName, t:any) {
         charlie.privatePackage,
         emptyPskIndex,
         impl,
+        undefined,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(charlieGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'charlie should have matching epoch authenticator')
@@ -208,6 +219,8 @@ async function externalJoinResyncTest (cipherSuite:CiphersuiteName, t:any) {
         charlie.privatePackage,
         true,
         impl,
+        undefined,
+        testClientConfig
     )
 
     charlieGroup = charlieResyncCommitResult.newState

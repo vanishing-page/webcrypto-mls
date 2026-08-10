@@ -40,7 +40,8 @@ export {
 
 export {
     type AuthenticationService,
-    defaultAuthenticationService
+    failClosedAuthenticationService,
+    unsafeAcceptAllAuthenticationService
 } from './authentication-service.js'
 
 export { type PaddingConfig, defaultPaddingConfig } from './padding-config.js'
@@ -110,7 +111,7 @@ export { type Proposal } from './proposal.js'
 
 export { UsageError } from './mls-error.js'
 
-export { type ClientConfig } from './client-config.js'
+export { type ClientConfig, defaultClientConfig } from './client-config.js'
 
 export { type Welcome } from './welcome.js'
 

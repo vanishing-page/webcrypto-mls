@@ -15,6 +15,7 @@ import type { Extension } from '../../src/extension.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('proposeExternal rejects Update proposal at construction ' + cs, async (t) => {
@@ -81,7 +82,7 @@ async function makeAliceGroupWithExternalSender (cipherSuite:CiphersuiteName) {
 
     const groupId = new TextEncoder().encode('group1')
 
-    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [extension], impl)
+    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [extension], impl, testClientConfig)
 
     const groupInfo = await createGroupInfoWithExternalPub(aliceGroup, [], impl)
 

@@ -15,6 +15,8 @@ import {
     socketUrl,
     type DeliveryClient
 } from '../../example-realistic-demo/client/delivery-client.js'
+import { MalformedEntryError } from
+    '../../example-realistic-demo/client/malformed-entry.js'
 
 /**
  * `delivery-client.ts` is the only module in the client that touches a
@@ -453,6 +455,43 @@ test('delivery-client - a commit that will not process stops the queue',
                 'the cursor did not move past the commit')
             t.notEqual(h.state.status.value, 'Ready',
                 'the person is told to resynchronise')
+        } finally {
+            h.client.close()
+            h.fakes.restore()
+        }
+    })
+
+// security-audit.md H2
+
+test('delivery-client - a commit that is not an MLS message is skipped',
+    async (t) => {
+        const applied:number[] = []
+        const h = harness({
+            async applyEntry (e) {
+                if (e.seq === 1) {
+                    throw new MalformedEntryError('that entry does not decode')
+                }
+                applied.push(e.seq)
+            }
+        })
+        try {
+            // Anyone admitted to the room can write this: the room takes
+            // `kind` from the sender and never looks at the payload.
+            h.client.queue.push([
+                entry(1, 'commit'),
+                entry(2, 'commit'),
+                entry(3, 'application')
+            ])
+            await h.client.queue.idle()
+
+            t.equal(h.client.queue.stopped, false,
+                'one line of garbage does not stop the room')
+            t.deepEqual(applied, [2, 3],
+                'the entries behind it still applied')
+            t.equal(h.state.cursor.value, 1,
+                'the cursor moved past it, so a replay will not re-serve it')
+            t.notEqual(h.state.status.value, 'Ready',
+                'and the skip is reported rather than silent')
         } finally {
             h.client.close()
             h.fakes.restore()

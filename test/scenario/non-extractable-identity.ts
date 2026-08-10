@@ -18,6 +18,7 @@ import type { Credential } from '../../src/credential.js'
 import type { ProposalAdd } from '../../src/proposal.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 test('Non-extractable Ed25519 identity completes group flow', async (t) => {
     try {
@@ -84,7 +85,8 @@ async function nonExtractableIdentityFlow (t:Test) {
         creatorKP.publicPackage,
         creatorKP.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     // Step 3: Generate joiner's key package
@@ -131,6 +133,8 @@ async function nonExtractableIdentityFlow (t:Test) {
             emptyPskIndex,
             impl,
             creatorState2.ratchetTree,
+            undefined,
+            testClientConfig
         )
         joinerState = joinResult
     } catch (error) {

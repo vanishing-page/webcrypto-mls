@@ -17,6 +17,7 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { leafWidth, nodeToLeafIndex, toNodeIndex } from '../../src/treemath.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 // Regression test for filteredDirectPath's leaf-width computation. At a
 // 4-leaf tree, tree.length (7) is odd, so the buggy
@@ -68,6 +69,7 @@ async function leafWidthUpdatePath (t:any, cipherSuite:CiphersuiteName) {
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     const addBobProposal:ProposalAdd = {
@@ -98,6 +100,8 @@ async function leafWidthUpdatePath (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     let charlieGroup = await joinGroup(
@@ -107,6 +111,8 @@ async function leafWidthUpdatePath (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     let daveGroup = await joinGroup(
@@ -116,6 +122,8 @@ async function leafWidthUpdatePath (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     t.equal(aliceGroup.ratchetTree.length, 7, 'tree should have 7 nodes (4 leaves)')

@@ -13,8 +13,10 @@ import { ValidationError } from '../../src/mls-error.js'
 import type { RatchetTree } from '../../src/ratchet-tree.js'
 import type { GroupContext } from '../../src/group-context.js'
 import { defaultLifetimeConfig } from '../../src/lifetime-config.js'
-import { defaultAuthenticationService } from '../../src/authentication-service.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import {
+    unsafeAcceptAllAuthenticationService
+} from '../../src/authentication-service.js'
 
 // Convert test.concurrent.each to individual tests
 for (const cs of testCiphersuites()) {
@@ -64,7 +66,7 @@ for (const cs of testCiphersuites()) {
                 invalidTree,
                 groupContext,
                 defaultLifetimeConfig,
-                defaultAuthenticationService,
+                unsafeAcceptAllAuthenticationService,
                 new Uint8Array(),
                 impl,
             )

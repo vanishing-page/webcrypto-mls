@@ -15,8 +15,8 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import { createApplicationMessage, createProposal, processPrivateMessage } from '../../src/index.js'
 import { UsageError } from '../../src/mls-error.js'
-import { defaultClientConfig } from '../../src/client-config.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`Custom Proposals ${cs}`, async (t) => {
@@ -55,7 +55,7 @@ async function customProposalTest (cipherSuite:CiphersuiteName, t:any) {
     const groupId = new TextEncoder().encode('group1')
 
     const clientConfig = {
-        ...defaultClientConfig,
+        ...testClientConfig,
         supportedCustomProposalTypes: [customProposalType],
     }
 

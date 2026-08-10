@@ -17,6 +17,17 @@ import {
     processPublicMessage
 } from '../../src/process-messages.js'
 import { bytesToBase64 } from '../../src/util/byte-array.js'
+import type { ClientConfig } from '../../src/client-config.js'
+import { defaultLifetimeConfig } from '../../src/lifetime-config.js'
+import { testClientConfig } from '../helpers/client-config.js'
+
+const ignoreLifetimeConfig:ClientConfig = {
+    ...testClientConfig,
+    lifetimeConfig: {
+        ...defaultLifetimeConfig,
+        validateLifetimeOnReceive: false,
+    },
+}
 
 // Type definitions used before defined - moved to top
 type ExternalPsk = {
@@ -113,7 +124,19 @@ async function testPassiveClientScenario (t:any, data:MlsGroupState, impl:Cipher
         (acc, psk) => ({ ...acc, [bytesToBase64(hexToBytes(psk.psk_id))]: hexToBytes(psk.psk) }),
         {},
     )
-    let state = await joinGroup(welcome[0].welcome, kp[0].keyPackage, pks, makePskIndex(undefined, psks), impl, tree)
+    // The RFC test vectors carry fixed KeyPackages whose lifetime windows
+    // expired long ago, so replaying them means opting out of the
+    // `validateLifetimeOnReceive` default.
+    let state = await joinGroup(
+        welcome[0].welcome,
+        kp[0].keyPackage,
+        pks,
+        makePskIndex(undefined, psks),
+        impl,
+        tree,
+        undefined,
+        ignoreLifetimeConfig,
+    )
 
     t.deepEqual(state.keySchedule.epochAuthenticator, hexToBytes(data.initial_epoch_authenticator), 'initial epoch authenticator should match')
 

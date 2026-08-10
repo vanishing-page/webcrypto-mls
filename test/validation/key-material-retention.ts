@@ -22,11 +22,11 @@ import { toPrivateKeyPath } from '../../src/private-key-path.js'
 import { leafToNodeIndex, toLeafIndex } from '../../src/treemath.js'
 import { decryptWithLabel, encryptWithLabel } from '../../src/crypto/hpke.js'
 import { getHpkePublicKey } from '../../src/ratchet-tree.js'
-import { defaultClientConfig } from '../../src/client-config.js'
 import { defaultKeyRetentionConfig } from '../../src/key-retention-config.js'
 import { updateArray } from '../../src/util/array.js'
 import { protectApplicationData, unprotectPrivateMessage } from '../../src/message-protection.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 function skippable (error:any):boolean {
     return error?.name === 'NotSupportedError' || error?.name === 'DependencyError'
@@ -117,9 +117,9 @@ for (const cs of testCiphersuites()) {
         }
     })
 
-    test('consumeRatchet zeroizes the superseded secret without corrupting the new tree ' + cs, async (t) => {
+    test('consumeRatchet leaves the input tree\'s secret intact while ratcheting the new tree ' + cs, async (t) => {
         try {
-            await consumeRatchetZeroizesSupersededSecret(t, cs as CiphersuiteName)
+            await consumeRatchetLeavesTheInputTreeIntact(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
                 t.comment(`Skipping ${cs}: ${error.message}`)
@@ -129,9 +129,9 @@ for (const cs of testCiphersuites()) {
         }
     })
 
-    test('ratchetToGeneration zeroizes a consumed out-of-order generation secret ' + cs, async (t) => {
+    test('ratchetToGeneration keeps a consumed out-of-order generation secret intact ' + cs, async (t) => {
         try {
-            await ratchetToGenerationZeroizesOutOfOrderSecret(t, cs as CiphersuiteName)
+            await ratchetToGenerationKeepsOutOfOrderSecretIntact(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
                 t.comment(`Skipping ${cs}: ${error.message}`)
@@ -141,9 +141,45 @@ for (const cs of testCiphersuites()) {
         }
     })
 
-    test('evicted generation secrets are zeroized before being dropped ' + cs, async (t) => {
+    test('evicted generation secrets are dropped without wiping a live buffer ' + cs, async (t) => {
         try {
-            await evictedGenerationSecretsAreZeroized(t, cs as CiphersuiteName)
+            await evictedGenerationSecretsAreDroppedNotWiped(t, cs as CiphersuiteName)
+        } catch (error:any) {
+            if (skippable(error)) {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+
+    test('retainKeysForGenerations 0 retains no skipped generations ' + cs, async (t) => {
+        try {
+            await retainKeysForGenerationsZeroRetainsNothing(t, cs as CiphersuiteName)
+        } catch (error:any) {
+            if (skippable(error)) {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+
+    test('retainKeysForGenerations 0 retains nothing on a real receive ' + cs, async (t) => {
+        try {
+            await receiveAheadRetainsNothingAtZero(t, cs as CiphersuiteName)
+        } catch (error:any) {
+            if (skippable(error)) {
+                t.comment(`Skipping ${cs}: ${error.message}`)
+                return
+            }
+            throw error
+        }
+    })
+
+    test('retainKeysForGenerations 2 retains the 2 most recent generations ' + cs, async (t) => {
+        try {
+            await retainKeysForGenerationsTwoRetainsMostRecent(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
                 t.comment(`Skipping ${cs}: ${error.message}`)
@@ -244,7 +280,7 @@ async function addHistoricalReceiverDataDoesNotMutatePreviousState (t:any, ciphe
 
     const groupId = new TextEncoder().encode('add-historical-receiver-data-group')
 
-    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     const bobCredential:Credential = {
         credentialType: 'basic',
@@ -271,19 +307,15 @@ async function addHistoricalReceiverDataDoesNotMutatePreviousState (t:any, ciphe
     )
 
     // createCommit encrypts the commit as a PrivateMessage by default,
-    // consuming alice's own current handshake ratchet generation on the
-    // (still-referenced) pre-commit ClientState -- per US-012, that
-    // superseded secret is now zeroized in place rather than left for GC,
-    // even though this same object remains reachable via `aliceGroup`.
+    // consuming alice's own current handshake ratchet generation. The
+    // consumed secret belongs to this still-referenced pre-commit
+    // ClientState, so it must be left intact rather than zeroized in
+    // place: `aliceGroup` is still a usable state (security-audit.md C1).
     const postCommitNode = aliceGroup.secretTree[leafNodeIndex]!
-    t.ok(
-        postCommitNode.handshake.secret.every((b) => b === 0),
-        'the committer\'s own consumed handshake ratchet secret should be zeroized after createCommit',
-    )
-    t.notDeepEqual(
+    t.deepEqual(
         postCommitNode.handshake.secret,
         preCommitHandshakeSecret,
-        'sanity: the zeroized secret differs from the original pre-commit secret',
+        'the pre-commit state\'s handshake ratchet secret should be untouched by createCommit',
     )
 
     // exercise addHistoricalReceiverData directly too, since createCommit is
@@ -309,7 +341,7 @@ async function pathSecretsZeroizable (t:any, cipherSuite:CiphersuiteName) {
 
     const groupId = new TextEncoder().encode('key-material-retention-group')
 
-    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     const bobCredential:Credential = {
         credentialType: 'basic',
@@ -343,6 +375,8 @@ async function pathSecretsZeroizable (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     // bob commits an update, producing an UpdatePath with real PathSecrets
@@ -426,7 +460,7 @@ async function welcomeCarriesRealPathSecret (t:any, cipherSuite:CiphersuiteName)
 
     const groupId = new TextEncoder().encode('welcome-path-secret-group')
 
-    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     // add bob only, no UpdatePath needed
     const addBobResult = await createCommit(
@@ -461,6 +495,8 @@ async function welcomeCarriesRealPathSecret (t:any, cipherSuite:CiphersuiteName)
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     const ancestorNodeIndex = firstCommonAncestor(
@@ -523,7 +559,7 @@ async function makeGroupWithRetentionConfig (
     const groupId = new TextEncoder().encode('retain-keys-for-epochs-group-' + retainKeysForEpochs)
 
     const clientConfig = {
-        ...defaultClientConfig,
+        ...testClientConfig,
         keyRetentionConfig: { ...defaultKeyRetentionConfig, retainKeysForEpochs },
     }
 
@@ -579,7 +615,7 @@ async function retainKeysForEpochsRetainsOnlyTheMostRecent (t:any, cipherSuite:C
     )
 }
 
-async function consumeRatchetZeroizesSupersededSecret (t:any, cipherSuite:CiphersuiteName) {
+async function consumeRatchetLeavesTheInputTreeIntact (t:any, cipherSuite:CiphersuiteName) {
     const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
 
     const encryptionSecret = impl.rng.randomBytes(impl.kdf.size)
@@ -587,21 +623,22 @@ async function consumeRatchetZeroizesSupersededSecret (t:any, cipherSuite:Cipher
 
     const leafNodeIndex = leafToNodeIndex(toLeafIndex(0))
     const originalSecret = tree[leafNodeIndex]!.application.secret
+    const before = originalSecret.slice()
 
     t.ok(originalSecret.some((b) => b !== 0), 'sanity: original application secret is non-zero')
 
     const result = await consumeRatchet(tree, leafNodeIndex, 'application', impl)
 
-    t.ok(
-        originalSecret.every((b) => b === 0),
-        'the superseded secret should be zeroized in place after being consumed',
-    )
+    // the consumed secret is owned by the input tree, which the caller's
+    // ClientState still references (security-audit.md C1)
+    t.deepEqual(originalSecret, before, 'the input tree\'s secret should be left intact')
 
     const newSecret = result.newTree[leafNodeIndex]!.application.secret
     t.ok(newSecret.some((b) => b !== 0), 'the new tree\'s ratcheted-forward secret should be untouched (non-zero)')
+    t.notDeepEqual(newSecret, before, 'the new tree\'s secret should have ratcheted forward')
 }
 
-async function ratchetToGenerationZeroizesOutOfOrderSecret (t:any, cipherSuite:CiphersuiteName) {
+async function ratchetToGenerationKeepsOutOfOrderSecretIntact (t:any, cipherSuite:CiphersuiteName) {
     const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
 
     const encryptionSecret = impl.rng.randomBytes(impl.kdf.size)
@@ -618,6 +655,7 @@ async function ratchetToGenerationZeroizesOutOfOrderSecret (t:any, cipherSuite:C
     const desiredGenerationSecret = ratcheted.unusedGenerations[0]
     if (desiredGenerationSecret === undefined) throw new Error('Expected generation 0 to be retained')
     t.ok(desiredGenerationSecret.some((b) => b !== 0), 'sanity: retained out-of-order secret is non-zero')
+    const desiredBefore = desiredGenerationSecret.slice()
 
     const result = await ratchetToGeneration(
         treeWithRatchetedNode,
@@ -627,9 +665,12 @@ async function ratchetToGenerationZeroizesOutOfOrderSecret (t:any, cipherSuite:C
         impl,
     )
 
-    t.ok(
-        desiredGenerationSecret.every((b) => b === 0),
-        'the consumed out-of-order generation secret should be zeroized after use',
+    // the retained secret belongs to the input tree, so consuming it must
+    // drop the reference without wiping the buffer (security-audit.md C1)
+    t.deepEqual(
+        desiredGenerationSecret,
+        desiredBefore,
+        'the consumed out-of-order generation secret should be left intact in the input tree',
     )
     t.equal(
         result.newTree[leafNodeIndex]!.handshake.unusedGenerations[0],
@@ -638,7 +679,7 @@ async function ratchetToGenerationZeroizesOutOfOrderSecret (t:any, cipherSuite:C
     )
 }
 
-async function evictedGenerationSecretsAreZeroized (t:any, cipherSuite:CiphersuiteName) {
+async function evictedGenerationSecretsAreDroppedNotWiped (t:any, cipherSuite:CiphersuiteName) {
     const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
 
     const encryptionSecret = impl.rng.randomBytes(impl.kdf.size)
@@ -655,13 +696,132 @@ async function evictedGenerationSecretsAreZeroized (t:any, cipherSuite:Ciphersui
     const evictedSecret = ratchet2.unusedGenerations[0]
     if (evictedSecret === undefined) throw new Error('Expected generation 0 to still be retained after step 2')
     t.ok(evictedSecret.some((b) => b !== 0), 'sanity: generation 0 secret is non-zero before eviction')
+    const evictedBefore = evictedSecret.slice()
+
+    // generation 0's secret is the tree node's own starting secret, still
+    // referenced by `node` and by any ClientState holding this tree
+    t.deepEqual(evictedSecret, node.handshake.secret, 'sanity: generation 0 is the node\'s live secret')
 
     const ratchet3 = await ratchetUntil(ratchet2, 3, retainConfig, impl.kdf)
 
     t.equal(ratchet3.unusedGenerations[0], undefined, 'generation 0 should be evicted once retention limit is exceeded')
-    t.ok(
-        evictedSecret.every((b) => b === 0),
-        'the evicted generation secret should be zeroized before being dropped',
+    t.deepEqual(
+        evictedSecret,
+        evictedBefore,
+        'an evicted generation should be dropped for GC, not wiped out from under a live state',
+    )
+}
+
+async function retainKeysForGenerationsZeroRetainsNothing (t:any, cipherSuite:CiphersuiteName) {
+    const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
+
+    const encryptionSecret = impl.rng.randomBytes(impl.kdf.size)
+    const tree = await createSecretTree(1, encryptionSecret, impl.kdf)
+
+    const leafNodeIndex = leafToNodeIndex(toLeafIndex(0))
+    const node = tree[leafNodeIndex]!
+
+    const retainConfig = { ...defaultKeyRetentionConfig, retainKeysForGenerations: 0 }
+
+    const ratcheted = await ratchetUntil(node.handshake, 5, retainConfig, impl.kdf)
+
+    t.equal(ratcheted.generation, 5, 'sanity: the ratchet advanced 5 generations')
+    t.deepEqual(
+        Object.keys(ratcheted.unusedGenerations),
+        [],
+        'retainKeysForGenerations 0 should retain no skipped generation secrets',
+    )
+}
+
+async function retainKeysForGenerationsTwoRetainsMostRecent (t:any, cipherSuite:CiphersuiteName) {
+    const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
+
+    const encryptionSecret = impl.rng.randomBytes(impl.kdf.size)
+    const tree = await createSecretTree(1, encryptionSecret, impl.kdf)
+
+    const leafNodeIndex = leafToNodeIndex(toLeafIndex(0))
+    const node = tree[leafNodeIndex]!
+
+    const retainConfig = { ...defaultKeyRetentionConfig, retainKeysForGenerations: 2 }
+
+    const ratcheted = await ratchetUntil(node.handshake, 5, retainConfig, impl.kdf)
+
+    t.deepEqual(
+        Object.keys(ratcheted.unusedGenerations).map(Number).sort((a, b) => a - b),
+        [3, 4],
+        'retainKeysForGenerations 2 should retain the 2 most recent skipped generations',
+    )
+}
+
+/**
+ * The setting has to hold on the real receive path too, not just on a
+ * hand-driven ratchet: a single message received several generations
+ * ahead is what fills `unusedGenerations` in practice.
+ */
+async function receiveAheadRetainsNothingAtZero (t:any, cipherSuite:CiphersuiteName) {
+    const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
+
+    const makeMember = async (name:string) => {
+        const credential:Credential = {
+            credentialType: 'basic',
+            identity: new TextEncoder().encode(name),
+        }
+        return generateKeyPackage(credential, defaultCapabilities(), defaultLifetime(), [], impl)
+    }
+
+    const alice = await makeMember('alice')
+    const bob = await makeMember('bob')
+
+    const groupId = new TextEncoder().encode('generation-retention-group')
+    const created = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
+
+    const addBob:ProposalAdd = {
+        proposalType: 'add',
+        add: { keyPackage: bob.publicPackage },
+    }
+
+    const commit = await createCommit({ state: created, cipherSuite: impl }, { extraProposals: [addBob] })
+    if (commit.welcome === undefined) throw new Error('Expected a welcome for bob')
+
+    const aliceGroup = commit.newState
+
+    const bobConfig = {
+        ...testClientConfig,
+        keyRetentionConfig: { ...defaultKeyRetentionConfig, retainKeysForGenerations: 0 },
+    }
+
+    const bobGroup = await joinGroup(
+        commit.welcome,
+        bob.publicPackage,
+        bob.privatePackage,
+        emptyPskIndex,
+        impl,
+        aliceGroup.ratchetTree,
+        undefined,
+        bobConfig,
+    )
+
+    // alice sends 5 messages; bob only ever receives the last one, so the
+    // receive has to ratchet forward past 4 skipped generations
+    let sender = aliceGroup
+    let last:any
+    for (let i = 0; i < 5; i++) {
+        const sent = await createApplicationMessage(sender, new TextEncoder().encode(`message ${i}`), impl)
+        sender = sent.newState
+        last = sent.privateMessage
+    }
+
+    const result = await processPrivateMessage(bobGroup, last, makePskIndex(bobGroup, {}), impl)
+    if (result.kind === 'newState') throw new Error('Expected an application message')
+
+    const aliceLeafNodeIndex = leafToNodeIndex(toLeafIndex(aliceGroup.privatePath.leafIndex))
+    const retained = result.newState.secretTree[aliceLeafNodeIndex]!.application.unusedGenerations
+
+    t.deepEqual(result.message, new TextEncoder().encode('message 4'), 'bob should read the message sent ahead')
+    t.deepEqual(
+        Object.keys(retained),
+        [],
+        'retainKeysForGenerations 0 should leave no skipped-generation secrets after a receive',
     )
 }
 
@@ -675,13 +835,12 @@ async function protectZeroizesKeyAndNonce (t:any, cipherSuite:CiphersuiteName) {
     const alice = await generateKeyPackage(aliceCredential, defaultCapabilities(), defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('protect-zeroization-group')
-    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     // protectApplicationData calls encryptAead twice: first with the
-    // ratchet-derived content key/nonce (message-protection.ts, in scope
-    // for this zeroization fix), then again with the sender-data key/nonce
-    // (private-message.ts, a separate module not covered by this fix) --
-    // capture the first call only.
+    // ratchet-derived content key/nonce (message-protection.ts), then
+    // again with the sender-data key/nonce (private-message.ts, covered by
+    // test/validation/aead-key-zeroization.ts) -- check the first call.
     const calls:{ key:Uint8Array; nonce:Uint8Array }[] = []
 
     const wrappedImpl = {
@@ -729,7 +888,7 @@ async function blankedNodePrivateKeyIsDroppedAndZeroized (t:any, cipherSuite:Cip
 
     const groupId = new TextEncoder().encode('blanked-node-key-zeroization-group')
 
-    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    let aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     const addAllCommit = await createCommit(
         { state: aliceGroup, cipherSuite: impl },
@@ -750,6 +909,8 @@ async function blankedNodePrivateKeyIsDroppedAndZeroized (t:any, cipherSuite:Cip
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     // charlie self-updates: her own createUpdatePath freshly populates her
@@ -832,7 +993,7 @@ async function unprotectZeroizesKeyAndNonce (t:any, cipherSuite:CiphersuiteName)
     const alice = await generateKeyPackage(aliceCredential, defaultCapabilities(), defaultLifetime(), [], impl)
 
     const groupId = new TextEncoder().encode('unprotect-zeroization-group')
-    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl)
+    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [], impl, testClientConfig)
 
     // snapshot an independent copy of the pre-send tree to decrypt with,
     // simulating a separate recipient's own unconsumed copy -- alice's own
@@ -853,9 +1014,10 @@ async function unprotectZeroizesKeyAndNonce (t:any, cipherSuite:CiphersuiteName)
     )
 
     // unprotectPrivateMessage calls decryptAead twice: first to open the
-    // sender data (private-message.ts, out of scope), then again with the
-    // ratchet-derived content key/nonce (message-protection.ts, in scope
-    // for this zeroization fix) -- capture the last call only.
+    // sender data (private-message.ts, covered by
+    // test/validation/aead-key-zeroization.ts), then again with the
+    // ratchet-derived content key/nonce (message-protection.ts) -- check
+    // the last call.
     const calls:{ key:Uint8Array; nonce:Uint8Array }[] = []
 
     const wrappedImpl = {

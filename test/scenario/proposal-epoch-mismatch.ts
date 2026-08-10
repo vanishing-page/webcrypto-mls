@@ -19,6 +19,7 @@ import { signFramedContentApplicationOrProposal } from '../../src/framed-content
 import type { ExternalPublicMessage } from '../../src/public-message.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`Proposal with future epoch is rejected ${cs}`, async (t) => {
@@ -74,7 +75,7 @@ async function futureEpochProposalTest (cipherSuite:CiphersuiteName, t:any) {
         extensionData: encodeExternalSenders([externalSender]),
     }
 
-    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [extension], impl)
+    const aliceGroup = await createGroup(groupId, alice.publicPackage, alice.privatePackage, [extension], impl, testClientConfig)
 
     // external pub not really necessary here
     const groupInfo = await createGroupInfoWithExternalPub(aliceGroup, [], impl)

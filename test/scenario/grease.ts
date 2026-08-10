@@ -18,6 +18,7 @@ import { defaultGreaseConfig, greaseExtensions } from '../../src/grease.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import { extensionTypeToNumber } from '../../src/extension.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`Grease ${cs}`, async (t) => {
@@ -55,7 +56,8 @@ async function greaseTest (cipherSuite:CiphersuiteName, t:any) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -96,6 +98,8 @@ async function greaseTest (cipherSuite:CiphersuiteName, t:any) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(bobGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'bob should have matching epoch authenticator')

@@ -54,10 +54,12 @@ IndexedDB delete blocks rather than fails while a connection is open.
 ## What a persisted record deliberately omits
 
 `ClientState.clientConfig` holds function values that structured clone
-cannot copy, so it is stripped on the way out and re-derived from the
-library defaults on the way back in. A demo that starts using a
-non-default config cannot persist it through these helpers, and would
-need the config named in the record rather than rebuilt.
+cannot copy, so it is stripped on the way out and rebuilt on the way
+back in from `demoClientConfig` in `example-shared/demo-client-config.ts`
+-- the same config both demos pass to `createGroup`/`joinGroup`. The two
+have to stay in step: a restored session that rebuilds a different config
+than the one the group was created under is a silent behavior change, and
+`demoClientConfig` is where the demos' accept-all `authService` is named.
 
 The pure halves -- `sessionRecord`, `isRestorableSession`,
 `partitionRestorableRecords`, `restoredUsersFromRecords` -- take and

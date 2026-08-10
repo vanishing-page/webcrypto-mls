@@ -69,6 +69,22 @@ export type ProcessMessageResult =
   | { kind:'applicationMessage'; message:Uint8Array; newState:ClientState }
 
 /**
+ * A commit that removes this client leaves its state frozen at the epoch
+ * it was removed in: the group context never advances, only
+ * `groupActiveState` flips. That stale state is not a usable receiver --
+ * an alternative commit built from the same epoch would fork the client
+ * back into a group it no longer belongs to, and the removing commit
+ * itself could be replayed forever. Refuse all inbound traffic instead.
+ */
+function throwIfRemovedFromGroup (state:ClientState):void {
+    if (state.groupActiveState.kind === 'removedFromGroup') {
+        throw new ValidationError(
+            'Cannot process message, this client was removed from the group'
+        )
+    }
+}
+
+/**
  * Process private message and apply proposal or commit and return the updated ClientState or return an application message
  */
 export async function processPrivateMessage (
@@ -78,6 +94,8 @@ export async function processPrivateMessage (
     cs:CiphersuiteImpl,
     onMessage:IncomingMessageCallback = acceptAll,
 ):Promise<ProcessMessageResult> {
+    throwIfRemovedFromGroup(state)
+
     if (!constantTimeEqual(pm.groupId, state.groupContext.groupId)) {
         throw new ValidationError('Cannot process message, groupId does not match')
     }
@@ -187,6 +205,8 @@ export async function processPublicMessage (
     cs:CiphersuiteImpl,
     onMessage:IncomingMessageCallback = acceptAll,
 ):Promise<NewStateWithActionTaken> {
+    throwIfRemovedFromGroup(state)
+
     if (!constantTimeEqual(pm.content.groupId, state.groupContext.groupId)) {
         throw new ValidationError('Cannot process message, groupId does not match')
     }
@@ -442,7 +462,10 @@ async function updatePrivateKeyPath (
     const newPkp = pruneBlankedNodes(
         mergePrivateKeyPaths(
             state.privatePath,
-            await toPrivateKeyPath(pathSecrets, state.privatePath.leafIndex, cs),
+            // the tree here already carries the committer's advertised keys,
+            // so this is where a path secret that does not derive to them is
+            // caught (RFC 9420 SS12.4.3.1)
+            await toPrivateKeyPath(pathSecrets, state.privatePath.leafIndex, cs, tree),
         ),
         tree,
     )

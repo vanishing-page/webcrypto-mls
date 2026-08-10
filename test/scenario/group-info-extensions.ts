@@ -12,6 +12,7 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import type { Capabilities } from '../../src/capabilities.js'
 import type { Extension, ExtensionType } from '../../src/extension.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('GroupInfo Custom Extensions ' + cs, async (t) => {
@@ -54,7 +55,8 @@ async function customExtensionTest (t:any, cipherSuite:CiphersuiteName) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const extensionData = new TextEncoder().encode('custom extension data')

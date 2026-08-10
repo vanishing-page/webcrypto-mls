@@ -15,6 +15,7 @@ import { testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('RatchetTree extension ' + cs, async (t) => {
@@ -53,7 +54,8 @@ async function ratchetTreeExtension (t:any, cipherSuite:CiphersuiteName) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -113,6 +115,9 @@ async function ratchetTreeExtension (t:any, cipherSuite:CiphersuiteName) {
         bob.privatePackage,
         emptyPskIndex,
         impl,
+        undefined,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(bobGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'should match')
@@ -123,6 +128,9 @@ async function ratchetTreeExtension (t:any, cipherSuite:CiphersuiteName) {
         charlie.privatePackage,
         emptyPskIndex,
         impl,
+        undefined,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(charlieGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'should match')

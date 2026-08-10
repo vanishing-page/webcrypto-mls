@@ -26,6 +26,8 @@ import {
 } from '../../example-realistic-demo/client/mls-actions.js'
 import { membersFromTree, leafIndexOf } from
     '../../example-realistic-demo/client/membership.js'
+import { isMalformedEntry } from
+    '../../example-realistic-demo/client/malformed-entry.js'
 import type { DemoUser } from '../../example-shared/demo-user.js'
 
 let cs:CiphersuiteImpl
@@ -500,6 +502,54 @@ test('processEntry refuses a wrong wireformat rather than crashing on it',
             t.ok(
                 String((err as Error).message).includes('key_package'),
                 'and should say what the payload actually was'
+            )
+        }
+    })
+
+// security-audit.md H2. The two failures below both come out of
+// `processEntry` as a throw, and the queue's whole decision rests on
+// telling them apart: the first is a payload no MLS client could read
+// and must be skipped, the second is a real epoch this client cannot
+// follow and must stop it.
+test('processEntry marks a payload that is not an MLS message',
+    async (t) => {
+        const { bob, bobState } = await pair(cs)
+
+        for (const payload of [
+            'AAAA',
+            'not base64 at all!!',
+            encodeKeyPackageB64(bob.keyPackage!)
+        ]) {
+            try {
+                await processEntry(bobState, payload, cs)
+                t.fail(`should have thrown on ${payload.slice(0, 12)}`)
+            } catch (err) {
+                t.ok(
+                    isMalformedEntry(err),
+                    'should mark it as not an MLS message at all'
+                )
+            }
+        }
+    })
+
+test('processEntry does not mark a real commit that will not process',
+    async (t) => {
+        const { aliceState, bobState } = await pair(cs)
+        const carol = await createUser('carol', cs)
+        const first = await commitAdd(aliceState, carol.keyPackage!, cs)
+        const dave = await createUser('dave', cs)
+        const second = await commitAdd(first.newState, dave.keyPackage!, cs)
+
+        // A well-formed commit for an epoch bob has not reached. It
+        // decodes perfectly; it is the processing that fails.
+        try {
+            await processEntry(bobState, second.commit, cs)
+            t.fail('should have thrown on a commit from a later epoch')
+        } catch (err) {
+            t.equal(
+                isMalformedEntry(err),
+                false,
+                'should not be mistaken for a malformed payload'
             )
         }
     })

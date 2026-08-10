@@ -15,6 +15,7 @@ import { testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`External PSK Join ${cs}`, async (t) => {
@@ -53,7 +54,8 @@ async function externalPskJoin (cipherSuite:CiphersuiteName, t:any) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -115,6 +117,8 @@ async function externalPskJoin (cipherSuite:CiphersuiteName, t:any) {
         makePskIndex(undefined, sharedPsks),
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     await testEveryoneCanMessageEveryone([aliceGroup, bobGroup], impl, t)

@@ -15,6 +15,7 @@ import type { Capabilities } from '../../src/capabilities.js'
 import { createProposal, processPrivateMessage } from '../../src/index.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`Commit with unsupported custom proposal is rejected ${cs}`, async (t) => {
@@ -67,7 +68,8 @@ async function setupAliceAndBob (cipherSuite:CiphersuiteName, customProposalType
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -95,6 +97,8 @@ async function setupAliceAndBob (cipherSuite:CiphersuiteName, customProposalType
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     return { impl, aliceGroup, bobGroup }

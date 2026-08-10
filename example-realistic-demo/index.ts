@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import {
     isClientMessage,
+    MAX_WIRE_MESSAGE_LENGTH,
     type ClientMessage,
     type LogEntry,
     type PendingRequest,
@@ -8,13 +9,15 @@ import {
 } from './protocol.js'
 import {
     assembleRoster,
+    classifyJoinRequest,
     classifyStanding,
     countApplicationsAtOrBelow,
     entriesAfter,
     entryFromMls,
     isValidRoomId,
     mayWriteLog,
-    nextSeq
+    nextSeq,
+    securityHeaders
 } from './room-logic.js'
 
 const ROOM_LIFETIME_MS = 3 * 24 * 60 * 60 * 1000
@@ -73,6 +76,18 @@ type PendingRow = {
 type SocketState = {
     identity:string
     isCreator:boolean
+
+    /**
+     * When this socket last had a join request accepted, or null if it
+     * never has. Kept here rather than in a table because it throttles a
+     * socket, not an identity: identities are free to mint, so a
+     * per-identity limit would throttle nobody, and a socket is the one
+     * thing a flooder has to pay to open.
+     *
+     * It rides the attachment across a hibernation, which is what stops a
+     * flooder resetting it by going quiet for a moment.
+     */
+    lastJoinRequestAt:number|null
 }
 
 export class Room extends DurableObject<Env> {
@@ -193,6 +208,14 @@ export class Room extends DurableObject<Env> {
         raw:string|ArrayBuffer
     ):Promise<void> {
         if (typeof raw !== 'string') {
+            return this.send(ws, { type: 'error', reason: 'bad-message' })
+        }
+
+        // Before JSON.parse, not after: the per-field bounds in
+        // isClientMessage only apply to a frame that has already been
+        // parsed, and parsing a multi-megabyte frame is itself the cost
+        // worth refusing. See MAX_WIRE_MESSAGE_LENGTH in protocol.ts.
+        if (raw.length > MAX_WIRE_MESSAGE_LENGTH) {
             return this.send(ws, { type: 'error', reason: 'bad-message' })
         }
 
@@ -445,6 +468,13 @@ export class Room extends DurableObject<Env> {
      * A request outlives the tab that made it. `INSERT OR REPLACE` on a
      * primary key of identity means asking twice replaces the first ask
      * rather than queueing a duplicate for the creator to wade through.
+     *
+     * This is the only write a complete stranger can cause -- the room
+     * asks nothing but that it exist, deliberately, because the join flow
+     * is open -- so it is also the only handler with limits of its own.
+     * `classifyJoinRequest` holds them; a refusal writes nothing at all,
+     * not even the throttle, so a refused request cannot itself be the
+     * storage growth the limits exist to stop.
      */
     private onJoinRequest (
         ws:WebSocket,
@@ -453,19 +483,60 @@ export class Room extends DurableObject<Env> {
     ):void {
         if (!this.requireRoom(ws)) return
 
+        const now = Date.now()
+        const verdict = classifyJoinRequest({
+            keyPackageLength: keyPackage.length,
+            pendingCount: this.pendingCount(),
+            alreadyPending: this.isPending(identity),
+            lastRequestAt: this.readAttachment(ws)?.lastJoinRequestAt ??
+                null,
+            now
+        })
+
+        if (verdict !== 'ok') {
+            return this.send(ws, { type: 'error', reason: verdict })
+        }
+
         this.ctx.storage.sql.exec(
             `INSERT OR REPLACE INTO pending
                 (identity, key_package, requested_at)
              VALUES (?, ?, ?)`,
-            identity, keyPackage, Date.now()
+            identity, keyPackage, now
         ).toArray()
 
         // Attached so a Welcome can find this socket later. Always
         // non-creator: this can only lower a socket's privilege, never
         // raise it, since the creator flag is set solely by the token
         // comparison in `hello`.
-        this.attach(ws, identity, false)
+        //
+        // `now` is what starts this socket's next throttle window. It is
+        // recorded on the accepted request only: a refused one leaves the
+        // window where it was, so a socket cannot push its own next
+        // chance further out by asking again.
+        this.attach(ws, identity, false, now)
         this.sendPendingToCreator()
+    }
+
+    /** How many identities are queued, for the cap. */
+    private pendingCount ():number {
+        const row = this.ctx.storage.sql
+            .exec<{ n:number }>('SELECT COUNT(*) AS n FROM pending')
+            .toArray()[0]
+        return row ? row.n : 0
+    }
+
+    /**
+     * Whether this identity already holds a row. A repeat request
+     * replaces its own row, so it grows the queue by nothing and the cap
+     * does not apply to it.
+     */
+    private isPending (identity:string):boolean {
+        return this.ctx.storage.sql
+            .exec<{ n:number }>(
+                'SELECT COUNT(*) AS n FROM pending WHERE identity = ?',
+                identity
+            )
+            .toArray()[0].n > 0
     }
 
     /**
@@ -718,12 +789,27 @@ export class Room extends DurableObject<Env> {
 
     // ---- socket helpers ----
 
+    /**
+     * `lastJoinRequestAt` is carried over from the existing attachment
+     * unless this call sets it. Every other field is rewritten from
+     * scratch on each attach, and doing the same to the throttle would
+     * hand a flooder a reset: send `hello`, be attached afresh, ask
+     * again. It is socket-scoped, so it survives the identity changing.
+     */
     private attach (
         ws:WebSocket,
         identity:string,
-        isCreator:boolean
+        isCreator:boolean,
+        lastJoinRequestAt?:number
     ):void {
-        const state:SocketState = { identity, isCreator }
+        const prior = this.readAttachment(ws)
+        const state:SocketState = {
+            identity,
+            isCreator,
+            lastJoinRequestAt: lastJoinRequestAt ??
+                prior?.lastJoinRequestAt ??
+                null
+        }
         ws.serializeAttachment(state)
     }
 
@@ -738,9 +824,17 @@ export class Room extends DurableObject<Env> {
         if (!value || typeof value !== 'object') return null
         const state = value as Partial<SocketState>
         if (typeof state.identity !== 'string') return null
+        const last = state.lastJoinRequestAt
         return {
             identity: state.identity,
-            isCreator: state.isCreator === true
+            isCreator: state.isCreator === true,
+            // Same reasoning as `isCreator`: an attachment written before
+            // the field existed reads as "never asked" rather than
+            // letting undefined flow into a comparison.
+            lastJoinRequestAt: typeof last === 'number' &&
+                Number.isFinite(last) ?
+                last :
+                null
         }
     }
 
@@ -895,61 +989,99 @@ export class Room extends DurableObject<Env> {
     }
 }
 
+/**
+ * Copies the security headers onto a response. The response may have
+ * come back from the ASSETS binding or from a Durable Object, and those
+ * arrive with immutable headers, so it is rebuilt rather than mutated.
+ *
+ * A 101 is returned untouched: it is a completed WebSocket upgrade whose
+ * headers the runtime owns, and the page that opened the socket was
+ * already served under the policy.
+ */
+function withSecurityHeaders (res:Response, origin:string):Response {
+    if (res.status === 101) return res
+
+    const out = new Response(res.body, res)
+
+    for (const [name, value] of Object.entries(securityHeaders(origin))) {
+        out.headers.set(name, value)
+    }
+
+    return out
+}
+
 export default {
     async fetch (req:Request, env:Env):Promise<Response> {
         const url = new URL(req.url)
-
-        // Answered without naming a Durable Object, so a health check
-        // never causes one to exist.
-        if (url.pathname === '/api/health') {
-            return Response.json({ ok: true })
-        }
-
-        const ROOM_PREFIX = '/api/room/'
-
-        if (!url.pathname.startsWith(ROOM_PREFIX)) {
-            return new Response('not found', { status: 404 })
-        }
-
-        // Everything after the prefix is treated as a candidate id and
-        // handed to isValidRoomId, rather than being pre-filtered by the
-        // route pattern. A pattern that only matched a single clean
-        // segment would answer 404 for `/api/room/a/b`, hiding a
-        // traversal-shaped request behind the same status as a typo.
-        // Letting the tested predicate decide means every malformed id
-        // gets one answer, 400, whatever shape it arrives in.
-        const rest = url.pathname.slice(ROOM_PREFIX.length)
-        const wantsSocket = rest.endsWith('/ws')
-        const roomId = wantsSocket ? rest.slice(0, -'/ws'.length) : rest
-
-        // Validated before the room is named. An id that cannot be a
-        // room never causes a Durable Object to be created, which is
-        // what stops a malformed or reserved id from being routed.
-        if (!isValidRoomId(roomId)) {
-            return new Response('bad room id', { status: 400 })
-        }
-
-        const room = env.ROOM.getByName(roomId)
-
-        if (wantsSocket) {
-            // RFC 6455 makes the token case-insensitive.
-            const upgrade = req.headers.get('Upgrade') ?? ''
-            if (upgrade.toLowerCase() !== 'websocket') {
-                return new Response('expected websocket', { status: 426 })
-            }
-            return room.fetch(req)
-        }
-
-        if (req.method !== 'GET') {
-            return new Response('method not allowed', { status: 405 })
-        }
-
-        const info = await room.roomInfo()
-
-        if (!info) {
-            return new Response('no such room', { status: 404 })
-        }
-
-        return Response.json(info)
+        const res = await route(req, env, url)
+        return withSecurityHeaders(res, url.origin)
     }
+}
+
+/**
+ * Every reply the demo makes, before the headers go on. Split out so
+ * there is exactly one place a response can leave the Worker, and no
+ * later branch can be added that skips the policy.
+ */
+async function route (req:Request, env:Env, url:URL):Promise<Response> {
+    const API_PREFIX = '/api/'
+
+    // Not an API path, so it is the client: the SPA shell, a hashed
+    // asset, or a 404 from the assets binding. Forwarded unchanged.
+    if (!url.pathname.startsWith(API_PREFIX)) {
+        return env.ASSETS.fetch(req)
+    }
+
+    // Answered without naming a Durable Object, so a health check
+    // never causes one to exist.
+    if (url.pathname === '/api/health') {
+        return Response.json({ ok: true })
+    }
+
+    const ROOM_PREFIX = '/api/room/'
+
+    if (!url.pathname.startsWith(ROOM_PREFIX)) {
+        return new Response('not found', { status: 404 })
+    }
+
+    // Everything after the prefix is treated as a candidate id and
+    // handed to isValidRoomId, rather than being pre-filtered by the
+    // route pattern. A pattern that only matched a single clean
+    // segment would answer 404 for `/api/room/a/b`, hiding a
+    // traversal-shaped request behind the same status as a typo.
+    // Letting the tested predicate decide means every malformed id
+    // gets one answer, 400, whatever shape it arrives in.
+    const rest = url.pathname.slice(ROOM_PREFIX.length)
+    const wantsSocket = rest.endsWith('/ws')
+    const roomId = wantsSocket ? rest.slice(0, -'/ws'.length) : rest
+
+    // Validated before the room is named. An id that cannot be a
+    // room never causes a Durable Object to be created, which is
+    // what stops a malformed or reserved id from being routed.
+    if (!isValidRoomId(roomId)) {
+        return new Response('bad room id', { status: 400 })
+    }
+
+    const room = env.ROOM.getByName(roomId)
+
+    if (wantsSocket) {
+        // RFC 6455 makes the token case-insensitive.
+        const upgrade = req.headers.get('Upgrade') ?? ''
+        if (upgrade.toLowerCase() !== 'websocket') {
+            return new Response('expected websocket', { status: 426 })
+        }
+        return room.fetch(req)
+    }
+
+    if (req.method !== 'GET') {
+        return new Response('method not allowed', { status: 405 })
+    }
+
+    const info = await room.roomInfo()
+
+    if (!info) {
+        return new Response('no such room', { status: 404 })
+    }
+
+    return Response.json(info)
 }

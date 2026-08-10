@@ -51,8 +51,13 @@ export const SETUP_STEPS:SetupStep[] = [
 /**
  * The setup order for a page, as a numbered list. Kept beside the steps
  * it renders so the list and the explanation of each step cannot drift.
+ *
+ * `steps` is optional: omit it for `SETUP_STEPS`, the order the teaching
+ * demo runs in. An empty array is a caller saying "no steps" and renders
+ * an empty list, which is why the fallback tests for the prop being
+ * absent rather than for it being empty.
  */
-export const HowToUse:FunctionComponent<{ steps:SetupStep[] }> = function ({
+export const HowToUse:FunctionComponent<{ steps?:SetupStep[] }> = function ({
     steps
 }) {
     const list = steps ?? SETUP_STEPS

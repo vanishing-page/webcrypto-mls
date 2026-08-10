@@ -9,7 +9,12 @@ import {
     isValidRoomId,
     isReservedRoomId,
     countApplicationsAtOrBelow,
+    classifyJoinRequest,
     RESERVED_ROOM_IDS,
+    MAX_PENDING_REQUESTS,
+    MAX_KEY_PACKAGE_LENGTH,
+    JOIN_REQUEST_INTERVAL_MS,
+    securityHeaders,
 } from '../../example-realistic-demo/room-logic.js'
 import type { LogEntry } from '../../example-realistic-demo/protocol.js'
 
@@ -486,4 +491,213 @@ test('mayWriteLog - a re-approved identity may write again', (t) => {
 test('mayWriteLog - a removed identity holding the creator flag may write',
     (t) => {
         t.ok(mayWriteLog('A', true, [], ['A']))
+    })
+
+// classifyJoinRequest tests
+//
+// The three limits exist for one reason -- a stranger needs no standing
+// at all to reach this handler -- but they fail differently, so each has
+// its own reason string rather than a shared "refused".
+
+test('classifyJoinRequest - an ordinary first request is allowed', (t) => {
+    t.equal(classifyJoinRequest({
+        keyPackageLength: 400,
+        pendingCount: 0,
+        alreadyPending: false,
+        lastRequestAt: null,
+        now: 1000
+    }), 'ok')
+})
+
+test('classifyJoinRequest - a key package at the ceiling is allowed', (t) => {
+    t.equal(classifyJoinRequest({
+        keyPackageLength: MAX_KEY_PACKAGE_LENGTH,
+        pendingCount: 0,
+        alreadyPending: false,
+        lastRequestAt: null,
+        now: 1000
+    }), 'ok')
+})
+
+test('classifyJoinRequest - one character over the ceiling is refused',
+    (t) => {
+        t.equal(classifyJoinRequest({
+            keyPackageLength: MAX_KEY_PACKAGE_LENGTH + 1,
+            pendingCount: 0,
+            alreadyPending: false,
+            lastRequestAt: null,
+            now: 1000
+        }), 'key-package-too-large')
+    })
+
+// Size is named ahead of the other two because it is the one refusal
+// that waiting will never resolve.
+test('classifyJoinRequest - size outranks the other limits', (t) => {
+    t.equal(classifyJoinRequest({
+        keyPackageLength: MAX_KEY_PACKAGE_LENGTH + 1,
+        pendingCount: MAX_PENDING_REQUESTS,
+        alreadyPending: false,
+        lastRequestAt: 1000,
+        now: 1000
+    }), 'key-package-too-large')
+})
+
+test('classifyJoinRequest - a second request within the interval is refused',
+    (t) => {
+        t.equal(classifyJoinRequest({
+            keyPackageLength: 400,
+            pendingCount: 0,
+            alreadyPending: false,
+            lastRequestAt: 1000,
+            now: 1000 + JOIN_REQUEST_INTERVAL_MS - 1
+        }), 'rate-limited')
+    })
+
+test('classifyJoinRequest - a request at the interval is allowed', (t) => {
+    t.equal(classifyJoinRequest({
+        keyPackageLength: 400,
+        pendingCount: 0,
+        alreadyPending: false,
+        lastRequestAt: 1000,
+        now: 1000 + JOIN_REQUEST_INTERVAL_MS
+    }), 'ok')
+})
+
+// Clocks are not guaranteed monotonic across a hibernation, and a
+// timestamp from the future would otherwise lock a socket out until it
+// caught up. Treated as no prior request rather than as an infinite wait.
+test('classifyJoinRequest - a last-request time in the future is ignored',
+    (t) => {
+        t.equal(classifyJoinRequest({
+            keyPackageLength: 400,
+            pendingCount: 0,
+            alreadyPending: false,
+            lastRequestAt: 9000,
+            now: 1000
+        }), 'ok')
+    })
+
+test('classifyJoinRequest - the request that fills the queue is allowed',
+    (t) => {
+        t.equal(classifyJoinRequest({
+            keyPackageLength: 400,
+            pendingCount: MAX_PENDING_REQUESTS - 1,
+            alreadyPending: false,
+            lastRequestAt: null,
+            now: 1000
+        }), 'ok')
+    })
+
+test('classifyJoinRequest - a new identity past the cap is refused', (t) => {
+    t.equal(classifyJoinRequest({
+        keyPackageLength: 400,
+        pendingCount: MAX_PENDING_REQUESTS,
+        alreadyPending: false,
+        lastRequestAt: null,
+        now: 1000
+    }), 'too-many-pending')
+})
+
+// The cap counts distinct rows, and a repeat request replaces its own
+// row rather than adding one. Refusing it would strand a requester whose
+// key package changed behind a queue they are already in.
+test('classifyJoinRequest - an identity already queued may still update',
+    (t) => {
+        t.equal(classifyJoinRequest({
+            keyPackageLength: 400,
+            pendingCount: MAX_PENDING_REQUESTS,
+            alreadyPending: true,
+            lastRequestAt: null,
+            now: 1000
+        }), 'ok')
+    })
+
+// The flood this closes: distinct random identities, each a new row. The
+// queue stops growing at the cap and every later request writes nothing.
+test('classifyJoinRequest - a flood of fresh identities stops at the cap',
+    (t) => {
+        const queued = new Set<string>()
+        let refused = 0
+        let now = 0
+
+        for (let i = 0; i < MAX_PENDING_REQUESTS + 20; i++) {
+            now += JOIN_REQUEST_INTERVAL_MS
+            const identity = `flood-${i}`
+            const verdict = classifyJoinRequest({
+                keyPackageLength: 400,
+                pendingCount: queued.size,
+                alreadyPending: queued.has(identity),
+                lastRequestAt: null,
+                now
+            })
+            if (verdict === 'ok') {
+                queued.add(identity)
+            } else {
+                t.equal(verdict, 'too-many-pending')
+                refused++
+            }
+        }
+
+        t.equal(queued.size, MAX_PENDING_REQUESTS)
+        t.equal(refused, 20)
+    })
+
+// securityHeaders tests
+
+/** The CSP as a map of directive name to its source list. */
+function directives (csp:string):Record<string, string[]> {
+    const out:Record<string, string[]> = {}
+    for (const part of csp.split(';')) {
+        const [name, ...sources] = part.trim().split(/\s+/)
+        if (name) out[name] = sources
+    }
+    return out
+}
+
+test('securityHeaders - names the three headers', (t) => {
+    const headers = securityHeaders('https://demo.example')
+    t.ok(headers['Content-Security-Policy'], 'has a CSP')
+    t.equal(headers['X-Frame-Options'], 'DENY')
+    t.equal(headers['X-Content-Type-Options'], 'nosniff')
+})
+
+test('securityHeaders - default-src is none, own scripts and styles',
+    (t) => {
+        const d = directives(
+            securityHeaders('https://demo.example')['Content-Security-Policy']
+        )
+        t.deepEqual(d['default-src'], ["'none'"])
+        t.deepEqual(d['script-src'], ["'self'"])
+        t.deepEqual(d['style-src'], ["'self'"])
+        t.deepEqual(d['frame-ancestors'], ["'none'"])
+    })
+
+test('securityHeaders - connect-src carries the socket origin', (t) => {
+    const secure = directives(
+        securityHeaders('https://demo.example')['Content-Security-Policy']
+    )
+    t.deepEqual(secure['connect-src'], ["'self'", 'wss://demo.example'])
+
+    const plain = directives(
+        securityHeaders('http://localhost:8787')['Content-Security-Policy']
+    )
+    t.deepEqual(plain['connect-src'], ["'self'", 'ws://localhost:8787'])
+})
+
+// The point of the policy is that nothing off-origin is reachable, so a
+// wildcard or an inline escape hatch anywhere in it defeats it.
+test('securityHeaders - no wildcard and no inline escape hatch', (t) => {
+    const csp = securityHeaders('https://demo.example')['Content-Security-Policy']
+    t.equal(csp.includes('*'), false, 'no wildcard source')
+    t.equal(csp.includes('unsafe-inline'), false, 'no unsafe-inline')
+    t.equal(csp.includes('unsafe-eval'), false, 'no unsafe-eval')
+    t.equal(csp.includes('http://demo.example'), false, 'no bare http source')
+})
+
+test('securityHeaders - a non-http origin falls back to the secure socket',
+    (t) => {
+        const d = directives(
+            securityHeaders('file:///tmp/x')['Content-Security-Policy']
+        )
+        t.deepEqual(d['connect-src'], ["'self'"])
     })

@@ -21,6 +21,8 @@ import {
 } from '../../src/index.js'
 import { base64ToBytes } from '../../src/util/byte-array.js'
 import type { DemoUser } from '../../example-shared/demo-user.js'
+import { MalformedEntryError } from './malformed-entry.js'
+import { demoClientConfig } from '../../example-shared/demo-client-config.js'
 
 /**
  * Every MLS operation the client performs. Nothing here reimplements
@@ -100,7 +102,8 @@ export async function createOwnGroup (
         user.keyPackage,
         user.privateKeys,
         [],
-        cs
+        cs,
+        demoClientConfig
     )
 }
 
@@ -201,7 +204,10 @@ export async function joinFromWelcome (
         user.keyPackage,
         user.privateKeys,
         makePskIndex(undefined, {}),
-        cs
+        cs,
+        undefined,
+        undefined,
+        demoClientConfig
     )
 }
 
@@ -289,14 +295,30 @@ export async function commitRemove (
  * than returned as some empty result. Being removed is not one of
  * these: that commit processes correctly and the caller reads the
  * outcome off `newState.groupActiveState`.
+ *
+ * Those two refusals throw `MalformedEntryError` and everything past
+ * the decode throws whatever it throws. The queue reads the difference
+ * and it is the whole of security-audit.md H2: see `malformed-entry.ts`.
  */
 export async function processEntry (
     state:ClientState,
     payload:string,
     cs:CiphersuiteImpl
 ):Promise<ProcessMessageResult> {
-    const decoded = decodeMlsMessage(base64ToBytes(payload), 0)
-    if (!decoded) throw new Error('that entry does not decode')
+    // The try covers the decode and nothing else. `base64ToBytes` throws
+    // on a string that is not base64 in the browser -- `atob` does --
+    // while node's Buffer quietly drops the bad characters, so an
+    // unreachable-looking catch here is exactly the path a real browser
+    // takes. Widening it to cover `processMessage` would turn every
+    // processing failure into a skip and undo the point of the
+    // distinction.
+    let decoded:ReturnType<typeof decodeMlsMessage>
+    try {
+        decoded = decodeMlsMessage(base64ToBytes(payload), 0)
+    } catch (_err) {
+        throw new MalformedEntryError('that entry does not decode')
+    }
+    if (!decoded) throw new MalformedEntryError('that entry does not decode')
 
     const msg = decoded[0]
 
@@ -304,7 +326,7 @@ export async function processEntry (
         msg.wireformat !== 'mls_public_message' &&
         msg.wireformat !== 'mls_private_message'
     ) {
-        throw new Error(`entry carries a ${msg.wireformat}`)
+        throw new MalformedEntryError(`entry carries a ${msg.wireformat}`)
     }
 
     return processMessage(

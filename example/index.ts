@@ -45,10 +45,25 @@ const basePath = import.meta.env.BASE_URL
 const hoveredUser = signal<string | null>(null)
 const selectedNodeIndex = signal<number | null>(null)
 
-window.localStorage.setItem('DEBUG', 'mls,mls:*')
-
-// @ts-expect-error dev
-window.state = state
+/**
+ * Development only. `state` holds live group secrets, so a build must not
+ * hand them to anything that can reach the global scope.
+ *
+ * The test is `import.meta.env.DEV` and nothing else. It is true only
+ * under `vite` the dev server, and Vite replaces it with the literal
+ * `false` in every build, which is what lets the whole block be dropped
+ * rather than merely skipped. A `MODE !== 'production'` test would look
+ * equivalent and is not: `npm run build-example`, the build that deploys
+ * to the live demo, runs `--mode staging`, so that form shipped
+ * `window.state` to the one place it mattered.
+ *
+ * Same gate as `example-realistic-demo/client/index.ts`.
+ */
+if (import.meta.env.DEV) {
+    // @ts-expect-error dev
+    window.state = state
+    window.localStorage.setItem('DEBUG', 'mls,mls:*')
+}
 
 const {
     users,

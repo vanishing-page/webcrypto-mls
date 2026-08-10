@@ -57,7 +57,16 @@ export async function reinitCreateNewGroup (
     provider:CryptoProvider = defaultCryptoProvider,
 ):Promise<CreateCommitResult> {
     const cs = await getCipherSuite(getCiphersuiteFromName(cipherSuite), provider)
-    const newGroup = await createGroup(groupId, keyPackage, privateKeyPackage, extensions, cs)
+    // the resumed group inherits the old group's configuration -- including
+    // its AuthenticationService, which has no default worth guessing at
+    const newGroup = await createGroup(
+        groupId,
+        keyPackage,
+        privateKeyPackage,
+        extensions,
+        cs,
+        state.clientConfig,
+    )
 
     const addProposals:Proposal[] = memberKeyPackages.map((kp) => ({
         proposalType: 'add',
@@ -117,7 +126,14 @@ export async function branchGroup (
 
     const pskSearch = makePskIndex(state, {})
 
-    const newGroup = await createGroup(newGroupId, keyPackage, privateKeyPackage, state.groupContext.extensions, cs)
+    const newGroup = await createGroup(
+        newGroupId,
+        keyPackage,
+        privateKeyPackage,
+        state.groupContext.extensions,
+        cs,
+        state.clientConfig,
+    )
 
     const addMemberProposals:ProposalAdd[] = memberKeyPackages.map((kp) => ({
         proposalType: 'add',
@@ -155,7 +171,16 @@ export async function joinGroupFromBranch (
 ):Promise<ClientState> {
     const pskSearch = makePskIndex(oldState, {})
 
-    return await joinGroup(welcome, keyPackage, privateKeyPackage, pskSearch, cs, ratchetTree, oldState)
+    return await joinGroup(
+        welcome,
+        keyPackage,
+        privateKeyPackage,
+        pskSearch,
+        cs,
+        ratchetTree,
+        oldState,
+        oldState.clientConfig,
+    )
 }
 
 export async function joinGroupFromReinit (
@@ -174,5 +199,14 @@ export async function joinGroupFromReinit (
         provider,
     )
 
-    return await joinGroup(welcome, keyPackage, privateKeyPackage, pskSearch, cs, ratchetTree, suspendedState)
+    return await joinGroup(
+        welcome,
+        keyPackage,
+        privateKeyPackage,
+        pskSearch,
+        cs,
+        ratchetTree,
+        suspendedState,
+        suspendedState.clientConfig,
+    )
 }

@@ -17,6 +17,7 @@ import { shuffledIndices, testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { sampleCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 // Browser-compatible randomInt function
 function randomInt (max:number):number {
@@ -67,7 +68,8 @@ async function largeGroupFullLifecycle (cipherSuite:CiphersuiteName, initialSize
         creatorKP.publicPackage,
         creatorKP.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     memberStates.push({
@@ -206,6 +208,8 @@ async function addMember (memberStates:MemberState[], index:number, impl:Ciphers
         emptyPskIndex,
         impl,
         adder.state.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     // Update all existing members (excluding adder)

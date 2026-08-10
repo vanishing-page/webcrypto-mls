@@ -182,15 +182,20 @@ export async function protect (
         authenticatedData,
     }
 
-    const ciphertext = await cs.hpke.encryptAead(
-        key,
-        nonce,
-        encodePrivateContentAAD(aad),
-        encodePrivateMessageContent(config)(content),
-    )
-
-    key.fill(0)
-    nonce.fill(0)
+    // `key` and `nonce` were derived by consumeRatchet for this call, so
+    // wiping them is safe -- and has to happen even when the AEAD throws
+    let ciphertext:Uint8Array
+    try {
+        ciphertext = await cs.hpke.encryptAead(
+            key,
+            nonce,
+            encodePrivateContentAAD(aad),
+            encodePrivateMessageContent(config)(content),
+        )
+    } finally {
+        key.fill(0)
+        nonce.fill(0)
+    }
 
     const senderData:SenderData = {
         leafIndex,
@@ -249,10 +254,15 @@ export async function unprotectPrivateMessage (
         authenticatedData: msg.authenticatedData,
     }
 
-    const decrypted = await cs.hpke.decryptAead(key, nonce, encodePrivateContentAAD(aad), msg.ciphertext)
-
-    key.fill(0)
-    nonce.fill(0)
+    // ratchetToGeneration derived `key` and `nonce` for this call, so they
+    // are ours to wipe -- including when the AEAD rejects a forged message
+    let decrypted:Uint8Array
+    try {
+        decrypted = await cs.hpke.decryptAead(key, nonce, encodePrivateContentAAD(aad), msg.ciphertext)
+    } finally {
+        key.fill(0)
+        nonce.fill(0)
+    }
 
     const pmc = decodePrivateMessageContent(msg.contentType)(decrypted, 0)?.[0]
 

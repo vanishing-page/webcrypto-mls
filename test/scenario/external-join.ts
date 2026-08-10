@@ -16,6 +16,7 @@ import { testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`External join ${cs}`, async (t) => {
@@ -54,7 +55,8 @@ async function externalJoin (cipherSuite:CiphersuiteName, t:any) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -107,6 +109,8 @@ async function externalJoin (cipherSuite:CiphersuiteName, t:any) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     t.deepEqual(bobGroup.keySchedule.epochAuthenticator, aliceGroup.keySchedule.epochAuthenticator, 'bob should have matching epoch authenticator')
@@ -119,6 +123,8 @@ async function externalJoin (cipherSuite:CiphersuiteName, t:any) {
         charlie.privatePackage,
         false,
         impl,
+        undefined,
+        testClientConfig
     )
 
     const charlieGroup = charlieJoinGroupCommitResult.newState

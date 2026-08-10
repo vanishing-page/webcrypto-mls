@@ -58,9 +58,8 @@ import type {
     Reinit,
     Remove,
 } from './proposal.js'
-import { pathToRoot, zeroPathSecrets } from './path-secrets.js'
 import type { PrivateKeyPath } from './private-key-path.js'
-import { mergePrivateKeyPaths, toPrivateKeyPath } from './private-key-path.js'
+import { deriveWelcomePrivateKeyPath } from './private-key-path.js'
 import type { UnappliedProposals, ProposalWithSender } from './unapplied-proposals.js'
 import { addUnappliedProposal } from './unapplied-proposals.js'
 import type { PskIndex } from './psk-index.js'
@@ -93,6 +92,7 @@ import { decodeRequiredCapabilities } from './required-capabilities.js'
 import type { Capabilities } from './capabilities.js'
 import { verifyParentHashes } from './parent-hash.js'
 import type { AuthenticationService } from './authentication-service.js'
+import type { Credential } from './credential.js'
 import type { LifetimeConfig } from './lifetime-config.js'
 import type { KeyPackageEqualityConfig } from './key-package-equality-config.js'
 import type { ClientConfig } from './client-config.js'
@@ -288,7 +288,15 @@ async function validateProposals (
     return await validateExternalSenders(allExtensions, authService)
 }
 
-async function validateExternalSenders (
+/**
+ * RFC 9420 SS12.1.8.2: every identity listed in an `external_senders`
+ * GroupContext extension may sign proposals into the group, so it has to
+ * clear the same credential bar as a member. `createGroup` checks the
+ * extension it is given; `joinGroup`/`joinGroupExternal` check the one
+ * they find in the group they are joining, so a joiner never inherits an
+ * external signer its own `AuthenticationService` would refuse.
+ */
+export async function validateExternalSenders (
     extensions:Extension[],
     authService:AuthenticationService,
 ):Promise<MlsError | undefined> {
@@ -350,7 +358,12 @@ export function validateUnmergedLeaves (tree:RatchetTree):MlsError | undefined {
                 const nodeIndex = leafToNodeIndex(leafIndex)
                 if (tree[nodeIndex]?.nodeType !== 'leaf' || !dp.includes(toNodeIndex(parentIndex))) { return new ValidationError('Unmerged leaf did not represent a non-blank descendant leaf node') }
 
-                for (const parentIdx of dp) {
+                // only the nodes strictly between the leaf and the parent
+                // under inspection are constrained; `dp` runs leaf-ward to
+                // root-ward, so everything before `parentIndex` is "between".
+                const between = dp.slice(0, dp.indexOf(toNodeIndex(parentIndex)))
+
+                for (const parentIdx of between) {
                     const dpNode = tree[parentIdx]
 
                     if (dpNode !== undefined) {
@@ -451,9 +464,31 @@ export async function validateLeafNodeUpdateOrCommit (
 
     if (!signatureValid) return new CryptoVerificationError('Could not verify leaf node signature')
 
-    const commonError = await validateLeafNodeCommon(leafNode, groupContext, tree, authService, leafIndex)
+    const commonError = await validateLeafNodeCommon(
+        leafNode,
+        groupContext,
+        tree,
+        authService,
+        leafIndex,
+        credentialAtLeaf(tree, leafIndex),
+    )
 
     if (commonError !== undefined) return commonError
+}
+
+/**
+ * The credential a leaf carries *before* the replacement being validated. An
+ * Update proposal and a commit's UpdatePath are both checked against the tree
+ * as it stands before the new leaf is merged, so this is the outgoing
+ * identity. Blank leaf (an external commit joining at a free index) means
+ * nothing is being replaced.
+ */
+function credentialAtLeaf (tree:RatchetTree, leafIndex:number):Credential | undefined {
+    const node = tree[leafToNodeIndex(toLeafIndex(leafIndex))]
+
+    if (node === undefined || node.nodeType !== 'leaf') return undefined
+
+    return node.leaf.credential
 }
 
 export function throwIfDefined (err:MlsError | undefined):void {
@@ -466,8 +501,13 @@ async function validateLeafNodeCommon (
     tree:RatchetTree,
     authService:AuthenticationService,
     leafIndex?:number,
+    priorCredential?:Credential,
 ) {
-    const credentialValid = await authService.validateCredential(leafNode.credential, leafNode.signaturePublicKey)
+    const credentialValid = await authService.validateCredential(
+        leafNode.credential,
+        leafNode.signaturePublicKey,
+        priorCredential,
+    )
 
     if (!credentialValid) return new ValidationError('Could not validate credential')
 
@@ -491,6 +531,25 @@ async function validateLeafNodeCommon (
 
     if (credentialUnsupported) { return new ValidationError('LeafNode has credential that is not supported by member of the group') }
 
+    // RFC 9420 7.3 states the credential-support rule in both directions.
+    // The check above is one half: every member must support this leaf's
+    // credential type. This is the other half: this leaf must support every
+    // credential type already in use. Without it a joining or rotating
+    // member can quietly lower the group's credential floor and then present
+    // a credential the rest of the group is entitled to expect it can check.
+    // The leaf's own index is skipped because the leaf there is the one being
+    // replaced; its own credential type is already covered by the check above,
+    // which does not skip it.
+    const inUseCredentialUnsupported = tree.some(
+        (node, nodeIndex) =>
+            node !== undefined &&
+      node.nodeType === 'leaf' &&
+      leafIndex !== nodeToLeafIndex(toNodeIndex(nodeIndex)) &&
+      !leafNode.capabilities.credentials.includes(node.leaf.credential.credentialType),
+    )
+
+    if (inUseCredentialUnsupported) { return new ValidationError('LeafNode does not support a credential type in use by a member of the group') }
+
     const extensionsSupported = extensionsSupportedByCapabilities(leafNode.extensions, leafNode.capabilities)
 
     if (!extensionsSupported) return new ValidationError('LeafNode contains extension not listed in capabilities')
@@ -505,6 +564,20 @@ async function validateLeafNodeCommon (
     )
 
     if (keysAreNotUnique) return new ValidationError('hpke and signature keys not unique')
+
+    // A leaf's encryption key has to be distinct from *every* node key, not
+    // just the other leaves' -- `validateRatchetTree` above rejects any
+    // duplicate across the whole tree at join time, so accepting a
+    // leaf/parent collision here would build a tree this library itself
+    // refuses, wedging all future joins.
+    const collidesWithParentKey = tree.some(
+        (node) =>
+            node !== undefined &&
+      node.nodeType === 'parent' &&
+      constantTimeEqual(node.parent.hpkePublicKey, leafNode.hpkePublicKey),
+    )
+
+    if (collidesWithParentKey) return new ValidationError('hpke key matches an existing parent node key')
 }
 
 async function validateLeafNodeKeyPackage (
@@ -743,11 +816,20 @@ export async function applyProposals (
 
         const selfRemoved = mutatedTree[leafToNodeIndex(toLeafIndex(state.privatePath.leafIndex))] === undefined
 
+        // RFC 9420 SS12.4: a commit needs an UpdatePath unless every proposal
+        // it covers is an add, a psk or a reinit. Custom (numeric) proposal
+        // types are not among those exceptions, so a custom-only commit still
+        // has to rotate key material.
+        const hasCustomProposal = allProposals.some(
+            (p) => typeof p.proposal.proposalType === 'number',
+        )
+
         const needsUpdatePath =
             allProposals.length === 0 ||
             grouped.update.length > 0 ||
             grouped.remove.length > 0 ||
-            grouped.group_context_extensions.length > 0
+            grouped.group_context_extensions.length > 0 ||
+            hasCustomProposal
 
         return {
             tree: mutatedTree,
@@ -871,19 +953,22 @@ export async function nextEpochContext (
 
 async function deriveUpdatedPrivateKeyPath (
     tree:RatchetTree,
+    committerLeafIndex:LeafIndex,
     ancestorNodeIndex:NodeIndex,
     pathSecret:Uint8Array | undefined,
-    newLeaf:number,
     privateKeyPath:PrivateKeyPath,
     cs:CiphersuiteImpl,
 ):Promise<PrivateKeyPath> {
     if (pathSecret === undefined) return privateKeyPath
 
-    const derivedPathSecrets = await pathToRoot(tree, ancestorNodeIndex, pathSecret, cs.kdf)
-    const pkpFromPath = await toPrivateKeyPath(derivedPathSecrets, newLeaf, cs)
-    zeroPathSecrets(derivedPathSecrets)
-
-    return mergePrivateKeyPaths(pkpFromPath, privateKeyPath)
+    return deriveWelcomePrivateKeyPath(
+        tree,
+        committerLeafIndex,
+        ancestorNodeIndex,
+        pathSecret,
+        privateKeyPath,
+        cs,
+    )
 }
 
 /**
@@ -950,6 +1035,13 @@ export async function joinGroup (
     )
     if (!allExtensionsSupported) throw new UsageError('client does not support every extension in the GroupContext')
 
+    throwIfDefined(
+        await validateExternalSenders(
+            gi.groupContext.extensions,
+            clientConfig.authService,
+        ),
+    )
+
     const tree = ratchetTreeFromExtension(gi) ?? ratchetTree
 
     if (tree === undefined) throw new UsageError('No RatchetTree passed and no ratchet_tree extension')
@@ -978,6 +1070,12 @@ export async function joinGroup (
 
     if (gi.groupContext.cipherSuite !== keyPackage.cipherSuite) { throw new ValidationError('cipher suite in the GroupInfo does not match the cipher_suite in the KeyPackage') }
 
+    // The committer is supposed to have run this check when it validated
+    // the Add (see `validateKeyPackage`), but a joiner cannot assume the
+    // committer is honest: a group running a different protocol version
+    // than this KeyPackage advertises must never be joined.
+    if (gi.groupContext.version !== keyPackage.version) { throw new ValidationError('version in the GroupInfo does not match the version in the KeyPackage') }
+
     throwIfDefined(
         await validateRatchetTree(
             tree,
@@ -998,13 +1096,14 @@ export async function joinGroup (
         privateKeys: { [leafToNodeIndex(newLeaf)]: privateKeys.hpkePrivateKey },
     }
 
-    const ancestorNodeIndex = firstCommonAncestor(tree, newLeaf, toLeafIndex(gi.signer))
+    const committerLeafIndex = toLeafIndex(gi.signer)
+    const ancestorNodeIndex = firstCommonAncestor(tree, newLeaf, committerLeafIndex)
 
     const updatedPkp = await deriveUpdatedPrivateKeyPath(
         tree,
+        committerLeafIndex,
         ancestorNodeIndex,
         groupSecrets.pathSecret,
-        newLeaf,
         privateKeyPath,
         cs,
     )
@@ -1134,11 +1233,17 @@ async function applyTreeMutations (
 
     const [treeAfterAdd, addedLeafNodes] = await grouped.add.reduce(
         async (acc, { proposal }) => {
+            const [tree, ws] = await acc
+
+            // validate against the tree as it stands after the preceding
+            // proposals, not the pre-mutation one: otherwise two Adds in the
+            // same commit are never compared to each other and can share an
+            // encryption key
             throwIfDefined(
                 await validateKeyPackage(
                     proposal.add.keyPackage,
                     gc,
-                    ratchetTree,
+                    tree,
                     sentByClient,
                     lifetimeConfig,
                     authService,
@@ -1146,7 +1251,6 @@ async function applyTreeMutations (
                 ),
             )
 
-            const [tree, ws] = await acc
             const [updatedTree, leafNodeIndex] = addLeafNode(tree, proposal.add.keyPackage.leafNode)
             return [
                 updatedTree,

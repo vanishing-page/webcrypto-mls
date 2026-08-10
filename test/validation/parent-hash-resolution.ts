@@ -14,11 +14,14 @@ import type { ProposalAdd } from '../../src/proposal.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { defaultLifetimeConfig } from '../../src/lifetime-config.js'
-import { defaultAuthenticationService } from '../../src/authentication-service.js'
 import { CryptoVerificationError } from '../../src/mls-error.js'
 import { treeHashRoot } from '../../src/tree-hash.js'
 import type { RatchetTree } from '../../src/ratchet-tree.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
+import {
+    unsafeAcceptAllAuthenticationService
+} from '../../src/authentication-service.js'
 
 // RFC 9420 SS7.9.2: the parent hash of D is valid with respect to P only if,
 // in addition to the hash-chain match, D is in the resolution of C (the
@@ -76,6 +79,7 @@ async function tamperedUnmergedLeaves (t:any, cipherSuite:CiphersuiteName) {
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     const addBobProposal:ProposalAdd = {
@@ -106,6 +110,8 @@ async function tamperedUnmergedLeaves (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     // A follow-up empty-proposal commit gives alice's own leaf node a
@@ -134,7 +140,7 @@ async function tamperedUnmergedLeaves (t:any, cipherSuite:CiphersuiteName) {
         aliceGroup.ratchetTree,
         aliceGroup.groupContext,
         defaultLifetimeConfig,
-        defaultAuthenticationService,
+        unsafeAcceptAllAuthenticationService,
         await treeHashRoot(aliceGroup.ratchetTree, impl.hash),
         impl,
     )
@@ -170,7 +176,7 @@ async function tamperedUnmergedLeaves (t:any, cipherSuite:CiphersuiteName) {
         tamperedTree,
         aliceGroup.groupContext,
         defaultLifetimeConfig,
-        defaultAuthenticationService,
+        unsafeAcceptAllAuthenticationService,
         tamperedTreeHash,
         impl,
     )

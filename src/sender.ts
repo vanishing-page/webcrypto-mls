@@ -107,6 +107,10 @@ export function getSenderLeafNodeIndex (sender:Sender):number | undefined {
 export const encodeReuseGuard:Encoder<ReuseGuard> = (g) => g
 
 export const decodeReuseGuard:Decoder<ReuseGuard> = (b, offset) => {
+    // `subarray` clamps instead of failing, so a short buffer would yield a
+    // 1-3 byte value branded as a length-4 `ReuseGuard` while claiming to
+    // have consumed 4 bytes. Check the bounds ourselves.
+    if (offset < 0 || offset + 4 > b.length) return undefined
     return [b.subarray(offset, offset + 4) as ReuseGuard, 4]
 }
 

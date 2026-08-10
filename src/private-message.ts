@@ -174,7 +174,16 @@ export async function decryptSenderData (
         contentType: msg.contentType,
     }
 
-    const decrypted = await cs.hpke.decryptAead(key, nonce, encodeSenderDataAAD(aad), msg.encryptedSenderData)
+    // both buffers were expanded here from senderDataSecret, so wiping
+    // them touches nothing the caller owns
+    let decrypted:Uint8Array
+    try {
+        decrypted = await cs.hpke.decryptAead(key, nonce, encodeSenderDataAAD(aad), msg.encryptedSenderData)
+    } finally {
+        key.fill(0)
+        nonce.fill(0)
+    }
+
     return decodeSenderData(decrypted, 0)?.[0]
 }
 
@@ -188,7 +197,13 @@ export async function encryptSenderData (
     const key = await expandSenderDataKey(cs, senderDataSecret, ciphertext)
     const nonce = await expandSenderDataNonce(cs, senderDataSecret, ciphertext)
 
-    return await cs.hpke.encryptAead(key, nonce, encodeSenderDataAAD(aad), encodeSenderData(senderData))
+    // locally expanded from senderDataSecret, so ours to wipe
+    try {
+        return await cs.hpke.encryptAead(key, nonce, encodeSenderDataAAD(aad), encodeSenderData(senderData))
+    } finally {
+        key.fill(0)
+        nonce.fill(0)
+    }
 }
 
 export function toAuthenticatedContent (

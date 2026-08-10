@@ -35,6 +35,7 @@ which means it is usable in the browser.
   * [Use with pre-existing keypairs](#use-with-pre-existing-keypairs)
 - [Security Properties](#security-properties)
   * [Security Considerations](#security-considerations)
+    + [What the library checks](#what-the-library-checks)
 - [Scenarios](#scenarios)
   * [Key Rotation](#key-rotation)
     + [What data is transferred?](#what-data-is-transferred)
@@ -316,23 +317,141 @@ of any compromise in time and scales to large groups efficiently.
 
 ### Security Considerations
 
-Two library defaults are permissive by design, so they don't get in the
-way of local testing, but they must be addressed before shipping:
+There is one decision the library refuses to make for you:
 
-* **`defaultAuthenticationService` accepts every credential.** Its
-  `validateCredential` always returns `true` -- it does not check that a
-  member's signature key is actually bound to their claimed identity by
-  any external system (a CA for x509 credentials, an out-of-band
-  directory for basic credentials). A production application must supply
-  its own `AuthenticationService` implementation that performs a real
-  check, or a malicious peer can join a group under a forged or
-  unauthorized identity.
-* **`validateLifetimeOnReceive` defaults to `false`.** A KeyPackage's
-  lifetime window is always checked when this client generates it, but
-  a *received* leaf node's lifetime is only checked if this flag is
-  enabled. Set `validateLifetimeOnReceive: true` in `LifetimeConfig` so
-  expired or improbably long-lived peer credentials get rejected instead
-  of silently accepted.
+* **You must choose an `AuthenticationService`.** `defaultClientConfig`
+  carries `failClosedAuthenticationService`, whose `validateCredential`
+  throws a `UsageError` rather than guess whether a peer's signature key
+  is really bound to their claimed identity. Nothing in MLS establishes
+  that binding; it comes from outside (a CA for x509 credentials, an
+  out-of-band directory for basic credentials), so a production
+  application supplies its own `AuthenticationService` that performs a
+  real check. Without one, a malicious peer joins under any identity it
+  likes.
+
+  For local testing and demos there is
+  `unsafeAcceptAllAuthenticationService`, which accepts everything. It is
+  deliberately not a default -- you have to name it:
+
+  ```ts
+  import {
+      createGroup,
+      defaultClientConfig,
+      unsafeAcceptAllAuthenticationService
+  } from '@vanishing.page/webcrypto-mls'
+
+  const state = await createGroup(groupId, keyPackage, privateKeys, [], cs, {
+      ...defaultClientConfig,
+      authService: unsafeAcceptAllAuthenticationService
+  })
+  ```
+
+  The chosen config travels with the state, so `createCommit`,
+  `processMessage`, and the resumption helpers all reuse it; only
+  `createGroup`, `joinGroup`, and `joinGroupExternal` take it.
+
+Four more defaults worth knowing about:
+
+* **Padding hides less than you might assume.** `paddingConfig` defaults
+  to `{ kind: 'padUntilLength', padUntilLength: 256 }`, which pads every
+  message shorter than 256 bytes out to 256 bytes. Messages under the
+  floor are indistinguishable from each other by length; a message at or
+  above the floor is not padded at all, so its length is visible to a
+  passive observer up to a constant framing overhead. The other mode,
+  `{ kind: 'alwaysPad', paddingLength: n }`, adds `n` bytes to every
+  message whatever its size, so ciphertext length stays an exact affine
+  function of plaintext length and an observer just subtracts `n`: it
+  hides no length information at all, and exists to buy a fixed overhead
+  rather than privacy. Neither mode hides anything but length. Epoch,
+  content type, and the fact and timing of every message are visible on
+  the wire regardless.
+
+* **`validateLifetimeOnReceive` defaults to `true`.** A KeyPackage leaf
+  node's lifetime window is checked both when this client generates it
+  and when it arrives from a peer, so an expired or improbably
+  long-lived peer credential is rejected rather than silently accepted.
+  That check reads the local clock, so a client whose clock is badly
+  wrong will refuse otherwise-valid peers; set
+  `validateLifetimeOnReceive: false` in `LifetimeConfig` to opt out and
+  check only the leaf nodes this client generated.
+* **Identity continuity is your call.** MLS does not require the identity
+  at a leaf to stay the same across an Update or a commit's `UpdatePath`.
+  A leaf's self-signature binds only the group ID and the leaf index, so
+  without an application-level check, any member can send an Update whose
+  `credential.identity` is some other member's identity and be attributed
+  that identity by every peer from then on -- impersonation from inside
+  the group. To enforce continuity, use the third argument to
+  `validateCredential`:
+
+  ```ts
+  import type { AuthenticationService } from '@vanishing.page/webcrypto-mls'
+
+  const authService:AuthenticationService = {
+      async validateCredential (credential, signaturePublicKey, prior) {
+          if (!(await boundToIdentity(credential, signaturePublicKey))) {
+              return false
+          }
+          // nothing is being replaced -- an Add, or an external join at a
+          // blank leaf
+          if (prior === undefined) return true
+          return sameIdentity(prior, credential)
+      }
+  }
+  ```
+
+  `prior` is the credential currently occupying the leaf being replaced.
+  It is supplied for Update proposals, for a commit's `UpdatePath` leaf,
+  and when a received ratchet tree is revalidated. It is `undefined` for
+  an Add, for an external commit joining at a blank leaf, and for the
+  `external_senders` and GroupInfo signer checks, which replace nothing.
+
+* **`retainKeysForGenerations: 0` retains nothing.** `KeyRetentionConfig`
+  defaults to keeping 10 generations of message keys and 4 epochs, so a
+  message that arrives out of order can still be decrypted. Lowering
+  `retainKeysForGenerations` narrows that window; setting it to `0` keeps
+  no skipped-generation keys at all, which is the strongest forward
+  secrecy this library offers and drops any message that arrives after a
+  later one from the same sender.
+
+#### What the library checks
+
+These are enforced regardless of configuration. They are listed because
+each one rejects something that used to be accepted, so a peer that does
+not follow RFC 9420 closely may now be refused where it previously got
+through.
+
+* A path secret received in an `UpdatePath` or a `Welcome` must derive to
+  the public key the sender advertised for each node on the path (RFC
+  9420 7.5, 12.4.3.1). Without this a committer can hand one member a
+  path that silently does not match the tree, splitting the group.
+* A new or rotated leaf's `encryption_key` must not equal any other key
+  in the tree, parent nodes included, and two Adds in one commit are
+  compared against each other rather than only against the pre-commit
+  tree.
+* A new leaf must support every credential type already in use in the
+  group, and every member must support the new leaf's -- RFC 9420 7.3 in
+  both directions.
+* `joinGroup` and `joinGroupExternal` check the `external_senders`
+  extension of the group being joined against the caller's own
+  `AuthenticationService`, so a joiner never inherits an external signer
+  it would have refused. `joinGroup` also checks that the GroupInfo's
+  protocol version matches the KeyPackage's; only the ciphersuite was
+  compared before.
+* Once a commit removes this client, `processMessage` refuses all further
+  inbound traffic for that state rather than processing it against a
+  frozen epoch.
+* A commit whose only proposals are custom (numeric) types still requires
+  an `UpdatePath`, so post-compromise security is not skipped.
+* Unmerged-leaf validation constrains only the nodes between the unmerged
+  leaf and the parent under inspection. The previous whole-path rule
+  rejected RFC-valid trees, which blocked joins entirely.
+
+All of these throw a `ValidationError`, or a `CryptoVerificationError`
+when a signature or MAC is what failed, or a `CodecError` when the bytes
+will not decode at all. All three subclass `MlsError`, so catching that
+one covers a rejected message. An `InternalError` means the library found
+a bug in itself; if remote input ever produces one, that is worth
+reporting.
 
 ## Scenarios
 

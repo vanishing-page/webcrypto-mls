@@ -18,6 +18,7 @@ import { testEveryoneCanMessageEveryone } from './common.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test(`PSK commit via processMessage (PrivateMessage) ${cs}`, async (t) => {
@@ -56,7 +57,8 @@ async function pskViaProcessMessage (cipherSuite:CiphersuiteName, t:any) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -97,6 +99,8 @@ async function pskViaProcessMessage (cipherSuite:CiphersuiteName, t:any) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     const pskSecret = impl.rng.randomBytes(impl.kdf.size)

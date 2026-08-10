@@ -14,6 +14,7 @@ import type { ProposalAdd, ProposalRemove } from '../../src/proposal.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('Commit with Add and UpdatePath is decryptable by a pre-existing member ' + cs, async (t) => {
@@ -54,6 +55,7 @@ async function addWithPath (t:any, cipherSuite:CiphersuiteName) {
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     // build a width-4 tree: [alice, bob, eve, charlie]. This is an Add-only
@@ -79,6 +81,8 @@ async function addWithPath (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     // eve is at leaf index 2 (alice=0, bob=1, eve=2, charlie=3): remove her,

@@ -19,6 +19,7 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { UsageError as _UsageError } from '../../src/mls-error.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('Reinit ' + cs, async (t) => {
@@ -57,7 +58,8 @@ async function reinit (t:any, cipherSuite:CiphersuiteName) {
         alice.publicPackage,
         alice.privatePackage,
         [],
-        impl
+        impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -98,6 +100,8 @@ async function reinit (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     const newCiphersuite = getRandomElement(Object.keys(ciphersuites)) as CiphersuiteName

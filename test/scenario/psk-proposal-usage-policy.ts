@@ -12,6 +12,7 @@ import { toLeafIndex } from '../../src/treemath.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('PreSharedKey proposal with resumption usage branch rejected ' + cs, async (t) => {
@@ -62,6 +63,7 @@ async function makeAliceGroup (cipherSuite:CiphersuiteName) {
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     // Advance past epoch 0 -- reinit/branch resumption-PSK usages are only

@@ -25,6 +25,7 @@ import { toLeafIndex } from '../../src/treemath.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
+import { testClientConfig } from '../helpers/client-config.js'
 
 for (const cs of testCiphersuites()) {
     test('Single-remove commit requires UpdatePath ' + cs, async (t) => {
@@ -63,6 +64,7 @@ async function singleRemoveRequiresPath (t:any, cipherSuite:CiphersuiteName) {
         alice.privatePackage,
         [],
         impl,
+        testClientConfig
     )
 
     const bobCredential:Credential = {
@@ -96,6 +98,8 @@ async function singleRemoveRequiresPath (t:any, cipherSuite:CiphersuiteName) {
         emptyPskIndex,
         impl,
         aliceGroup.ratchetTree,
+        undefined,
+        testClientConfig
     )
 
     const removeBobProposal:ProposalRemove = {

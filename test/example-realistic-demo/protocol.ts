@@ -6,6 +6,10 @@ import {
     isErrorReason,
     isLogEntry,
     isPendingRequest,
+    MAX_IDENTITY_LENGTH,
+    MAX_CREATOR_TOKEN_LENGTH,
+    MAX_PAYLOAD_LENGTH,
+    MAX_WIRE_MESSAGE_LENGTH,
 } from '../../example-realistic-demo/protocol.js'
 
 /**
@@ -927,10 +931,216 @@ test('isErrorReason - bad-message', (t) => {
     t.ok(isErrorReason('bad-message'))
 })
 
+// The three join-request limits. Each is a distinct reason on the wire,
+// so a client can tell "your key package is too big" from "come back
+// later" without parsing prose.
+test('isErrorReason - key-package-too-large', (t) => {
+    t.ok(isErrorReason('key-package-too-large'))
+})
+
+test('isErrorReason - too-many-pending', (t) => {
+    t.ok(isErrorReason('too-many-pending'))
+})
+
+test('isErrorReason - rate-limited', (t) => {
+    t.ok(isErrorReason('rate-limited'))
+})
+
 test('isErrorReason - reject near-miss', (t) => {
     t.ok(!isErrorReason('room-exist'))
 })
 
 test('isErrorReason - reject non-string', (t) => {
     t.ok(!isErrorReason(456))
+})
+
+/**
+ * Length bounds (security-audit M1). Every string off the wire is
+ * bounded, so an admitted member cannot append a multi-MB payload that
+ * the room persists for three days and re-broadcasts on every
+ * reconnect.
+ *
+ * Each bound is tested at both edges: exactly at the limit is accepted,
+ * one character over is refused. The over-limit half is what fails if a
+ * bound is removed; the at-limit half is what fails if a bound is
+ * tightened past what real MLS traffic needs.
+ */
+
+test('isClientMessage - mls payload at the limit', (t) => {
+    t.ok(isClientMessage({
+        type: 'mls',
+        kind: 'application',
+        payload: 'A'.repeat(MAX_PAYLOAD_LENGTH)
+    }))
+})
+
+test('isClientMessage - mls payload one over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'mls',
+        kind: 'application',
+        payload: 'A'.repeat(MAX_PAYLOAD_LENGTH + 1)
+    }))
+})
+
+test('isClientMessage - create identity at the limit', (t) => {
+    t.ok(isClientMessage({
+        type: 'create',
+        identity: 'A'.repeat(MAX_IDENTITY_LENGTH)
+    }))
+})
+
+test('isClientMessage - create identity one over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'create',
+        identity: 'A'.repeat(MAX_IDENTITY_LENGTH + 1)
+    }))
+})
+
+test('isClientMessage - hello identity one over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'hello',
+        identity: 'A'.repeat(MAX_IDENTITY_LENGTH + 1),
+        cursor: 0
+    }))
+})
+
+test('isClientMessage - hello creatorToken one over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'hello',
+        identity: 'key1',
+        cursor: 0,
+        creatorToken: 'A'.repeat(MAX_CREATOR_TOKEN_LENGTH + 1)
+    }))
+})
+
+test('isClientMessage - approve identity one over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'approve',
+        identity: 'A'.repeat(MAX_IDENTITY_LENGTH + 1)
+    }))
+})
+
+test('isClientMessage - deny identity one over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'deny',
+        identity: 'A'.repeat(MAX_IDENTITY_LENGTH + 1)
+    }))
+})
+
+test('isClientMessage - removed identity one over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'removed',
+        identity: 'A'.repeat(MAX_IDENTITY_LENGTH + 1)
+    }))
+})
+
+/**
+ * The join-request key package gets the structural wall here and the
+ * tighter, named limit in `classifyJoinRequest`. A key package between
+ * the two is still answered `key-package-too-large` rather than
+ * `bad-message`, which is why the wall is the payload bound and not
+ * MAX_KEY_PACKAGE_LENGTH.
+ */
+test('isClientMessage - join-request key package at the wall', (t) => {
+    t.ok(isClientMessage({
+        type: 'join-request',
+        identity: 'key1',
+        keyPackage: 'A'.repeat(MAX_PAYLOAD_LENGTH)
+    }))
+})
+
+test('isClientMessage - join-request key package over the wall', (t) => {
+    t.ok(!isClientMessage({
+        type: 'join-request',
+        identity: 'key1',
+        keyPackage: 'A'.repeat(MAX_PAYLOAD_LENGTH + 1)
+    }))
+})
+
+test('isClientMessage - join-request identity over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'join-request',
+        identity: 'A'.repeat(MAX_IDENTITY_LENGTH + 1),
+        keyPackage: 'kp123'
+    }))
+})
+
+test('isClientMessage - welcome payload one over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'welcome',
+        to: 'key1',
+        payload: 'A'.repeat(MAX_PAYLOAD_LENGTH + 1)
+    }))
+})
+
+test('isClientMessage - welcome recipient over the limit', (t) => {
+    t.ok(!isClientMessage({
+        type: 'welcome',
+        to: 'A'.repeat(MAX_IDENTITY_LENGTH + 1),
+        payload: 'w'
+    }))
+})
+
+// The same strings come back out in room messages, so the client
+// applies the same bounds on the way in.
+
+test('isLogEntry - payload one over the limit', (t) => {
+    t.ok(!isLogEntry({
+        seq: 1,
+        sender: 'key1',
+        kind: 'application',
+        payload: 'A'.repeat(MAX_PAYLOAD_LENGTH + 1)
+    }))
+})
+
+test('isLogEntry - sender one over the limit', (t) => {
+    t.ok(!isLogEntry({
+        seq: 1,
+        sender: 'A'.repeat(MAX_IDENTITY_LENGTH + 1),
+        kind: 'application',
+        payload: 'p'
+    }))
+})
+
+test('isPendingRequest - key package over the wall', (t) => {
+    t.ok(!isPendingRequest({
+        identity: 'key1',
+        keyPackage: 'A'.repeat(MAX_PAYLOAD_LENGTH + 1),
+        requestedAt: 1,
+        standing: 'stranger'
+    }))
+})
+
+test('isRoomMessage - welcome-you payload over the limit', (t) => {
+    t.ok(!isRoomMessage({
+        type: 'welcome-you',
+        payload: 'A'.repeat(MAX_PAYLOAD_LENGTH + 1),
+        cursor: 0,
+        priorCount: 0
+    }))
+})
+
+test('isRoomMessage - created token over the limit', (t) => {
+    t.ok(!isRoomMessage({
+        type: 'created',
+        creatorToken: 'A'.repeat(MAX_CREATOR_TOKEN_LENGTH + 1),
+        expiresAt: 1
+    }))
+})
+
+test('isRoomMessage - roster identity over the limit', (t) => {
+    t.ok(!isRoomMessage({
+        type: 'roster',
+        live: ['ok', 'A'.repeat(MAX_IDENTITY_LENGTH + 1)]
+    }))
+})
+
+/**
+ * The whole-frame wall, applied before JSON.parse rather than after, so
+ * a multi-megabyte frame is dropped without being parsed at all. It has
+ * to sit above MAX_PAYLOAD_LENGTH or a legal maximum-size payload could
+ * never fit inside a legal frame.
+ */
+test('the frame wall leaves room for a maximum-size payload', (t) => {
+    t.ok(MAX_WIRE_MESSAGE_LENGTH > MAX_PAYLOAD_LENGTH)
 })
