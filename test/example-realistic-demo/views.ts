@@ -182,17 +182,12 @@ test('RoomLink confirms a copy only once one has happened', t => {
     t.equal(
         noConfirm.length,
         1,
-        'the confirmation region should always exist'
+        'the confirmation label should always exist'
     )
     t.equal(
         noConfirm[0].props['data-copied'],
         false,
-        'before a copy the region should be marked as not copied'
-    )
-    t.equal(
-        noConfirm[0].props.role,
-        'status',
-        'the region should be a live region'
+        'before a copy the label should be marked as not copied'
     )
 
     const withCopy = roomLink({ copied: true })
@@ -200,21 +195,42 @@ test('RoomLink confirms a copy only once one has happened', t => {
     t.equal(
         withConfirm.length,
         1,
-        'the confirmation region should still exist'
+        'the confirmation label should still exist'
     )
     t.equal(
         withConfirm[0].props['data-copied'],
         true,
-        'after a copy the region should be marked as copied'
+        'after a copy the label should be marked as copied'
+    )
+
+    // The label holds its space in both states -- only `data-copied`
+    // changes -- so the row cannot reflow when a copy happens.
+    t.deepEqual(
+        childrenOf(withConfirm[0]),
+        childrenOf(noConfirm[0]),
+        'the label content should be the same in both states'
+    )
+
+    const noStatus = findByClass(noCopy, 'copy-status')
+    const withStatus = findByClass(withCopy, 'copy-status')
+    t.equal(
+        noStatus.length,
+        1,
+        'the live region should always exist'
     )
     t.equal(
-        withConfirm[0].props.role,
+        noStatus[0].props.role,
         'status',
         'the region should be a live region'
     )
+    t.equal(
+        withStatus[0].props.role,
+        'status',
+        'the region should still be a live region'
+    )
 
-    const noChildren = childrenOf(noConfirm[0])
-    const withChildren = childrenOf(withConfirm[0])
+    const noChildren = childrenOf(noStatus[0])
+    const withChildren = childrenOf(withStatus[0])
     t.notDeepEqual(
         withChildren,
         noChildren,
@@ -222,11 +238,11 @@ test('RoomLink confirms a copy only once one has happened', t => {
     )
     t.ok(
         !noChildren.some((c:unknown) => Boolean(c)),
-        'the copied false rendering should have no visible content'
+        'the copied false rendering should announce nothing'
     )
     t.ok(
         withChildren.some((c:unknown) => Boolean(c)),
-        'the copied true rendering should have visible content'
+        'the copied true rendering should have something to announce'
     )
 })
 
@@ -264,17 +280,12 @@ test('CopyControl confirms a copy only once one has happened', t => {
     t.equal(
         noConfirm.length,
         1,
-        'the confirmation region should always exist'
+        'the confirmation label should always exist'
     )
     t.equal(
         noConfirm[0].props['data-copied'],
         false,
-        'before a copy the region should be marked as not copied'
-    )
-    t.equal(
-        noConfirm[0].props.role,
-        'status',
-        'the region should be a live region'
+        'before a copy the label should be marked as not copied'
     )
 
     const withCopy = copyControl({ copied: true })
@@ -282,21 +293,42 @@ test('CopyControl confirms a copy only once one has happened', t => {
     t.equal(
         withConfirm.length,
         1,
-        'the confirmation region should still exist'
+        'the confirmation label should still exist'
     )
     t.equal(
         withConfirm[0].props['data-copied'],
         true,
-        'after a copy the region should be marked as copied'
+        'after a copy the label should be marked as copied'
+    )
+
+    // The label holds its space in both states -- only `data-copied`
+    // changes -- so the row cannot reflow when a copy happens.
+    t.deepEqual(
+        childrenOf(withConfirm[0]),
+        childrenOf(noConfirm[0]),
+        'the label content should be the same in both states'
+    )
+
+    const noStatus = findByClass(noCopy, 'copy-status')
+    const withStatus = findByClass(withCopy, 'copy-status')
+    t.equal(
+        noStatus.length,
+        1,
+        'the live region should always exist'
     )
     t.equal(
-        withConfirm[0].props.role,
+        noStatus[0].props.role,
         'status',
         'the region should be a live region'
     )
+    t.equal(
+        withStatus[0].props.role,
+        'status',
+        'the region should still be a live region'
+    )
 
-    const noChildren = childrenOf(noConfirm[0])
-    const withChildren = childrenOf(withConfirm[0])
+    const noChildren = childrenOf(noStatus[0])
+    const withChildren = childrenOf(withStatus[0])
     t.notDeepEqual(
         withChildren,
         noChildren,
@@ -304,11 +336,11 @@ test('CopyControl confirms a copy only once one has happened', t => {
     )
     t.ok(
         !noChildren.some((c:unknown) => Boolean(c)),
-        'the copied false rendering should have no visible content'
+        'the copied false rendering should announce nothing'
     )
     t.ok(
         withChildren.some((c:unknown) => Boolean(c)),
-        'the copied true rendering should have visible content'
+        'the copied true rendering should have something to announce'
     )
 })
 

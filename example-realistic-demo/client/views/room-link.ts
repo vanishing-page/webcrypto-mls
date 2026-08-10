@@ -1,6 +1,6 @@
 import type { FunctionComponent } from 'preact'
 import { html } from 'htm/preact'
-import { useSignal } from '@preact/signals'
+import { useCopy } from '../copy-state.js'
 
 export interface RoomLinkProps {
     /** The whole absolute URL, not a path and not an id. */
@@ -31,20 +31,30 @@ export const RoomLink:FunctionComponent<RoomLinkProps> = function ({
                 value=${url}
                 aria-label="Room URL"
             />
-            <substrate-button
-                class="copy"
-                type="button"
-                aria-label="Copy room URL"
-                onClick=${onCopy}
-            >Copy</substrate-button>
-            <!-- The live region persists even when empty so assistive
-            technology can observe the state change. The resulting empty
-            flex item is deliberate. -->
-            <span
-                class="copied"
-                role="status"
-                data-copied=${copied}
-            >${copied ? 'Copied' : ''}</span>
+            <div class="copy-control">
+                <!-- The word is always in the layout, above the button,
+                and only turns visible on a copy, so nothing on the row
+                moves when it appears. Hidden from assistive technology
+                because the live region below says the same thing. -->
+                <span
+                    class="copied"
+                    aria-hidden="true"
+                    data-copied=${copied}
+                >Copied</span>
+                <substrate-button
+                    class="copy"
+                    type="button"
+                    aria-label="Copy room URL"
+                    onClick=${onCopy}
+                >Copy</substrate-button>
+                <!-- What assistive technology hears. It persists even
+                when empty so the text swap is observable; a visibility
+                change on its own is not reliably announced. -->
+                <span
+                    class="copy-status"
+                    role="status"
+                >${copied ? 'Copied' : ''}</span>
+            </div>
         </div>
     `
 }
@@ -58,26 +68,17 @@ export interface ShareRoomLinkProps {
 
 /**
  * The same link, wired to the clipboard. Both views that show a room URL
- * render this, so the confirmation behaves the same in each.
+ * render this, so the confirmation behaves the same in each -- including
+ * taking itself back down; see `useCopy`.
  */
 export const ShareRoomLink:FunctionComponent<ShareRoomLinkProps> = function (
     { url, onError }
 ) {
-    const copied = useSignal(false)
-
-    async function copy ():Promise<void> {
-        try {
-            await navigator.clipboard.writeText(url)
-            copied.value = true
-        } catch (err) {
-            copied.value = false
-            onError(err)
-        }
-    }
+    const { copied, copy } = useCopy(onError)
 
     return html`<${RoomLink}
         url=${url}
         copied=${copied.value}
-        onCopy=${() => { copy() }}
+        onCopy=${() => copy(url)}
     />`
 }
