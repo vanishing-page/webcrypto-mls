@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Use Node.js ${{ env.NODE_VERSION }}
       uses: actions/setup-node@v5
       with:
@@ -58,7 +58,7 @@ jobs:
             suites: shard:4/4
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Use Node.js ${{ env.NODE_VERSION }}
       uses: actions/setup-node@v5
       with:
