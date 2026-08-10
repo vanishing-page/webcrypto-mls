@@ -1,6 +1,6 @@
 import type { FunctionComponent } from 'preact'
 import { html } from 'htm/preact'
-import { useSignal } from '@preact/signals'
+import { useCopy } from '../copy-state.js'
 
 export interface RoomLinkProps {
     /** The whole absolute URL, not a path and not an id. */
@@ -68,26 +68,17 @@ export interface ShareRoomLinkProps {
 
 /**
  * The same link, wired to the clipboard. Both views that show a room URL
- * render this, so the confirmation behaves the same in each.
+ * render this, so the confirmation behaves the same in each -- including
+ * taking itself back down; see `useCopy`.
  */
 export const ShareRoomLink:FunctionComponent<ShareRoomLinkProps> = function (
     { url, onError }
 ) {
-    const copied = useSignal(false)
-
-    async function copy ():Promise<void> {
-        try {
-            await navigator.clipboard.writeText(url)
-            copied.value = true
-        } catch (err) {
-            copied.value = false
-            onError(err)
-        }
-    }
+    const { copied, copy } = useCopy(onError)
 
     return html`<${RoomLink}
         url=${url}
         copied=${copied.value}
-        onCopy=${() => { copy() }}
+        onCopy=${() => copy(url)}
     />`
 }

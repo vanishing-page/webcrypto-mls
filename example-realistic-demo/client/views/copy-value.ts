@@ -1,6 +1,6 @@
 import type { FunctionComponent } from 'preact'
 import { html } from 'htm/preact'
-import { useSignal } from '@preact/signals'
+import { useCopy } from '../copy-state.js'
 
 export interface CopyControlProps {
     /** Whether a copy has happened, so it can be confirmed. */
@@ -71,26 +71,17 @@ export interface CopyValueProps {
 /**
  * The same control, wired to the clipboard. The caller renders the
  * value and passes it here, so the value stays in the caller's own
- * vnode tree and remains assertable.
+ * vnode tree and remains assertable. The confirmation takes itself
+ * back down; see `useCopy`.
  */
 export const CopyValue:FunctionComponent<CopyValueProps> = function (
     { value, label, onError }
 ) {
-    const copied = useSignal(false)
-
-    async function copy ():Promise<void> {
-        try {
-            await navigator.clipboard.writeText(value)
-            copied.value = true
-        } catch (err) {
-            copied.value = false
-            onError(err)
-        }
-    }
+    const { copied, copy } = useCopy(onError)
 
     return html`<${CopyControl}
         copied=${copied.value}
         label=${label}
-        onCopy=${() => { copy() }}
+        onCopy=${() => copy(value)}
     />`
 }

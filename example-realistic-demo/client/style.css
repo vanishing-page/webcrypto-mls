@@ -316,10 +316,11 @@ substrate-input.room-url input {
         font-weight: 600;
         letter-spacing: var(--tracking-label);
         text-transform: uppercase;
-        visibility: hidden;
+        transition: opacity 0.2s;
+        opacity: 0;
 
         &[data-copied="true"] {
-            visibility: visible;
+            opacity: 1;
         }
     }
 
