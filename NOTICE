@@ -1,0 +1,4 @@
+`webcrypto-mls` is derived from `ts-mls` (https://github.com/LukaJCB/ts-mls).
+
+Original `ts-mls` code is Copyright (c) Luka Jacobowitz and licensed under the
+MIT License. See LICENSE_MIT for the full copyright notice.
