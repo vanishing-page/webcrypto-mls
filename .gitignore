@@ -11,7 +11,4 @@ public
 .mut-bundle.cjs
 notes
 .playwright-mcp
-ralph_claude.sh
-PROMPT.md
 .mut-*
-progress.log
