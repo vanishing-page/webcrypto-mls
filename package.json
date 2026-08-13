@@ -61,14 +61,14 @@
   "dependencies": {
     "@hpke/chacha20poly1305": "1.8.0",
     "@hpke/core": "1.9.0",
-    "@noble/ciphers": "2.2.0",
-    "@noble/hashes": "2.2.0"
+    "@noble/ciphers": "2.3.0",
+    "@noble/hashes": "2.3.0"
   },
   "peerDependencies": {
-    "@hpke/hybridkem-x-wing": "0.6.1",
-    "@hpke/ml-kem": "0.2.1",
-    "@noble/curves": "2.0.1",
-    "@noble/post-quantum": "0.5.2"
+    "@hpke/hybridkem-x-wing": "0.7.0",
+    "@hpke/ml-kem": "0.3.0",
+    "@noble/curves": "2.3.0",
+    "@noble/post-quantum": "0.7.0"
   },
   "peerDependenciesMeta": {
     "@hpke/hybridkem-x-wing": {
@@ -86,10 +86,10 @@
   },
   "devDependencies": {
     "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
-    "@hpke/hybridkem-x-wing": "0.6.1",
-    "@hpke/ml-kem": "0.2.1",
-    "@noble/curves": "2.0.1",
-    "@noble/post-quantum": "0.5.2",
+    "@hpke/hybridkem-x-wing": "0.7.0",
+    "@hpke/ml-kem": "0.3.0",
+    "@noble/curves": "2.3.0",
+    "@noble/post-quantum": "0.7.0",
     "@preact/preset-vite": "^2.10.2",
     "@preact/signals": "^2.3.2",
     "@substrate-system/button": "^0.0.49",
@@ -97,7 +97,7 @@
     "@substrate-system/css-normalize": "^0.0.15",
     "@substrate-system/debug": "^0.9.67",
     "@substrate-system/input": "^0.0.27",
-    "@substrate-system/tapout": "^0.0.40",
+    "@substrate-system/tapout": "^0.0.41",
     "@substrate-system/tapzero": "^0.10.16",
     "auto-changelog": "^2.4.0",
     "browserslist": "^4.28.6",
@@ -107,13 +107,13 @@
     "htm": "^3.1.1",
     "lightningcss": "^1.32.0",
     "markdown-toc": "^1.2.0",
-    "nanoid": "^5.1.16",
+    "nanoid": "^6.0.1",
     "newneostandard": "^0.14.1",
     "preact": "^10.27.0",
     "route-event": "^8.1.2",
     "simple-hpke": "^0.2.0",
-    "typescript": "^5.9.2",
-    "vite": "^7.0.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
     "wrangler": "^4.114.0"
   },
   "directories": {
