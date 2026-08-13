@@ -184,7 +184,7 @@ const alice = await generateKeyPackage(
         identity: new TextEncoder().encode('alice')
     },
     defaultCapabilities(),
-    defaultLifetime,
+    defaultLifetime(),
     [],
     cipherSuite
 )
@@ -192,7 +192,7 @@ const alice = await generateKeyPackage(
 const bob = await generateKeyPackage(
     { credentialType: 'basic', identity: new TextEncoder().encode('bob') },
     defaultCapabilities(),
-    defaultLifetime,
+    defaultLifetime(),
     [],
     cipherSuite
 )
@@ -290,7 +290,7 @@ const alice = await generateKeyPackage(
         identity: new TextEncoder().encode('alice')
     },
     defaultCapabilities(),
-    defaultLifetime,
+    defaultLifetime(),
     [],
     cipherSuite,
     { signatureKeyPair: sigKeyPair }
