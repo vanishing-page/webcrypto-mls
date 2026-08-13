@@ -618,13 +618,17 @@ E2EE means we cannot rely on a server to save private keys for us. Instead,
 persist the member's `ClientState` locally, then restore it when the app
 starts again.
 
-The whole `ClientState` is plain, structured-clone friendly data --
-`Uint8Array`s, records, `Map`s, and `bigint`s -- plus the member's
-`signaturePrivateKey`. `indexedDB` uses the
+Most of `ClientState` is structured-clone friendly data -- `Uint8Array`s,
+records, `Map`s, and `bigint`s -- plus the member's `signaturePrivateKey`.
+The `clientConfig` field is the exception: its `authService` and
+`keyPackageEqualityConfig` contain functions, so cloning a created state
+directly throws `DataCloneError`. Omit `clientConfig` before writing the state,
+then re-attach the same config after reading it back.
+
+`indexedDB` uses the
 [structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm),
 which can hold a `CryptoKey`, **including a non-extractable one**, without
-ever reading its raw bytes. You can put the state object directly
-into `indexedDB`.
+ever reading its raw bytes.
 
 >
 > [!NOTE]
@@ -668,7 +672,8 @@ so re-derive it with `getCipherSuite`:
 ```ts
 const cipherSuite = await getCipherSuite()
 
-let aliceState = await loadState(groupId)
+// Use the same config that was passed to createGroup/joinGroup.
+let aliceState = await loadState(groupId, clientConfig)
 if (aliceState === undefined) throw new Error('no saved group state')
 
 // If other members advanced the group while you were away, feed those
@@ -689,6 +694,8 @@ await saveState(groupId, aliceState)
 ```ts
 // Minimal indexedDB helpers keyed by groupId (hex string)
 function saveState (groupId:string, state:ClientState):Promise<void> {
+    const { clientConfig: _clientConfig, ...persistableState } = state
+
     return new Promise((resolve, reject) => {
         const open = indexedDB.open('mls', 1)
         open.onupgradeneeded = () => open.result.createObjectStore('groups')
@@ -696,14 +703,17 @@ function saveState (groupId:string, state:ClientState):Promise<void> {
         open.onsuccess = () => {
             const tx = open.result.transaction('groups', 'readwrite')
             // structured clone keeps the non-extractable signature CryptoKey
-            tx.objectStore('groups').put(state, groupId)
+            tx.objectStore('groups').put(persistableState, groupId)
             tx.oncomplete = () => resolve()
             tx.onerror = () => reject(tx.error)
         }
     })
 }
 
-function loadState (groupId:string):Promise<ClientState | undefined> {
+function loadState (
+    groupId:string,
+    clientConfig:ClientConfig
+):Promise<ClientState | undefined> {
     return new Promise((resolve, reject) => {
         const open = indexedDB.open('mls', 1)
         open.onupgradeneeded = () => open.result.createObjectStore('groups')
@@ -711,7 +721,14 @@ function loadState (groupId:string):Promise<ClientState | undefined> {
         open.onsuccess = () => {
             const tx = open.result.transaction('groups', 'readonly')
             const get = tx.objectStore('groups').get(groupId)
-            get.onsuccess = () => resolve(get.result as ClientState | undefined)
+            get.onsuccess = () => {
+                const state = get.result as
+                    Omit<ClientState, 'clientConfig'> | undefined
+                resolve(state === undefined ? undefined : {
+                    ...state,
+                    clientConfig
+                })
+            }
             get.onerror = () => reject(get.error)
         }
     })
