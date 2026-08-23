@@ -1286,6 +1286,13 @@ export function addHistoricalReceiverData (state:ClientState):Map<bigint, EpochR
 
     if (max <= 0) return new Map()
 
+    // NOTE: applicationExportSecret is deliberately not retained.
+    // Attachment CEK derivation (src/attachment/keys.ts:attachmentCek)
+    // depends on applicationExportSecret from the current epoch, so
+    // receivers cannot decrypt attachments from prior epochs after
+    // epoch advance. This is an open design decision; see
+    // docs/design-plans/2026-08-19-random-access-attachments.md
+    // "Known Limitations" section for implications.
     const withNew = addToMap(state.historicalReceiverData, state.groupContext.epoch, {
         secretTree: stripHandshakeRatchets(state.secretTree),
         ratchetTree: state.ratchetTree,

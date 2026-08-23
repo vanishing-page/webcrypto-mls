@@ -25,6 +25,44 @@ jobs:
         npm run lint
       env:
         CI: true
+    # `npm run build` typechecks only `src/`: tsconfig.build.json
+    # excludes test, example and scripts, and nothing else ran tsc over
+    # them. A type error in a test or in the interop harness therefore
+    # reached main unnoticed. `typecheck` covers both projects --
+    # tsconfig.json (src, test, example) and tsconfig.scripts.json
+    # (scripts, under node's types). Its own step so a type error and a
+    # lint failure are told apart at a glance.
+    - name: Typecheck test, example and scripts
+      run: npm run typecheck
+      env:
+        CI: true
+
+  # The structural gates: layering, the getRandomValues ban, the
+  # zeroization presence checks, the vector inventory, vector
+  # determinism, the README attachments section's provenance, and the
+  # audit resolution table. They are chained into `test:node`, which CI
+  # does not run -- CI runs `test:unit` and `test:matrix` -- so without
+  # this job a layering or determinism violation reaches main unnoticed.
+  # Keep it separate from `build` so a lint failure and a gate failure
+  # are told apart at a glance.
+  checks:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Use Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+    - name: npm ci
+      run: npm ci
+      env:
+        CI: true
+    - name: Run structural check scripts
+      run: npm run test:checks
+      env:
+        CI: true
 
   # Nearly all of the running time is scenario and validation tests
   # fanning out over the nineteen ciphersuites, so the matrix is split
@@ -72,3 +110,61 @@ jobs:
       env:
         CI: true
         MLS_SUITES: ${{ matrix.suites }}
+
+  # The library targets the browser, and the browser is where its
+  # crypto actually differs: Chromium's WebCrypto has no X448 or Ed448,
+  # so the suite skips roughly 3,700 assertions here that the node job
+  # runs. That makes this job a complement to `test`, not a substitute
+  # -- neither one alone covers the matrix.
+  #
+  # `test:browser` bundles the whole suite (test/index.ts) and runs it
+  # in headless Chromium through tapout; see
+  # scripts/run-browser-tests.mjs for why that is a script rather than
+  # a shell pipeline. The browsers are not in the runner image, hence
+  # the install step; only chromium is fetched, because that is the
+  # only browser this job asks for.
+  #
+  # The suite takes about two and a half minutes locally and the run
+  # itself is capped at ten by the script, so the 20 here -- the same
+  # as `interop` -- leaves the cap, not the job, to report a hang.
+  browser:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Use Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+    - name: npm ci
+      run: npm ci
+      env:
+        CI: true
+    - name: Install headless chromium
+      run: npx playwright install --with-deps chromium
+      env:
+        CI: true
+    - name: Run browser tests
+      run: npm run test:browser
+      env:
+        CI: true
+
+  interop:
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Use Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+    - name: npm ci
+      run: npm ci
+      env:
+        CI: true
+    - name: Run interop tests
+      run: npm run test:interop
+      env:
+        CI: true

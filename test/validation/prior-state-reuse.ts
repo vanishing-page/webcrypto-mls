@@ -10,6 +10,7 @@
  * on the send path, so a second send from a prior state derived its AEAD
  * key from an all-zero secret.
  */
+import { skipReason } from '../helpers/skip.js'
 import { test } from '@substrate-system/tapzero'
 import type { ClientState } from '../../src/client-state.js'
 import { createGroup, joinGroup, makePskIndex } from '../../src/client-state.js'
@@ -40,7 +41,7 @@ for (const cs of sampleCiphersuites()) {
             await sendTwiceFromPriorState(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -52,7 +53,7 @@ for (const cs of sampleCiphersuites()) {
             await failedDecryptLeavesStateUsable(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { createGroup, joinGroup } from '../../src/client-state.js'
 import { createCommit } from '../../src/create-commit.js'
 import { accumulatePskSecret } from '../../src/psk-index.js'
@@ -30,7 +31,7 @@ for (const cs of testCiphersuites()) {
             await applicationUsageAllowed(cs as CiphersuiteName, t)
         } catch (error:any) {
             if (isSkippableError(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -42,7 +43,7 @@ for (const cs of testCiphersuites()) {
             await validatesAllResumptionPsks(cs as CiphersuiteName, t)
         } catch (error:any) {
             if (isSkippableError(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -54,7 +55,7 @@ for (const cs of testCiphersuites()) {
             await rejectsBadNonceLength(cs as CiphersuiteName, t)
         } catch (error:any) {
             if (isSkippableError(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -66,7 +67,7 @@ for (const cs of testCiphersuites()) {
             await rejectsOutOfRangeIndexAndCount(cs as CiphersuiteName, t)
         } catch (error:any) {
             if (isSkippableError(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

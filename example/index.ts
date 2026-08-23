@@ -12,11 +12,7 @@ import { html } from 'htm/preact'
  */
 import '@substrate-system/button'
 
-import {
-    State,
-    type User,
-    type Message
-} from './state.js'
+import { State, type User, type Message } from './state.js'
 import {
     selectTreeLayout,
     directPathNodeIndices,
@@ -27,8 +23,13 @@ import { TreeDiagram, TreeNodeDetailPanel } from './tree-diagram.js'
 import { selectParticipants, selectGroupUser } from './participants.js'
 import { PersistenceDemo } from './persistence-demo.js'
 import { MultiDeviceDemo } from './multi-device-demo.js'
+import { AttachmentsDemo } from './attachments-demo.js'
 import { Nav } from './nav.js'
-import { isPersistencePath, isMultiDevicePath } from './routing.js'
+import {
+    isPersistencePath,
+    isMultiDevicePath,
+    isAttachmentsPath
+} from './routing.js'
 import { toLeafIndex } from '../src/treemath.js'
 import {
     addUserToGroup,
@@ -686,11 +687,19 @@ const App:FunctionComponent = function () {
         return isMultiDevicePath(state.route.value, basePath)
     })
 
-    const page = showPersistence.value ?
-        html`<${PersistenceDemo} />` :
-        (showMultiDevice.value ?
-            html`<${MultiDeviceDemo} />` :
-            html`<${Example} />`)
+    const showAttachments = useComputed(() => {
+        return isAttachmentsPath(state.route.value, basePath)
+    })
+
+    // First match wins; Example is the fallback route.
+    const routed = [
+        [showPersistence.value, PersistenceDemo],
+        [showMultiDevice.value, MultiDeviceDemo],
+        [showAttachments.value, AttachmentsDemo],
+    ] as const
+    const match = routed.find(([active]) => active)
+    const Page = match ? match[1] : Example
+    const page = html`<${Page} />`
 
     return html`
         <${Nav} route=${state.route.value} basePath=${basePath} />

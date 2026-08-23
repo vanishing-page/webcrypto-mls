@@ -1,4 +1,5 @@
 import { test, type Test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import type { ClientState } from '../../src/client-state.js'
 import {
     createGroup,
@@ -30,7 +31,7 @@ test('Non-extractable Ed25519 identity completes group flow', async (t) => {
             (error.name === 'NotSupportedError' ||
              error.name === 'DependencyError')
         ) {
-            t.comment(`Skipping: ${error.message}`)
+            t.comment(`Skipping: ${skipReason(error)}`)
             return
         }
         throw error

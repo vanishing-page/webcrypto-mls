@@ -3,9 +3,9 @@ import { navItems } from '../../example/nav.js'
 
 test('navItems - dev base path (/), on the main demo', (t) => {
     const items = navItems('/', '/')
-    t.equal(items.length, 3, 'renders three links')
+    t.equal(items.length, 4, 'renders four links')
 
-    const [main, persistence, multiDevice] = items
+    const [main, persistence, multiDevice, attachments] = items
     t.equal(main.label, 'Main demo', 'first link is Main demo')
     t.equal(main.href, '/', 'Main demo links to the base path')
     t.equal(main.active, true, 'Main demo is active on /')
@@ -19,6 +19,11 @@ test('navItems - dev base path (/), on the main demo', (t) => {
     t.equal(multiDevice.href, '/multi-device',
         'Multi-device links to <base>/multi-device')
     t.equal(multiDevice.active, false, 'Multi-device is not active on /')
+
+    t.equal(attachments.label, 'Attachments', 'fourth link is Attachments')
+    t.equal(attachments.href, '/attachments',
+        'Attachments links to <base>/attachments')
+    t.equal(attachments.active, false, 'Attachments is not active on /')
 })
 
 test('navItems - dev base path (/), on the persistence demo', (t) => {
@@ -42,8 +47,21 @@ test('navItems - dev base path (/), on the multi-device demo', (t) => {
         'Multi-device is active on /multi-device')
 })
 
+test('navItems - dev base path (/), on the attachments demo', (t) => {
+    const items = navItems('/attachments', '/')
+    const [main, persistence, multiDevice, attachments] = items
+
+    t.equal(main.active, false, 'Main demo is not active on /attachments')
+    t.equal(persistence.active, false,
+        'Persistence is not active on /attachments')
+    t.equal(multiDevice.active, false,
+        'Multi-device is not active on /attachments')
+    t.equal(attachments.active, true,
+        'Attachments is active on /attachments')
+})
+
 test('navItems - exactly one item is active on each route', (t) => {
-    const routes = ['/', '/persistence', '/multi-device']
+    const routes = ['/', '/persistence', '/multi-device', '/attachments']
     routes.forEach((route) => {
         const activeCount = navItems(route, '/')
             .filter((item) => item.active).length
@@ -53,7 +71,7 @@ test('navItems - exactly one item is active on each route', (t) => {
 
 test('navItems - GitHub Pages base path (/webcrypto-mls/)', (t) => {
     const items = navItems('/webcrypto-mls/', '/webcrypto-mls/')
-    const [main, persistence, multiDevice] = items
+    const [main, persistence, multiDevice, attachments] = items
 
     t.equal(main.href, '/webcrypto-mls/',
         'Main demo links to the Pages base path')
@@ -61,6 +79,8 @@ test('navItems - GitHub Pages base path (/webcrypto-mls/)', (t) => {
         'Persistence links to <base>/persistence')
     t.equal(multiDevice.href, '/webcrypto-mls/multi-device',
         'Multi-device links to <base>/multi-device')
+    t.equal(attachments.href, '/webcrypto-mls/attachments',
+        'Attachments links to <base>/attachments')
     t.equal(main.active, true, 'Main demo is active on the Pages base path')
 
     const onPersistence = navItems('/webcrypto-mls/persistence',
@@ -76,4 +96,11 @@ test('navItems - GitHub Pages base path (/webcrypto-mls/)', (t) => {
         'Multi-device is active on /webcrypto-mls/multi-device')
     t.equal(onMultiDevice[0].active, false,
         'Main demo is not active on /webcrypto-mls/multi-device')
+
+    const onAttachments = navItems('/webcrypto-mls/attachments',
+        '/webcrypto-mls/')
+    t.equal(onAttachments[3].active, true,
+        'Attachments is active on /webcrypto-mls/attachments')
+    t.equal(onAttachments[0].active, false,
+        'Main demo is not active on /webcrypto-mls/attachments')
 })

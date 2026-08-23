@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { createGroup } from '../../src/client-state.js'
 import { createGroupInfoWithExternalPub } from '../../src/create-commit.js'
 import { proposeExternal } from '../../src/external-proposal.js'
@@ -23,7 +24,7 @@ for (const cs of testCiphersuites()) {
             await proposeExternalUpdateRejected(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -35,7 +36,7 @@ for (const cs of testCiphersuites()) {
             await proposeExternalExternalInitRejected(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

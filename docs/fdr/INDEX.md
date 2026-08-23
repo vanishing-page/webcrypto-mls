@@ -11,3 +11,4 @@ decisions specific to them.
 |---|---------|--------|---------------|
 | [FDR-001](FDR-001-multi-device-demo.md) | Multi-device demo | Planned | 2026-07-26 |
 | [FDR-002](FDR-002-realistic-demo.md) | Realistic demo | Active | 2026-08-05 |
+| [FDR-003](FDR-003-attachment-encryption.md) | Sealed attachments | Active | 2026-08-21 |

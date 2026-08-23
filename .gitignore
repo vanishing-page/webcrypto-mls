@@ -8,6 +8,8 @@ dist
 public
 .claude
 .test-bundle*.cjs
+.interop-bundle.cjs
+.vector-gen-bundle.cjs
 .mut-bundle.cjs
 notes
 .playwright-mcp
@@ -16,4 +18,6 @@ PROMPT.md
 .mut-*
 progress.log
 ralph_codex.sh
-
+WIP.md
+.browser-tap-bundle.mjs
+specs

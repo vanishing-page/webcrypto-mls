@@ -1,4 +1,5 @@
 import { test, type Test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { createGroup, joinGroup, makePskIndex } from '../../src/client-state.js'
 import { createCommit } from '../../src/create-commit.js'
 import { processPrivateMessage } from '../../src/process-messages.js'
@@ -28,7 +29,7 @@ test('Mixed provider non-extractable identity interop (AC3.3)',
                 (error.name === 'NotSupportedError' ||
                  error.name === 'DependencyError')
             ) {
-                t.comment(`Skipping: ${error.message}`)
+                t.comment(`Skipping: ${skipReason(error)}`)
                 return
             }
             throw error

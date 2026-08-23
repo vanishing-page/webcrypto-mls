@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { addHistoricalReceiverData, createGroup, joinGroup, makePskIndex } from '../../src/client-state.js'
 import { createCommit } from '../../src/create-commit.js'
 import { createApplicationMessage } from '../../src/create-message.js'
@@ -38,7 +39,7 @@ for (const cs of testCiphersuites()) {
             await internalNodesNotRetained(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -50,7 +51,7 @@ for (const cs of testCiphersuites()) {
             await historicalDataStripsHandshake(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -62,7 +63,7 @@ for (const cs of testCiphersuites()) {
             await addHistoricalReceiverDataDoesNotMutatePreviousState(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -74,7 +75,7 @@ for (const cs of testCiphersuites()) {
             await pathSecretsZeroizable(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -86,7 +87,7 @@ for (const cs of testCiphersuites()) {
             await welcomeCarriesRealPathSecret(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -98,7 +99,7 @@ for (const cs of testCiphersuites()) {
             await retainKeysForEpochsZeroRetainsNothing(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -110,7 +111,7 @@ for (const cs of testCiphersuites()) {
             await retainKeysForEpochsRetainsOnlyTheMostRecent(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -122,7 +123,7 @@ for (const cs of testCiphersuites()) {
             await consumeRatchetLeavesTheInputTreeIntact(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -134,7 +135,7 @@ for (const cs of testCiphersuites()) {
             await ratchetToGenerationKeepsOutOfOrderSecretIntact(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -146,7 +147,7 @@ for (const cs of testCiphersuites()) {
             await evictedGenerationSecretsAreDroppedNotWiped(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -158,7 +159,7 @@ for (const cs of testCiphersuites()) {
             await retainKeysForGenerationsZeroRetainsNothing(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -170,7 +171,7 @@ for (const cs of testCiphersuites()) {
             await receiveAheadRetainsNothingAtZero(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -182,7 +183,7 @@ for (const cs of testCiphersuites()) {
             await retainKeysForGenerationsTwoRetainsMostRecent(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -194,7 +195,7 @@ for (const cs of testCiphersuites()) {
             await protectZeroizesKeyAndNonce(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -206,7 +207,7 @@ for (const cs of testCiphersuites()) {
             await unprotectZeroizesKeyAndNonce(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -218,7 +219,7 @@ for (const cs of testCiphersuites()) {
             await blankedNodePrivateKeyIsDroppedAndZeroized(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

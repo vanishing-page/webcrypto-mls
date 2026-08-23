@@ -71,6 +71,7 @@ function makeSocket (url:string):FakeSocket {
 
 interface Fakes {
     sockets:FakeSocket[]
+    page:{ protocol:string, host:string }
     restore ():void
 }
 
@@ -78,7 +79,6 @@ function installFakes ():Fakes {
     const g = globalThis as any
     const sockets:FakeSocket[] = []
     const prevSocket = g.WebSocket
-    const prevLocation = g.location
 
     const ctor = function (url:string):FakeSocket {
         const socket = makeSocket(url)
@@ -88,13 +88,17 @@ function installFakes ():Fakes {
     ctor.OPEN = OPEN
 
     g.WebSocket = ctor
-    g.location = { protocol: 'https:', host: 'demo.test' }
 
+    // The origin is handed to `createConnection` rather than installed
+    // on `globalThis`: node has no `location` at all, and in a browser
+    // `window.location` is unforgeable -- assigning to it navigates the
+    // page instead of replacing it, which would take the whole browser
+    // run of this suite down with it.
     return {
         sockets,
+        page: { protocol: 'https:', host: 'demo.test' },
         restore () {
             g.WebSocket = prevSocket
-            g.location = prevLocation
         }
     }
 }
@@ -150,7 +154,8 @@ function harness (opts:{
         onControl (msg) {
             control.push(msg)
             return opts.onControl?.(msg)
-        }
+        },
+        page: fakes.page
     })
 
     function socket ():FakeSocket {

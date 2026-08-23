@@ -26,3 +26,18 @@ export function isMultiDevicePath (href:string, basePath:string):boolean {
     return pathname === multiDevicePath ||
         pathname.startsWith(`${multiDevicePath}/`)
 }
+
+/**
+ * True when `href` (a pathname, optionally with a query string) points at
+ * the client-side-routed attachments demo page under
+ * `<basePath>/attachments`, so the caller can decide which demo component
+ * to render.
+ */
+export function isAttachmentsPath (href:string, basePath:string):boolean {
+    const pathname = href.split('?')[0]
+    const base = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
+    const attachmentsPath = `${base}/attachments`
+
+    return pathname === attachmentsPath ||
+        pathname.startsWith(`${attachmentsPath}/`)
+}

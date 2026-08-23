@@ -1,0 +1,22 @@
+/* The build scripts run under node, not in a browser, so they need
+ * node's globals -- `process`, `Buffer`, `node:fs`. `tsconfig.json`
+ * deliberately narrows `types` to vite's so that a node import inside
+ * `src/` or `test/` is a type error rather than something that only
+ * fails once the code reaches a browser. Keeping the scripts in their
+ * own project preserves that: node types are visible here and nowhere
+ * else. `scripts/interop-toolchain.ts` is the exception -- tests pull
+ * it in, so it is typechecked under both configs and must stay free of
+ * node imports. */
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "types": ["node"],
+        "noEmit": true,
+        "declaration": false,
+        "declarationMap": false,
+        "declarationDir": null
+    },
+    "include": [
+        "scripts"
+    ]
+}

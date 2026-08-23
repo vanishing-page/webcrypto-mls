@@ -24,6 +24,7 @@
  * copath -- so the divergence is only reachable from a forged tree, and
  * the check is defence in depth.
  */
+import { skipReason } from '../helpers/skip.js'
 import { test } from '@substrate-system/tapzero'
 import { createGroup, joinGroup, makePskIndex } from '../../src/client-state.js'
 import { createCommit } from '../../src/create-commit.js'
@@ -60,7 +61,7 @@ for (const cs of sampleCiphersuites()) {
             await stopsAtFilteredPathEnd(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -73,7 +74,7 @@ for (const cs of sampleCiphersuites()) {
                 await storesNoKeyForBlankNodes(t, cs as CiphersuiteName)
             } catch (error:any) {
                 if (skippable(error)) {
-                    t.comment(`Skipping ${cs}: ${error.message}`)
+                    t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                     return
                 }
                 throw error
@@ -86,7 +87,7 @@ for (const cs of sampleCiphersuites()) {
                 await honestJoinStillWorks(t, cs as CiphersuiteName)
             } catch (error:any) {
                 if (skippable(error)) {
-                    t.comment(`Skipping ${cs}: ${error.message}`)
+                    t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                     return
                 }
                 throw error

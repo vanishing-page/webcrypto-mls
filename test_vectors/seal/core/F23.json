@@ -1,0 +1,28 @@
+{
+	"name": "F.23 SEAL-simple(HKDF-SHA-256, AES-256-GCM) end-to-end, 65536",
+	"source": "draft-sullivan-cfrg-raae-02 Appendix F.23 (SEAL-simple named instantiation, empty G)",
+	"protocol_id": "SEAL-RO-v1",
+	"cek_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	"payload_info": {
+		"aead_id": 2,
+		"segment_max": 65536,
+		"kdf_id": 1,
+		"snap_id": 0,
+		"nonce_mode": 1,
+		"epoch_length": 32,
+		"salt_hex": "0404040404040404040404040404040404040404040404040404040404040404"
+	},
+	"schedule": {
+		"commitment_hex": "c081f6696c915671a52fc1d6276fdcd7ee3bf3a4df4d2651c79e72373f7217ba",
+		"payload_key_hex": "ee33dbf0003c4bc469fa763c78a041c1752ba3e90e2378b4dc7dd9baf54bcc10",
+		"nonce_base_hex": "552edc38ea645c520b1e5223"
+	},
+	"segment_0": {
+		"is_final": 1,
+		"nonce_hex": "552edc38ea645c520b1e5222",
+		"segment_aad_hex": "",
+		"ciphertext_hex": "3c77d59ed9ff36062b6dac35",
+		"tag_hex": "384072dfa1786cd210baff70fd6f8b6e"
+	},
+	"stored_object_hex": "0404040404040404040404040404040404040404040404040404040404040404c081f6696c915671a52fc1d6276fdcd7ee3bf3a4df4d2651c79e72373f7217ba3c77d59ed9ff36062b6dac35384072dfa1786cd210baff70fd6f8b6e"
+}

@@ -1,0 +1,8 @@
+{
+  "epoch_secret_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "application_export_secret_hex": "567b02d6c2eb1e53e002d2fc588bce567496f9c3f7b88d860d6c1a7f0d84f80e",
+  "component_id": 61441,
+  "object_id_hex": "6f776e2d766563746f72",
+  "component_secret_hex": "b129304af5b654ee32479eef4a82ee76dbd60df580a5f1cf0e4a9a7dfb6b4244",
+  "cek_hex": "9fc4c3987b640bcd00a4e4957b43fbd96b443731d9d9c9ebe9bd7b44cd4b2569"
+}

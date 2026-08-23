@@ -1,7 +1,8 @@
 import { test } from '@substrate-system/tapzero'
 import {
     isPersistencePath,
-    isMultiDevicePath
+    isMultiDevicePath,
+    isAttachmentsPath
 } from '../../example/routing.js'
 
 test('isPersistencePath - dev base path (/)', (t) => {
@@ -70,4 +71,38 @@ test('isMultiDevicePath - ignores query strings', (t) => {
         'query string on a multi-device path still matches')
     t.equal(isMultiDevicePath('/?multi-device=1', '/'), false,
         'a query string mentioning multi-device does not match')
+})
+
+test('isAttachmentsPath - dev base path (/)', (t) => {
+    t.equal(isAttachmentsPath('/attachments', '/'), true,
+        'exact /attachments matches')
+    t.equal(isAttachmentsPath('/attachments/', '/'), true,
+        'trailing slash matches (hard refresh URL shape)')
+    t.equal(isAttachmentsPath('/', '/'), false, 'root does not match')
+    t.equal(isAttachmentsPath('/persistence', '/'), false,
+        'persistence path does not match')
+})
+
+test('isAttachmentsPath - GitHub Pages base path (/webcrypto-mls/)', (t) => {
+    t.equal(
+        isAttachmentsPath('/webcrypto-mls/attachments', '/webcrypto-mls/'),
+        true,
+        'exact base + /attachments matches'
+    )
+    t.equal(
+        isAttachmentsPath('/webcrypto-mls/attachments/', '/webcrypto-mls/'),
+        true,
+        'trailing slash matches'
+    )
+    t.equal(isAttachmentsPath('/webcrypto-mls/', '/webcrypto-mls/'), false,
+        'base root does not match')
+    t.equal(isAttachmentsPath('/attachments', '/webcrypto-mls/'), false,
+        'a path without the base prefix does not match')
+})
+
+test('isAttachmentsPath - ignores query strings', (t) => {
+    t.equal(isAttachmentsPath('/attachments?foo=bar', '/'), true,
+        'query string on an attachments path still matches')
+    t.equal(isAttachmentsPath('/?attachments=1', '/'), false,
+        'a query string mentioning attachments does not cause a false match')
 })

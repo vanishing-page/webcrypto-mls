@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { createGroup } from '../../src/client-state.js'
 import { createCommit } from '../../src/create-commit.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
@@ -78,7 +79,7 @@ for (const cs of sampleCiphersuites()) {
                 )
             } catch (error:any) {
                 if (isUnsupported(error)) {
-                    t.comment(`Skipping ${cs}: ${error.message}`)
+                    t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                     return
                 }
                 throw error
@@ -99,7 +100,7 @@ for (const cs of sampleCiphersuites()) {
                 )
             } catch (error:any) {
                 if (isUnsupported(error)) {
-                    t.comment(`Skipping ${cs}: ${error.message}`)
+                    t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                     return
                 }
                 throw error

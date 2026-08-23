@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { validateUnmergedLeaves } from '../../src/client-state.js'
 import { generateKeyPackage } from '../../src/key-package.js'
 import type { Credential } from '../../src/credential.js'
@@ -72,7 +73,7 @@ for (const cs of testCiphersuites()) {
             t.equal(error, undefined, 'should not reject a tree where the leaf merely needs to be present (not array-equal) in every node between it and the parent under inspection')
         } catch (error:any) {
             if (shouldSkip(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -124,7 +125,7 @@ for (const cs of testCiphersuites()) {
             t.equal(error, undefined, 'should not require ancestors above the inspected parent to list the leaf')
         } catch (error:any) {
             if (shouldSkip(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -178,7 +179,7 @@ for (const cs of testCiphersuites()) {
             )
         } catch (error:any) {
             if (shouldSkip(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -228,7 +229,7 @@ for (const cs of testCiphersuites()) {
             )
         } catch (error:any) {
             if (shouldSkip(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

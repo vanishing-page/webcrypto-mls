@@ -20,14 +20,16 @@
     "noImplicitAny": false,
     "declaration": true,
     "declarationDir": "dist",
-    "declarationMap": true
+    "declarationMap": true,
+    "paths": {
+      "@vanishing.page/webcrypto-mls": ["./src/index.ts"],
+      "@vanishing.page/webcrypto-mls/*": ["./src/*.ts"]
+    }
   },
   "include": [
     "example",
     "example-shared",
-    "example-realistic-demo/client",
-    "example-realistic-demo/protocol.ts",
-    "example-realistic-demo/room-logic.ts",
+    "example-realistic-demo/*",
     "src/**/*",
     "test",
     "lib.es5.d.ts"

@@ -15,6 +15,7 @@ export interface KeySchedule {
     resumptionPsk:Uint8Array
     epochAuthenticator:Uint8Array
     initSecret:Uint8Array
+    applicationExportSecret:Uint8Array
 }
 
 export interface EpochSecrets {
@@ -42,12 +43,20 @@ export async function deriveKeySchedule (
     groupContext:GroupContext,
     kdf:Kdf,
 ) {
-    const epochSecret = await extractEpochSecret(groupContext, joinerSecret, kdf, pskSecret)
+    const epochSecret = await extractEpochSecret(
+        groupContext,
+        joinerSecret,
+        kdf,
+        pskSecret
+    )
 
     return await initializeKeySchedule(epochSecret, kdf)
 }
 
-export async function initializeKeySchedule (epochSecret:Uint8Array, kdf:Kdf):Promise<KeySchedule> {
+export async function initializeKeySchedule (
+    epochSecret:Uint8Array,
+    kdf:Kdf,
+):Promise<KeySchedule> {
     const newInitSecret = await deriveSecret(epochSecret, 'init', kdf)
     const senderDataSecret = await deriveSecret(epochSecret, 'sender data', kdf)
     const encryptionSecret = await deriveSecret(epochSecret, 'encryption', kdf)
@@ -56,7 +65,10 @@ export async function initializeKeySchedule (epochSecret:Uint8Array, kdf:Kdf):Pr
     const confirmationKey = await deriveSecret(epochSecret, 'confirm', kdf)
     const membershipKey = await deriveSecret(epochSecret, 'membership', kdf)
     const resumptionPsk = await deriveSecret(epochSecret, 'resumption', kdf)
-    const epochAuthenticator = await deriveSecret(epochSecret, 'authentication', kdf)
+    const epochAuthenticator = await deriveSecret(
+        epochSecret, 'authentication', kdf)
+    const applicationExportSecret = await deriveSecret(
+        epochSecret, 'application_export', kdf)
 
     // best-effort: epochSecret can recompute every output above, so it
     // must not outlive this function once those outputs are derived
@@ -72,6 +84,7 @@ export async function initializeKeySchedule (epochSecret:Uint8Array, kdf:Kdf):Pr
         membershipKey,
         resumptionPsk,
         epochAuthenticator,
+        applicationExportSecret,
     }
 
     return newKeySchedule
@@ -84,11 +97,22 @@ export async function initializeEpoch (
     pskSecret:Uint8Array,
     kdf:Kdf,
 ):Promise<EpochSecrets> {
-    const joinerSecret = await extractJoinerSecret(groupContext, initSecret, commitSecret, kdf)
+    const joinerSecret = await extractJoinerSecret(
+        groupContext,
+        initSecret,
+        commitSecret,
+        kdf
+    )
 
-    const welcomeSecret = await extractWelcomeSecret(joinerSecret, pskSecret, kdf)
+    const welcomeSecret = await extractWelcomeSecret(
+        joinerSecret, pskSecret, kdf)
 
-    const newKeySchedule:KeySchedule = await deriveKeySchedule(joinerSecret, pskSecret, groupContext, kdf)
+    const newKeySchedule:KeySchedule = await deriveKeySchedule(
+        joinerSecret,
+        pskSecret,
+        groupContext,
+        kdf
+    )
 
     return { welcomeSecret, joinerSecret, keySchedule: newKeySchedule }
 }

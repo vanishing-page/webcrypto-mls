@@ -40,10 +40,13 @@ is still a gap a downstream fork can ship unnoticed.
 
 ## Critical
 
-### C1. In-place zeroization corrupts the caller's live group state, leaking plaintext under an all-zero key
+### C1. In-place zeroization corrupts the caller's live group state
+
+Impact: plaintext leaks under an all-zero key.
 
 Files: `src/secret-tree.ts:319` (`createRatchetResultWithSecret`),
-reached via `createRatchetResult:291` and `consumeRatchet` / `ratchetToGeneration`.
+reached via `createRatchetResult:291` and `consumeRatchet` /
+`ratchetToGeneration`.
 
 `createRatchetResult` passes the ratchet node's *current* secret buffer
 (`currentSecret.secret`, which is literally `tree[index].application.secret`)
@@ -90,7 +93,9 @@ allocated. Treat state objects as immutable inputs.
 
 ## High
 
-### H1. `retainKeysForGenerations: 0` retains every skipped generation forever (forward-secrecy loss + memory DoS)
+### H1. `retainKeysForGenerations: 0` retains skipped generations forever
+
+Impact: forward-secrecy loss plus a memory DoS.
 
 File: `src/secret-tree.ts:177` (`removeOldGenerations`), gated at `:164`.
 
@@ -112,7 +117,9 @@ its name.
 Fix direction: add `if (max <= 0) return {}` (and zero all buffers) at the
 top of `removeOldGenerations`.
 
-### H2. A single unverified `commit`-kind entry permanently bricks the demo room for every member
+### H2. A single unverified `commit`-kind entry bricks the demo room
+
+Impact: permanent, and for every member of the room.
 
 Files: `example-realistic-demo/protocol.ts:26` (`kind` "asserted by sender,
 unverified"), `client/delivery-client.ts:61-70` (`onError` returns `'stop'`
@@ -168,7 +175,9 @@ so the oversized-write vectors are any admitted member's `mls` payload
 and any stranger's unauthenticated `join-request` key package (see H3),
 not welcomes.
 
-### M2. Missing "derived key matches advertised key" check on UpdatePath / Welcome (targeted group split)
+### M2. No "derived key matches advertised key" check on UpdatePath
+
+Also missing on Welcome. Impact: a targeted group split.
 
 Files: `src/process-messages.ts:412-453` (`updatePrivateKeyPath`),
 `src/create-commit.ts:471-516`, `src/client-state.ts:872-887`. Verified:
@@ -184,7 +193,9 @@ hash of the *advertised* keys, so V accepts the epoch, then holds a private
 path that cannot decrypt future commits -- a silent, targeted group split /
 permanent DoS. Same gap on the Welcome path.
 
-### M3. Over-strict unmerged-leaves validation rejects RFC-valid trees (no new member can ever join)
+### M3. Over-strict unmerged-leaves validation rejects RFC-valid trees
+
+Impact: no new member can ever join.
 
 Files: `src/client-state.ts:344-365` (`validateUnmergedLeaves`). Verified
 empirically by the agent. Re-review: the test at
@@ -204,7 +215,9 @@ where an ancestor legitimately does not list the leaf, and
 needed. The test's assertion message should be corrected along with the
 code so it stops documenting the wrong rule.
 
-### M4. Key-uniqueness check for Add is incomplete (self-inflicted permanent join failure)
+### M4. Key-uniqueness check for Add is incomplete
+
+Impact: a self-inflicted, permanent join failure.
 
 Files: `src/client-state.ts:1134-1156`, `:498-507` (`keysAreNotUnique`,
 called with `leafIndex: undefined` and only over leaf nodes, against the
@@ -220,7 +233,9 @@ but the resulting tree fails this same library's stricter
 joins are rejected. Same DoS class as a leaf key colliding with a parent
 node key on UpdatePath.
 
-### M5. No identity continuity on leaf replacement (impersonation within the group)
+### M5. No identity continuity on leaf replacement
+
+Impact: impersonation within the group.
 
 Files: `src/client-state.ts:442-457` (`validateLeafNodeUpdateOrCommit`),
 `:485-492`, `src/process-messages.ts:275-284`,
@@ -241,7 +256,9 @@ capability direction -- the new leaf is not required to support the
 credential types already in use by existing members (`:485-492`), allowing
 a silent downgrade of the group's credential floor.
 
-### M6. `validateLifetimeOnReceive` defaults to `false` (expired KeyPackages accepted)
+### M6. `validateLifetimeOnReceive` defaults to `false`
+
+Impact: expired KeyPackages are accepted.
 
 Files: `src/lifetime-config.ts:17-20`, `src/client-state.ts:524-533`.
 Documented in README "Security Considerations".
@@ -252,7 +269,9 @@ have been rotated or compromised) is accepted as an Add. RFC 9420 7.3
 requires the check on receipt. A production app must set
 `validateLifetimeOnReceive: true`.
 
-### M7. `defaultAuthenticationService` accepts every credential (insecure by default)
+### M7. `defaultAuthenticationService` accepts every credential
+
+Impact: insecure by default.
 
 Files: `src/authentication-service.ts:17-21`, `src/client-config.ts:34-41`,
 default param at `src/client-state.ts:903`, `:1043`,
@@ -320,7 +339,9 @@ inbound traffic on that state, so a remaining member can feed the removed
 client an alternative commit at the same epoch and resurrect it into a
 fork; the removing commit can also be replayed indefinitely.
 
-### L4. `needsUpdatePath` ignores custom proposal types (no PCS on custom-only commit)
+### L4. `needsUpdatePath` ignores custom proposal types
+
+Impact: no PCS on a custom-only commit.
 
 `src/client-state.ts:746-750`, `:681-686`, `src/process-messages.ts:287`.
 A commit consisting solely of an opted-in custom proposal is accepted with
@@ -376,7 +397,10 @@ audits unreproducible for a crypto library. Commit a lockfile, then run
 `npm audit` and fix the dev-chain findings at low urgency. Runtime
 dependencies remain a small pinned set (`@hpke/*`, `@noble/*`).
 
-### L10. Missing version check on join; internal-error type on empty-tree remove; no CSP/security headers on demo
+### L10. Three unrelated small gaps
+
+Missing version check on join; internal-error type on empty-tree
+remove; no CSP or security headers on the demo.
 
 - `src/client-state.ts:979`: `joinGroup` checks ciphersuite but not
   `groupContext.version` vs `keyPackage.version`.
@@ -388,6 +412,100 @@ dependencies remain a small pinned set (`@hpke/*`, `@noble/*`).
 - `example-realistic-demo` sets no CSP / `X-Frame-Options` /
   `X-Content-Type-Options`; no active injection vector was found, so this is
   defense-in-depth (would blunt any future bug reaching `window.state`).
+
+---
+
+## Attachment Subsystem (audited 2026-08-20)
+
+`src/attachment/` was audited separately on 2026-08-20. The findings
+below are from that review.
+
+## Medium (attachment subsystem)
+
+### A1. Unauthenticated alignment padding permits malleable objects
+
+`src/attachment/layout.ts`: `layout()` rounds `firstBlockOffset` up to
+the next `segmentMax` boundary, leaving a gap between the header and
+the first segment. The writer zero-fills it implicitly, by never
+writing to that region of a zero-initialised allocation.
+
+No gap byte enters any authenticator. `epochTreeRoot` folds the
+commitment, the segment count and the digest of the epoch heads, and
+the heads come from the metadata leaves, each `lh(ciphertext) || tag`.
+The snapshot root is therefore identical whatever the gap contains.
+
+That is the vulnerability, not a defence against it: before phase 1, an
+attacker could store a variant whose gap differed and it would verify
+as the same attachment, so two byte-different stored objects were
+indistinguishable to any verifier. That breaks any content-addressed
+locator built on these bytes. Phase 1 added an explicit `isZeroRegion`
+check on both whole-object read paths, because no authenticator covers
+the gap and none can without changing the wire format.
+
+### A2. Derived CEK not zeroized in the three `...ForGroup` wrappers
+
+The `encryptAttachmentForGroup`, `decryptAttachmentStreamForGroup`, and
+`openAttachmentRangeForGroup` wrappers derive a CEK and pass it into
+encryption/decryption machinery. Before phase 2, the CEK was never wiped,
+leaking key material to the heap. This is the same class as L1 and L2,
+both of which concern un-zeroized key material on normal and error paths.
+Phase 2 corrects this by wiping on all exit paths (success, exception,
+stream error, cancellation). Residual gaps remain for abandoned streams:
+an untouched `ReadableStream` from `decryptAttachmentStream` leaks its CEK
+and one buffered segment, and an unconsumed `AttachmentRange` leaks its CEK.
+These are documented as known limitations.
+
+### A3. Object salt bypasses caller-supplied CryptoProvider
+
+`src/attachment/object.ts`, `sealObject`'s salt line. Before phase 3 it
+called `globalThis.crypto.getRandomValues` directly, so the salt was
+drawn from the global RNG rather than from the `CryptoProvider` the
+caller supplied. An application enforcing a centralized or
+hardware-backed RNG was silently bypassed for the one value the
+design's security rule 1 rests on, since salt reuse is nonce reuse.
+
+Fixed in phase 3: the line now reads `crypto.rng.randomBytes(32)`, the
+`SealCrypto` bundle carries a required `rng`, and
+`scripts/check-attachment-invariants.mjs` fails the build on any
+`getRandomValues` under `src/attachment/`.
+
+### A4. Duplicated verification logic across two read paths
+
+The two whole-object paths, `openObject` and `decryptAttachmentStream`,
+verify independently: each recomputes the leaves, folds them into epoch
+heads, folds those into the root and compares. `range.ts` is not a
+third path -- it imports `parsePrefix`, `verifyRoot`, `verifyEpochRun`
+and `openBlock` FROM `reader.ts`, and that one-way dependency is
+enforced by the layering check in
+`scripts/check-attachment-invariants.mjs`.
+
+The risk is that the two whole-object paths drift apart, which
+single-path testing would not catch. Phase 4 addressed it with a
+differential test in `test/attachment/parity.ts` that mutates a sealed
+object at offsets covering every region of the layout and asserts both
+paths return the same verdict at each, plus four deliberate asymmetries
+recorded in `src/attachment/AGENTS.md`.
+
+## Low (attachment subsystem)
+
+### A5. `openObject` took no input validation; the reader did
+
+`openObject` performed no validation on its inputs before phase 4.
+`decryptAttachmentStream` (`src/attachment/reader.ts:297`) calls
+`validateAttachmentRef` at `:307`, before anything else.
+`openObject` takes a structural ref with no `version` field, so the version
+check has no counterpart in the whole-object path. This is a documented
+deliberate asymmetry recorded in `src/attachment/AGENTS.md`; phase 4
+validates `objectId` and `plaintextLength` in `openObject` but the reference
+version check remains asymmetric.
+
+### A6. No cross-implementation coverage of epoch digest tree
+
+The epoch digest tree (snap_id 0x0003) is the main segment-level tampering
+detection mechanism. Swift-raae does not implement snap_id 0x0003, so this
+feature is never exercised by cross-implementation testing. An undetected
+implementation bug in the epoch head verification or snapshot tree computation
+would not surface in interop.
 
 ---
 
@@ -451,16 +569,17 @@ them.
 
 ## Resolution status
 
-Appended 2026-08-09 at the end of branch `audit`, after every finding was
-fixed. Each row names the story that fixed it and the commit subject to
-read for the reasoning; the tests are the ones added or rewritten for
-that story.
+Original audit appended 2026-08-09 at the end of branch `audit`, after
+every finding was fixed. Attachment subsystem findings added 2026-08-21.
 
-There are 23 findings: C1, H1 to H3, M1 to M8 and M10, and L1 to L10.
-Every one is fixed on this branch, and none was deliberately left open.
-The table has 22 rows because L1 and L2 were one fix. Nothing is numbered
-M9 -- the audit's medium findings skip from M8 to M10, so the absence is
-a numbering gap, not an unaddressed item.
+There are 29 findings: C1, H1 to H3, M1 to M8 and M10, L1 to L10, and
+A1 to A6 (attachment subsystem, 2026-08-20 audit).
+
+The MLS findings have 22 rows because L1 and L2 were one fix. Nothing is
+numbered M9 -- the audit's medium findings skip from M8 to M10, so the
+absence is a numbering gap, not an unaddressed item.
+
+Of the attachment findings, A1-A5 are fixed; A6 remains open.
 
 | Finding | Story | What changed |
 | --- | --- | --- |
@@ -486,6 +605,12 @@ a numbering gap, not an unaddressed item.
 | L8 | US-022 | `padding-config.ts` and the README state what each padding mode does and does not hide. |
 | L9 | US-014 | `package-lock.json` is committed, so `npm audit` numbers are reproducible. |
 | L10 | US-021, US-023 | Version check on join and `ValidationError` on a sole-leaf remove (US-021); CSP and security headers on the demo Worker (US-023). |
+| A1 | Phase 1 | The alignment gap is checked by both read paths to prevent content-addressed-locator ambiguity (`isZeroRegion` in `openObject`, gap check in `decryptAttachmentStream`). |
+| A2 | Phase 2 | The three `...ForGroup` wrappers now zeroize their CEK on all exit paths (success, exception, stream error, cancellation) in `writer.ts:137-154`, `reader.ts:633-650`, `range.ts:460-478`. Residual gaps (abandoned streams) documented as known limitations in `src/attachment/AGENTS.md`. |
+| A3 | Phase 3 | The object salt is now sourced from the `SealCrypto` bundle's RNG, which is supplied from the `CryptoProvider` passed in. See `crypto.ts` (`rng:Rng` on `SealCrypto`). |
+| A4 | Phase 4 | Differential test at `test/attachment/parity.ts` exercises both paths in parallel, mutating bytes to detect divergence. |
+| A5 | Phase 4 | `openObject` now validates `objectId` and `plaintextLength`. Reference `version` check remains asymmetric (documented deliberate difference in `src/attachment/AGENTS.md`). |
+| A6 | Open | snap_id 0x0003 is unimplemented upstream; no cross-implementation coverage available. Signal recorded in design plan. |
 
 The "Confirmed correct (not gaps)" list above was not re-verified as part
 of the fix work. It describes the code as audited; several of those areas

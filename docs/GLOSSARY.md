@@ -648,6 +648,77 @@ group order after restoring persisted state, until you reach the current
 epoch. Out-of-order commits throw rather than corrupt state.
 ([README](../README.md#catching-up))
 
+### Attachments
+
+**SEAL** -- Segmented Encryption and Authentication Layer, the
+construction that protects attachment ciphertexts and their segment
+structure.
+(SEAL spec, [`src/attachment/schedule.ts`](../src/attachment/schedule.ts))
+
+**CEK** -- Content encryption key, derived fresh from the epoch secret
+and object id, and used to key SEAL. One CEK per attachment.
+([`src/attachment/keys.ts`](../src/attachment/keys.ts))
+
+**Segment** -- A 64 KiB chunk of a sealed attachment (`SEGMENT_MAX`,
+65536 bytes); the final segment may be shorter. Each is encrypted
+independently and carries its own authentication tag.
+([`src/attachment/schedule.ts`](../src/attachment/schedule.ts))
+
+**`AttachmentRef`** -- The lightweight pointer to a sealed attachment:
+version, objectId, plaintextLength, snapshot root, and storage locator.
+Intended to ride in MLS authenticated_data.
+([`src/attachment/reference.ts`](../src/attachment/reference.ts))
+
+**Object id** -- The unique identifier of an attachment, used in CEK
+derivation so two attachments sealed with the same epoch secret are
+encrypted under different keys.
+([`src/attachment/keys.ts`](../src/attachment/keys.ts))
+
+**Snapshot** -- The root value committing to every segment of an
+attachment, computed by folding the epoch heads (snap_id 0x0003).
+Changing any segment byte changes the root.
+([`src/attachment/snapshot.ts`](../src/attachment/snapshot.ts))
+
+**Epoch digest tree** -- The snapshot construction this implementation
+uses (snap_id 0x0003): segments are grouped into epochs, each epoch's
+leaf run is folded into an epoch head, and the heads are folded into
+the root. Detects truncation, reordering and substitution.
+([`src/attachment/snapshot.ts`](../src/attachment/snapshot.ts))
+
+**Epoch head** -- The keyed digest of one epoch's run of segment
+leaves, produced by hashing the run and passing it through `sealKdf`
+under the `snap_epoch` label keyed by `snapKey`. It records no segment
+number.
+([`src/attachment/snapshot.ts`](../src/attachment/snapshot.ts))
+
+**Commitment** -- The key-commitment value stored in the header and
+checked by `startOpen` before any segment is decrypted, binding the
+header to the CEK that sealed it.
+([`src/attachment/schedule.ts`](../src/attachment/schedule.ts))
+
+**snap_id** -- The snapshot construction identifier in draft-02. This
+implementation uses 0x0003 for the epoch digest tree.
+(RAAE spec)
+
+**protocol_id** -- The SEAL profile name; `SEAL-RO-v1` here. It is one
+element of a named instantiation, which also fixes `segment_max`,
+`nonce_mode`, `epoch_length`, the layout and `snap_id`. `snap_id` is
+the element the conformance question turns on.
+(SEAL spec, [`src/attachment/schedule.ts`](../src/attachment/schedule.ts))
+
+**Aligned layout** -- The object layout this implementation uses: the
+header sits at offset 0, the first segment starts at the next
+`segmentMax` boundary, and the gap between them is zero-padded. Every
+offset is therefore computable from the plaintext length and cipher
+suite alone, which is what makes HTTP Range requests possible without
+a manifest.
+([`src/attachment/layout.ts`](../src/attachment/layout.ts))
+
+**Range read** -- Reading a specific byte offset and length from a sealed
+attachment without fetching bytes outside that range. Validated segments
+are decrypted on demand.
+([`src/attachment/range.ts`](../src/attachment/range.ts))
+
 ### Internals
 
 **`MlsError`** -- The base error class. Subclasses distinguish cause:

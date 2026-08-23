@@ -1,0 +1,27 @@
+{
+	"name": "F.5 Single Segment, ChaCha20-Poly1305, HKDF-SHA-256, 16384",
+	"source": "draft-sullivan-cfrg-raae-02 Appendix F.5 (== 2026-07-06 snapshot E.5)",
+	"protocol_id": "SEAL-RW-v1",
+	"cek_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	"payload_info": {
+		"aead_id": 29,
+		"segment_max": 16384,
+		"kdf_id": 1,
+		"snap_id": 1,
+		"nonce_mode": 0,
+		"epoch_length": 1,
+		"salt_hex": "0404040404040404040404040404040404040404040404040404040404040404"
+	},
+	"schedule": {
+		"commitment_hex": "9ef7166bbce42787fd834f79d29f85b66a050b24f372ecfb79a66b3f2fdc1acb",
+		"payload_key_hex": "d0f1d392a371642db684a23858c0193c2d7406cb4360c81ef9190391cacf885f",
+		"acc_key_hex": "b156708dc559791d78014bae5e01b5fdf8a397c2d140fd9b9468e3cceeb8aa5d"
+	},
+	"segment_0": {
+		"is_final": 1,
+		"nonce_hex": "030303030303030303030303",
+		"segment_aad_hex": "00095345414c2d4441544100080000000000000000000101",
+		"ciphertext_hex": "f1d968bc047a7bf6a15ef400",
+		"tag_hex": "567deca2d91b732fd1f814a65335df79"
+	}
+}

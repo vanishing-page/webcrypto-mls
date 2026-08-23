@@ -41,6 +41,61 @@ same for `npm run build:realistic` and
 included: the bare string `window.state` is in the shipped bundle either
 way, because the `DevTools` panel names it in its copy.
 
+## The library has an opt-in half
+
+`src/attachment/` implements random-access encrypted attachments over
+four Internet-Drafts (draft-sullivan-seal-concrete-00,
+draft-sullivan-cfrg-raae-02, draft-sullivan-mls-attachments, and
+draft-ietf-mls-extensions-09), and nothing in `src/index.ts` refers to
+it. That is enforced, not merely intended: `npm run test:node` runs
+`scripts/check-attachment-invariants.mjs` first, which checks: src/index.ts
+stays attachment-free; reader.ts does not pull range.ts; keys.ts pulls
+no SEAL code; no file calls getRandomValues; every module that owns
+SealState wipes it; the wrapper functions derive and wipe CEKs; and all
+vendored test vectors are imported. `scripts/check-vector-determinism.mjs`
+runs next, regenerating the self-generated SEAL vectors and diffing them
+against the committed copies. `scripts/check-signal-batching.mjs` runs
+third; it scans `example/` for two signal writes in a row outside a
+`batch()` call, which is the house rule the demo has to follow and
+which a render test can only observe indirectly.
+`scripts/check-readme-attachments.mjs` runs fourth; it pins the README's
+"Encrypted attachments" section, requiring every code block in it to be
+a verbatim excerpt of `example/attachment-end-to-end.ts` so the
+published walkthrough cannot drift into pseudocode, and holding the
+section to 80 columns with no em dashes or arrows. Editing that example
+means re-copying the affected block into the README.
+`scripts/check-audit-closed.mjs` runs last; it derives the finding list
+from the body of `AUDIT-ra.md` and requires the resolution table there
+to have exactly one row per finding, each naming the stories that
+closed it or writing down why it stays open. The finding list is
+derived rather than listed in the script, so the table cannot drift
+from the audit. All five live in
+`npm run test:checks`, which `test:node` chains and which CI runs as
+its own `checks` job, so a violation fails the build on every push and
+not only a local test run. Add a new structural gate to that npm
+script, not to `test:node` directly, or CI will not run it.
+
+`scripts/check-house-style.mjs` is the exception to that rule, and
+`npm run check:style` is how you run it. It enforces the two mechanical
+rules from CLAUDE.md -- 80 columns, and no em dash or arrow -- over the
+branch's own work, so it needs the base branch and the full history to
+diff against. CI checks out shallow, so it stays a local gate rather
+than a `test:checks` entry. The character rule covers every line of
+every changed file; the length rule covers the files in the script's
+`WHOLE_FILE` list end to end and, everywhere else, only the lines the
+branch added. Its exemptions are for lines that *cannot* wrap -- URLs,
+a bare long path, a markdown table row, a fenced code block, the
+generated table of contents -- and each one is argued in the header
+comment. Add to that list only with the same kind of argument.
+Callers reach the subsystem through the
+package's `./*` subpath export. The directory has its own `AGENTS.md`,
+and a change inside it should start there.
+
+The one part of that work that reaches the rest of the library is
+`KeySchedule.applicationExportSecret` in `src/key-schedule.ts`, a
+sibling of the RFC 9420 Table 4 secrets that every `KeySchedule`
+consumer now sees.
+
 ## Dependencies
 
 `package-lock.json` is committed and CI installs with `npm ci`, so a
@@ -56,25 +111,54 @@ The one workflow that still runs `npm install` is
 `.github/workflows/auto-dependabot.yml`, deliberately: its job is to
 resolve newer versions rather than reproduce the pinned ones.
 
-## Two typecheck configurations
+## Three typecheck configurations
 
 The root `tsconfig.json` covers `src`, `test`, `example`,
-`example-shared` and `example-realistic-demo/client`. The Worker's own
-`example-realistic-demo/tsconfig.json` has an explicit four-file
-`include` and different `lib` and `types` settings, because Worker code
-runs against Cloudflare globals rather than the DOM. Both have to be run:
+`example-shared` and `example-realistic-demo/client`.
+`tsconfig.scripts.json` covers `scripts`; it exists only to override
+`types` to node's, because the build and interop scripts need
+`process`, `Buffer` and `node:*` while the root config deliberately
+narrows `types` to vite's so a node import inside `src/` or `test/` is
+a type error rather than something that only fails in a browser. The
+Worker's own `example-realistic-demo/tsconfig.json` has an explicit
+four-file `include` and different `lib` and `types` settings, because
+Worker code runs against Cloudflare globals rather than the DOM. All
+three have to be run:
 
 ```sh
-npx tsc -p tsconfig.json --noEmit
+npm run typecheck   # tsconfig.json and tsconfig.scripts.json
 npx tsc -p example-realistic-demo/tsconfig.json --noEmit
 ```
 
-Both must be completely clean; they exit 0 today, so any error is yours.
-Note that the root invocation prints its whole file list, so check the
-exit code or grep for `error TS` rather than reading the output.
+The root config also maps the package's own name back onto the source:
+`@vanishing.page/webcrypto-mls` to `src/index.ts` and
+`@vanishing.page/webcrypto-mls/*` to `src/*.ts`. That exists so an
+example can import itself the way a consumer does -- through the
+published subpath export -- and still typecheck against `src/` rather
+than a stale `dist/`. tsc applies `paths` before the export map, and
+esbuild reads the same `paths` out of `tsconfig.json`, so the test
+bundles resolve identically. Vite does not read `paths`, so a file
+using the subpath form must not end up in the demo's import graph.
 
-Do not add `--declaration false` to either invocation. It conflicts with
+All must be completely clean; they exit 0 today, so any error is yours.
+Note that a bare `npx tsc -p tsconfig.json --noEmit` prints its whole
+file list, so check the exit code or grep for `error TS` rather than
+reading the output. `npm run typecheck` passes `--listFiles false` to
+keep CI logs readable.
+
+Do not add `--declaration false` to any invocation. It conflicts with
 `declarationDir` and emits two TS5069 errors whatever the code does.
+`tsconfig.scripts.json` instead sets `declarationDir` to `null`
+alongside `declaration: false`, which is the only combination tsc
+accepts when extending the root config.
+
+Nothing else typechecks `test/` or `scripts/`. `tsconfig.build.json`
+excludes both, so `npm run build` is clean while a test file is broken,
+and esbuild only strips types, so a passing `npm test` says nothing
+either. `npm run typecheck` is the only check that reads those files at
+all, and two type errors reached commits during the attachment work
+through exactly that gap. CI runs it as its own step in the `build`
+job; the Worker config is still not wired into CI.
 
 ## Tests
 
@@ -84,6 +168,29 @@ two entries, and an unimported file fails nothing and reports nothing.
 The entries are `test/matrix.ts` for tests that fan out over the
 ciphersuites and `test/unit.ts` for everything else; `test/index.ts` is
 both of them, and is what `npm test` and the browser run bundle.
+
+`npm run test:browser` bundles that same `test/index.ts` and runs it in
+headless Chromium through tapout, and CI runs it as its own `browser`
+job. Two things about that environment are easy to trip over. A global
+a test replaces has to be installed with `Object.defineProperty`: in a
+browser `indexedDB` is a getter-only accessor inherited from
+`Window.prototype`, so plain assignment throws and takes the rest of
+the run with it. And anything a test prints has to stay clear of the
+tokens tapout reads as evidence of failure, `Failed`, `FAIL` and
+`Error:`. Chromium words an algorithm it does not implement as
+`Failed to execute 'importKey' on 'SubtleCrypto'`, which is exactly
+what a skipped ciphersuite has to say, so skips route their reason
+through `skipReason` in `test/helpers/skip.ts`.
+
+The browser run is checked for completeness, not only for failures.
+tapout ends a run that has gone quiet for three seconds and exits 0, so
+a suite that stalls midway reports a green tick having run a fraction
+of its assertions. `scripts/run-browser-tests.mjs` therefore runs the
+suite and hands the TAP stream to `browserRunOutcome` in
+`scripts/browser-tap.ts`, which requires tapzero's closing plan and
+totals to agree; `test/browser-tap.ts` covers that decision. A step
+that has to be silent for longer than three seconds has to report
+progress, or its run is treated as truncated.
 
 Which entry a file belongs to is not a matter of taste. Every test that
 loops over ciphersuites loops over `testCiphersuites()` from
@@ -97,6 +204,12 @@ npm run test:unit                  # the non-matrix half, ~30 seconds
 npm run test:matrix -- shard:1/4   # one shard of the matrix
 npm test                           # everything, several minutes
 ```
+
+`npm run test:interop` is separate from all of those and runs in
+neither `npm test` nor the Linux CI jobs. It builds a Swift executable
+against swift-raae, so it needs a Swift toolchain and only runs on the
+`macos-14` job; see `src/attachment/AGENTS.md` for why the build has to
+be a debug build.
 
 A test whose cost is out of proportion to what a second ciphersuite would
 tell it loops over `sampleCiphersuites()` instead, which is the sample
@@ -129,6 +242,14 @@ them as plain functions and reading the returned vnode, which means a
 component that calls a hook cannot be tested that way at all; the demos
 split each view into a presentational half and a stateful half for this
 reason.
+
+The attachments demo cannot be split that way -- it is one component
+holding an AudioContext and a stream reader -- so its logic lives in
+plain modules the component calls: `example/attachment-plan.ts` (the
+seek window, range formatting and slicing, the status text, the
+teardown) and `example/playback-loop.ts` (the scheduling loop, driven
+by an injected `ChunkScheduler`). Neither imports preact. Put new demo
+logic there and test it directly; nothing tests `attachments-demo.ts`.
 
 `test/example/vnode.ts` holds the vnode helpers both test directories
 import, and two of them are not interchangeable. `findByClass` compares

@@ -10,15 +10,26 @@ import { createEntryQueue, type EntryQueue } from './entry-queue.js'
 import { isMalformedEntry } from './malformed-entry.js'
 import type { RealisticState } from './state.js'
 
+/** Where the page was loaded from: the `location` fields used here. */
+export interface PageOrigin {
+    protocol:string
+    host:string
+}
+
 /**
  * The socket is same-origin and derived from where the page was loaded
  * from. There is no configured endpoint and no build-time origin
  * variable -- that is the entire reason one Worker serves both the page
  * and the delivery service.
+ *
+ * `page` exists because `window.location` is unforgeable: it cannot be
+ * reassigned or redefined in a browser, so a test running in one has no
+ * other way to ask what this does on an https page. It defaults to the
+ * real `location`, which is what every caller in the app passes.
  */
-export function socketUrl (roomId:string):string {
-    const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${scheme}//${location.host}/api/room/${roomId}/ws`
+export function socketUrl (roomId:string, page:PageOrigin = location):string {
+    const scheme = page.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${scheme}//${page.host}/api/room/${roomId}/ws`
 }
 
 export interface DeliveryClient {
@@ -45,6 +56,12 @@ export interface DeliveryOptions {
      * `bad-message` to everything and never replays.
      */
     onOpen (isReconnect:boolean):void
+
+    /**
+     * Where the page was loaded from, for `socketUrl`. Defaults to the
+     * real `location`; see `socketUrl` for why it can be overridden.
+     */
+    page?:PageOrigin
 }
 
 export function createDeliveryClient (
@@ -129,7 +146,7 @@ export function createDeliveryClient (
             'connecting' :
             'reconnecting'
 
-        const socket = new WebSocket(socketUrl(roomId))
+        const socket = new WebSocket(socketUrl(roomId, opts.page))
         ws = socket
 
         socket.addEventListener('open', () => {

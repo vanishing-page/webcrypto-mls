@@ -438,6 +438,7 @@ function CurrentView () {
         case 'room':
             return html`<${Room}
                 state=${state}
+                origin=${location.origin}
                 onApprove=${(request:PendingRequest) => {
                     // Not awaited: `approve` reports its own failures
                     // through the status line and never rejects.

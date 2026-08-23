@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { createGroup, joinGroup } from '../../src/client-state.js'
 import { createCommit } from '../../src/create-commit.js'
 import { processPublicMessage } from '../../src/process-messages.js'
@@ -22,7 +23,7 @@ for (const cs of testCiphersuites()) {
             await addWithPath(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

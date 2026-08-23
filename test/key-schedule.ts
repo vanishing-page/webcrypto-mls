@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from './helpers/skip.js'
 import { getCiphersuiteFromName } from '../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../src/crypto/get-ciphersuite-impl.js'
 import { initializeKeySchedule } from '../src/key-schedule.js'
@@ -39,7 +40,7 @@ for (const name of testCiphersuites()) {
                 error?.message?.includes('SubtleCrypto') ||
                 error?.message?.includes('Unrecognized name')
             ) {
-                t.comment(`Skipping: ${error.message}`)
+                t.comment(`Skipping: ${skipReason(error)}`)
                 return
             }
             throw error

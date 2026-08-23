@@ -344,6 +344,15 @@ test('CopyControl confirms a copy only once one has happened', t => {
     )
 })
 
+/**
+ * The origin every invitation URL here is asserted against. It is
+ * passed to `Room` as a prop rather than installed on `globalThis`:
+ * `window.location` is unforgeable, so assigning to it in a browser
+ * navigates the page instead of replacing it, which would take the
+ * whole browser run of this suite down with it.
+ */
+const TEST_ORIGIN = 'https://demo.test'
+
 function room (
     state:ReturnType<typeof createRealisticState>,
     props:{
@@ -355,6 +364,7 @@ function room (
 ) {
     return Room({
         state,
+        origin: TEST_ORIGIN,
         onApprove: props.onApprove ?? (() => {}),
         onDeny: props.onDeny ?? (() => {}),
         onRemove: props.onRemove ?? (() => {}),
@@ -363,98 +373,74 @@ function room (
 }
 
 test('Room shows the room URL for the room it is given', t => {
-    const g = globalThis as unknown as { location?:unknown }
-    const previous = g.location
-    g.location = { origin: 'https://demo.test' }
+    const state = createRealisticState()
+    state.roomId.value = 'abcdeFGH12'
 
-    try {
-        const state = createRealisticState()
-        state.roomId.value = 'abcdeFGH12'
+    const tree = room(state)
+    const links = allNodes(tree).filter(node => {
+        return (node.type as unknown) === ShareRoomLink
+    })
 
-        const tree = room(state)
-        const links = allNodes(tree).filter(node => {
-            return (node.type as unknown) === ShareRoomLink
-        })
-
-        t.equal(links.length, 1, 'should render one room link')
-        t.equal(
-            links[0].props.url,
-            'https://demo.test/abcdeFGH12',
-            'the link should be the origin joined to the room id'
-        )
-    } finally {
-        g.location = previous
-    }
+    t.equal(links.length, 1, 'should render one room link')
+    t.equal(
+        links[0].props.url,
+        'https://demo.test/abcdeFGH12',
+        'the link should be the origin joined to the room id'
+    )
 })
 
 test('Room shows the connection status and the live members', t => {
-    const g = globalThis as unknown as { location?:unknown }
-    const previous = g.location
-    g.location = { origin: 'https://demo.test' }
+    const state = createRealisticState()
+    state.roomId.value = 'abcdeFGH12'
+    state.connection.value = 'reconnecting'
+    state.live.value = ['aaa', 'bbb', 'ccc']
 
-    try {
-        const state = createRealisticState()
-        state.roomId.value = 'abcdeFGH12'
-        state.connection.value = 'reconnecting'
-        state.live.value = ['aaa', 'bbb', 'ccc']
+    const tree = room(state)
 
-        const tree = room(state)
+    const status = findByClass(tree, 'connection')
+    t.equal(status.length, 1, 'should render one connection element')
+    t.equal(
+        status[0].props['data-status'],
+        'reconnecting',
+        'the element should carry the current connection status'
+    )
 
-        const status = findByClass(tree, 'connection')
-        t.equal(status.length, 1, 'should render one connection element')
-        t.equal(
-            status[0].props['data-status'],
-            'reconnecting',
-            'the element should carry the current connection status'
-        )
-
-        const live = findByClass(tree, 'live')
-        t.equal(live.length, 1, 'should render one live list')
-        t.equal(
-            findByType(live[0], 'li').length,
-            3,
-            'should render one item per live member'
-        )
-    } finally {
-        g.location = previous
-    }
+    const live = findByClass(tree, 'live')
+    t.equal(live.length, 1, 'should render one live list')
+    t.equal(
+        findByType(live[0], 'li').length,
+        3,
+        'should render one item per live member'
+    )
 })
 
 test('Room shows the epoch once there is a group', t => {
-    const g = globalThis as unknown as { location?:unknown }
-    const previous = g.location
-    g.location = { origin: 'https://demo.test' }
+    const state = createRealisticState()
+    state.roomId.value = 'abcdeFGH12'
 
-    try {
-        const state = createRealisticState()
-        state.roomId.value = 'abcdeFGH12'
+    const before = findByClass(room(state), 'epoch')
+    t.equal(
+        before.length,
+        0,
+        'should show no epoch while there is no group'
+    )
 
-        const before = findByClass(room(state), 'epoch')
-        t.equal(
-            before.length,
-            0,
-            'should show no epoch while there is no group'
-        )
+    // A stand-in for ClientState keeps this a rendering test rather
+    // than an MLS one. The empty tree is a group of nobody, which is
+    // impossible in MLS but is the least this assertion needs.
+    state.group.value = {
+        groupContext: { epoch: 7n },
+        ratchetTree: [],
+        privatePath: { leafIndex: 0, privateKeys: {} }
+    } as unknown as typeof state.group.value
 
-        // A stand-in for ClientState keeps this a rendering test rather
-        // than an MLS one. The empty tree is a group of nobody, which is
-        // impossible in MLS but is the least this assertion needs.
-        state.group.value = {
-            groupContext: { epoch: 7n },
-            ratchetTree: [],
-            privatePath: { leafIndex: 0, privateKeys: {} }
-        } as unknown as typeof state.group.value
-
-        const after = findByClass(room(state), 'epoch')
-        t.equal(after.length, 1, 'should show one epoch once joined')
-        t.deepEqual(
-            childrenOf(after[0]).filter(kid => kid !== undefined),
-            ['7'],
-            'the epoch should be the group context epoch'
-        )
-    } finally {
-        g.location = previous
-    }
+    const after = findByClass(room(state), 'epoch')
+    t.equal(after.length, 1, 'should show one epoch once joined')
+    t.deepEqual(
+        childrenOf(after[0]).filter(kid => kid !== undefined),
+        ['7'],
+        'the epoch should be the group context epoch'
+    )
 })
 
 // realistic-demo.AC4.1 -- the creator sees who has asked to join
@@ -494,33 +480,22 @@ test('the view fixtures build', async (t) => {
     )
 })
 
-/**
- * A room where somebody has asked to join. `location` is stubbed the
- * same way the tests above stub it, because Room reads `origin`.
- */
+/** A room where somebody has asked to join. */
 function pendingRoom (opts:{
     isCreator:boolean
     requests:PendingRequest[]
     onApprove? (request:PendingRequest):void
     onDeny? (identity:string):void
 }) {
-    const g = globalThis as unknown as { location?:unknown }
-    const previous = g.location
-    g.location = { origin: 'https://demo.test' }
+    const state = createRealisticState()
+    state.roomId.value = 'abcdeFGH12'
+    state.isCreator.value = opts.isCreator
+    state.pending.value = opts.requests
 
-    try {
-        const state = createRealisticState()
-        state.roomId.value = 'abcdeFGH12'
-        state.isCreator.value = opts.isCreator
-        state.pending.value = opts.requests
-
-        return room(state, {
-            onApprove: opts.onApprove,
-            onDeny: opts.onDeny
-        })
-    } finally {
-        g.location = previous
-    }
+    return room(state, {
+        onApprove: opts.onApprove,
+        onDeny: opts.onDeny
+    })
 }
 
 test('Room shows the pending list to the creator and nobody else', t => {
@@ -812,35 +787,27 @@ function memberRoomState (opts:{
     userName?:string
     onRemove? (member:Member):void
 }) {
-    const g = globalThis as unknown as { location?:unknown }
-    const previous = g.location
-    g.location = { origin: 'https://demo.test' }
+    const tree:RatchetTree = opts.tree ??
+        [aliceLeaf, undefined, bobLeaf]
+    const state = createRealisticState()
 
-    try {
-        const tree:RatchetTree = opts.tree ??
-            [aliceLeaf, undefined, bobLeaf]
-        const state = createRealisticState()
+    state.roomId.value = 'abcdeFGH12'
+    state.isCreator.value = opts.isCreator ?? false
+    state.live.value = opts.live ?? []
+    state.removed.value = opts.removed ?? false
+    state.group.value = {
+        groupContext: { epoch: 2n },
+        ratchetTree: tree,
+        privatePath: { leafIndex: opts.ownLeaf ?? 0, privateKeys: {} }
+    } as unknown as typeof state.group.value
 
-        state.roomId.value = 'abcdeFGH12'
-        state.isCreator.value = opts.isCreator ?? false
-        state.live.value = opts.live ?? []
-        state.removed.value = opts.removed ?? false
-        state.group.value = {
-            groupContext: { epoch: 2n },
-            ratchetTree: tree,
-            privatePath: { leafIndex: opts.ownLeaf ?? 0, privateKeys: {} }
-        } as unknown as typeof state.group.value
-
-        if (opts.userName !== undefined) {
-            state.user.value = {
-                name: opts.userName
-            } as unknown as typeof state.user.value
-        }
-
-        return { tree: room(state, { onRemove: opts.onRemove }), state }
-    } finally {
-        g.location = previous
+    if (opts.userName !== undefined) {
+        state.user.value = {
+            name: opts.userName
+        } as unknown as typeof state.user.value
     }
+
+    return { tree: room(state, { onRemove: opts.onRemove }), state }
 }
 
 /** The same room, when only the rendered tree is wanted. */
@@ -1314,31 +1281,23 @@ function chatRoom (opts:{
     priorCount?:number
     onSend? (text:string):void
 }) {
-    const g = globalThis as unknown as { location?:unknown }
-    const previous = g.location
-    g.location = { origin: 'https://demo.test' }
+    const tree:RatchetTree = [aliceLeaf, undefined, bobLeaf]
+    const state = createRealisticState()
 
-    try {
-        const tree:RatchetTree = [aliceLeaf, undefined, bobLeaf]
-        const state = createRealisticState()
+    state.roomId.value = 'abcdeFGH12'
+    state.entries.value = opts.entries ?? []
+    state.decrypted.value = opts.decrypted ?? {}
+    state.outbound.value = opts.outbound ?? []
+    state.draft.value = opts.draft ?? ''
+    state.joinCursor.value = opts.joinCursor ?? 0
+    state.priorCount.value = opts.priorCount ?? 0
+    state.group.value = {
+        groupContext: { epoch: 2n },
+        ratchetTree: tree,
+        privatePath: { leafIndex: 0, privateKeys: {} }
+    } as unknown as typeof state.group.value
 
-        state.roomId.value = 'abcdeFGH12'
-        state.entries.value = opts.entries ?? []
-        state.decrypted.value = opts.decrypted ?? {}
-        state.outbound.value = opts.outbound ?? []
-        state.draft.value = opts.draft ?? ''
-        state.joinCursor.value = opts.joinCursor ?? 0
-        state.priorCount.value = opts.priorCount ?? 0
-        state.group.value = {
-            groupContext: { epoch: 2n },
-            ratchetTree: tree,
-            privatePath: { leafIndex: 0, privateKeys: {} }
-        } as unknown as typeof state.group.value
-
-        return room(state, { onSend: opts.onSend })
-    } finally {
-        g.location = previous
-    }
+    return room(state, { onSend: opts.onSend })
 }
 
 function appEntry (seq:number, sender:string):LogEntry {
@@ -1488,43 +1447,35 @@ test('Room composer reports what was typed and what was submitted', t => {
 })
 
 test('Room composer records what is being typed', t => {
-    const g = globalThis as unknown as { location?:unknown }
-    const previous = g.location
-    g.location = { origin: 'https://demo.test' }
+    const state = createRealisticState()
+    state.roomId.value = 'abcdeFGH12'
 
-    try {
-        const state = createRealisticState()
-        state.roomId.value = 'abcdeFGH12'
+    // The transition is what is asserted, not the value: `draft`
+    // starts empty, so a view that never writes it would satisfy an
+    // assertion about the empty case on its own.
+    t.equal(state.draft.value, '', 'nothing typed yet')
+    t.equal(
+        findByClass(room(state), 'send')[0].props.disabled,
+        true,
+        'and so nothing to send'
+    )
 
-        // The transition is what is asserted, not the value: `draft`
-        // starts empty, so a view that never writes it would satisfy an
-        // assertion about the empty case on its own.
-        t.equal(state.draft.value, '', 'nothing typed yet')
-        t.equal(
-            findByClass(room(state), 'send')[0].props.disabled,
-            true,
-            'and so nothing to send'
-        )
+    const input = findByClass(room(state), 'draft')[0]
+    const onInput = input.props.onInput as
+        (ev:{ currentTarget:{ value:string } }) => void
 
-        const input = findByClass(room(state), 'draft')[0]
-        const onInput = input.props.onInput as
-            (ev:{ currentTarget:{ value:string } }) => void
+    onInput({ currentTarget: { value: 'well hello' } })
 
-        onInput({ currentTarget: { value: 'well hello' } })
-
-        t.equal(
-            state.draft.value,
-            'well hello',
-            'typing reaches the signal the composer reads back'
-        )
-        t.equal(
-            findByClass(room(state), 'send')[0].props.disabled,
-            false,
-            'which is what lets the message be sent at all'
-        )
-    } finally {
-        g.location = previous
-    }
+    t.equal(
+        state.draft.value,
+        'well hello',
+        'typing reaches the signal the composer reads back'
+    )
+    t.equal(
+        findByClass(room(state), 'send')[0].props.disabled,
+        false,
+        'which is what lets the message be sent at all'
+    )
 })
 
 test('Room will not send an empty message', t => {

@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { applyProposals, createGroup } from '../../src/client-state.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
 import { ValidationError } from '../../src/mls-error.js'
@@ -20,7 +21,7 @@ for (const cs of testCiphersuites()) {
             await memberSenderWithExternalInitRejected(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -32,7 +33,7 @@ for (const cs of testCiphersuites()) {
             await newMemberCommitWithoutExternalInitRejected(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

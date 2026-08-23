@@ -1,6 +1,10 @@
 import { type FunctionComponent } from 'preact'
 import { html } from 'htm/preact'
-import { isPersistencePath, isMultiDevicePath } from './routing.js'
+import {
+    isPersistencePath,
+    isMultiDevicePath,
+    isAttachmentsPath
+} from './routing.js'
 
 export interface NavItem {
     label:string
@@ -17,12 +21,13 @@ export function navItems (route:string, basePath:string):NavItem[] {
     const base = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
     const isPersistence = isPersistencePath(route, basePath)
     const isMultiDevice = isMultiDevicePath(route, basePath)
+    const isAttachments = isAttachmentsPath(route, basePath)
 
     return [
         {
             label: 'Main demo',
             href: `${base}/`,
-            active: !isPersistence && !isMultiDevice
+            active: !isPersistence && !isMultiDevice && !isAttachments
         },
         {
             label: 'Persistence',
@@ -33,6 +38,11 @@ export function navItems (route:string, basePath:string):NavItem[] {
             label: 'Multi-device',
             href: `${base}/multi-device`,
             active: isMultiDevice
+        },
+        {
+            label: 'Attachments',
+            href: `${base}/attachments`,
+            active: isAttachments
         }
     ]
 }

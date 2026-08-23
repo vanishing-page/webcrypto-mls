@@ -3,7 +3,8 @@ import type { LogEntry, RoomMessage } from '../protocol.js'
 import { advanceCursor, entryPosition } from './delivery-cursor.js'
 import {
     createDeliveryClient,
-    type DeliveryClient
+    type DeliveryClient,
+    type PageOrigin
 } from './delivery-client.js'
 import type { RealisticState } from './state.js'
 
@@ -43,6 +44,13 @@ export interface ConnectionDeps {
      * exists before it can apply anything to it.
      */
     onControl (msg:RoomMessage):void|Promise<void>
+
+    /**
+     * Where the page was loaded from, passed straight through to the
+     * delivery client. Defaults to the real `location`; see `socketUrl`
+     * for why it can be overridden.
+     */
+    page?:PageOrigin
 }
 
 export function createConnection (deps:ConnectionDeps):DeliveryClient {
@@ -74,6 +82,7 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
 
     const delivery = createDeliveryClient({
         state,
+        page: deps.page,
 
         /**
          * Runs on the first open and on every reconnect. Identity has to

@@ -1,0 +1,58 @@
+{
+	"name": "F.16.1 Two Segment, AES-256-GCM, HKDF-SHA-256, 65536 (Rewrite)",
+	"source": "draft-sullivan-cfrg-raae-02 Appendix F.16.1 + F.22.1 (== 2026-07-06 snapshot E.16.1 + E.20.1)",
+	"protocol_id": "SEAL-RW-v1",
+	"cek_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	"payload_info": {
+		"aead_id": 2,
+		"segment_max": 65536,
+		"kdf_id": 1,
+		"snap_id": 1,
+		"nonce_mode": 0,
+		"epoch_length": 1,
+		"salt_hex": "0404040404040404040404040404040404040404040404040404040404040404"
+	},
+	"schedule": {
+		"commitment_hex": "9285553e10209c27bb5858b621426513b0832f26d7ee813d9dd62c218ce6972a",
+		"payload_key_hex": "bb78da70d5e99d36c78e8a8b1a79b620e4a4250dd6b471024c379917dfbb2de7",
+		"acc_key_hex": "953950ab75bdefd67ef15bbd7665b8afd3c9ced50ce7cb369e789606fc455025"
+	},
+	"segments": [
+		{
+			"index": 0,
+			"is_final": 0,
+			"nonce_hex": "030303030303030303030303",
+			"ciphertext_hex": "1815f12b13f7ee2532f0fcca",
+			"tag_hex": "2597e2f2243b98c4bb7f320dc2f46ce3",
+			"contrib_hex": "0d8b3cb23192377e88232945f623150b1a1c0b61745a4fa39a5f65e162b6e672"
+		},
+		{
+			"index": 1,
+			"is_final": 1,
+			"nonce_hex": "070707070707070707070707",
+			"ciphertext_hex": "f17c9cac3693dcb4bdd524714da804d4c4390056",
+			"tag_hex": "97d4f0d1303a2b112eac5aae081ef6bf",
+			"contrib_hex": "a8e8df627852127e058558353da2def99a83928b4c96ef37a5d0b08068b1a87c"
+		}
+	],
+	"snapshot": {
+		"accumulator_hex": "a563e3d049c025008da67170cb81cbf2809f99ea38cca0943f8fd5610a074e0e",
+		"mask_hex": "946a2744cf3fd572a03993d43470570447d1ce03f4769035a5058780660e5eff",
+		"wrapped_acc_hex": "3109c49486fff0722d9fe2a4fff19cf6c74e57e9ccba30a19a8a52e16c0910f1",
+		"snapshot_tag_hex": "5ce50c9e90db4bbc28297372e401625c2e43203ce8008c452ea4355f0941ef67"
+	},
+	"rewrite_segment_0": {
+		"is_final": 0,
+		"new_nonce_hex": "0b0b0b0b0b0b0b0b0b0b0b0b",
+		"new_ciphertext_hex": "f20adfd4e5ab8016903d7eaa022f65c70a3f9988b1e5",
+		"new_tag_hex": "ff3268f44b36f41c84a2e85d0a975d38",
+		"new_contrib_hex": "d1799e445a84608aae7dfca35bc03813138fd92f58adb6c1fec48907e9a90f9e",
+		"new_accumulator_hex": "7991412622d672f4abf8a4966662e6ea890c4ba4143b59f65b1439878118a7e2",
+		"new_wrapped_acc_hex": "0ff01e750d840c5a613f766c24501ad8995524d6b5d93a8aa0a1e2e2ec4b6e4e",
+		"new_snapshot_tag_hex": "bba55e58311ebbd38d7880a9ebec3d193212c0600ce04aeeb7c18ee62e33b9cc"
+	},
+	"negative_snapverify": {
+		"comment": "F.22.1 — accumulator tampered (a5->a4 in byte 0), snapshot_tag unchanged; SnapVerify must reject.",
+		"tampered_accumulator_hex": "a463e3d049c025008da67170cb81cbf2809f99ea38cca0943f8fd5610a074e0e"
+	}
+}

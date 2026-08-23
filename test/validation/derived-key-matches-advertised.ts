@@ -19,6 +19,7 @@
  * only to a receiver that compares its derived keys against the
  * advertised ones.
  */
+import { skipReason } from '../helpers/skip.js'
 import { test } from '@substrate-system/tapzero'
 import { createGroup, joinGroup, makePskIndex, nextEpochContext } from '../../src/client-state.js'
 import { initializeEpoch } from '../../src/key-schedule.js'
@@ -58,7 +59,7 @@ for (const cs of sampleCiphersuites()) {
             await rejectsMismatchedPathKeys(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -70,7 +71,7 @@ for (const cs of sampleCiphersuites()) {
             await acceptsHonestCommit(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

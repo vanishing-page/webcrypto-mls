@@ -23,6 +23,16 @@ import { CopyValue } from './copy-value.js'
 
 export interface RoomProps {
     state:RealisticState
+
+    /**
+     * Where the page was loaded from -- `location.origin` in the app.
+     * It is a prop rather than a read of `location` because
+     * `window.location` is unforgeable: a test running in a browser
+     * cannot replace it, so the invitation URL could only ever be
+     * asserted against whatever origin the test page happens to have.
+     */
+    origin:string
+
     onApprove (request:PendingRequest):void
     onDeny (identity:string):void
     onRemove (member:Member):void
@@ -51,7 +61,7 @@ const STANDING_TEXT:Record<Standing, string> = {
  * the Node suite.
  */
 export const Room:FunctionComponent<RoomProps> = function (props) {
-    const { state, onApprove, onDeny, onRemove, onSend } = props
+    const { state, origin, onApprove, onDeny, onRemove, onSend } = props
     const roomId = state.roomId.value
     const group = state.group.value
     const draft = state.draft.value
@@ -165,7 +175,7 @@ export const Room:FunctionComponent<RoomProps> = function (props) {
                     </dl>
 
                     ${roomId ? html`<${ShareRoomLink}
-                        url=${roomUrl(location.origin, roomId)}
+                        url=${roomUrl(origin, roomId)}
                         onError=${(err:unknown) => {
                             state.status.value =
                                 `Could not copy the URL: ${err}`

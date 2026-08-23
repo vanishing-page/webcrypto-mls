@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { createGroup } from '../../src/client-state.js'
 import type { Credential } from '../../src/credential.js'
 import type { CiphersuiteImpl, CiphersuiteName } from '../../src/crypto/ciphersuite.js'
@@ -117,7 +118,7 @@ for (const cs of testCiphersuites()) {
             await protectWipesContentKeyOnError(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -129,7 +130,7 @@ for (const cs of testCiphersuites()) {
             await protectWipesSenderDataKey(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -141,7 +142,7 @@ for (const cs of testCiphersuites()) {
             await protectWipesSenderDataKeyOnError(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -153,7 +154,7 @@ for (const cs of testCiphersuites()) {
             await unprotectWipesContentKeyOnError(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -165,7 +166,7 @@ for (const cs of testCiphersuites()) {
             await unprotectWipesSenderDataKey(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -177,7 +178,7 @@ for (const cs of testCiphersuites()) {
             await unprotectWipesSenderDataKeyOnError(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

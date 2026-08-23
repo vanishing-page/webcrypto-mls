@@ -1,0 +1,13 @@
+{
+  "name": "epoch-tree-own-vector",
+  "description": "SEAL-RO-v1 epoch digest tree with 65636-byte plaintext",
+  "configuration": "AES-256-GCM, HKDF-SHA-256, derived nonces, epoch_length 10, snap_id 0x0003",
+  "cek_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "salt_hex": "0404040404040404040404040404040404040404040404040404040404040404",
+  "object_id_hex": "6f776e2d766563746f72",
+  "plaintext_length": 65636,
+  "commitment_hex": "759afff3b11f25f0bca08dcdc799120bbf0b6b718936f41fcd465d181b39d097",
+  "snapshot_hex": "16e751a8f0ae550b66f7546f85f1bae5247c095afb3b8849fc8a373ae21908b0",
+  "first_64_bytes_hex": "0404040404040404040404040404040404040404040404040404040404040404759afff3b11f25f0bca08dcdc799120bbf0b6b718936f41fcd465d181b39d097",
+  "object_sha256_hex": "23446bef99c1817c9b15e504c4667004391899e7973b4d05be5d35fd8223a3bf"
+}

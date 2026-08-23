@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import type { CiphersuiteId, CiphersuiteImpl } from '../../src/crypto/ciphersuite.js'
 import { getCiphersuiteFromId } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
@@ -62,7 +63,7 @@ for (const [index, x] of jsonCommit.map((x, index) => [index, x] as [number, typ
         } catch (error:any) {
         // Skip ciphersuites not supported in the current environment (e.g., X448/Ed448 in browsers)
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError' || error?.name === 'CryptoError' || error?.name === 'DeriveKeyPairError' || error?.message?.includes('SubtleCrypto') || error?.message?.includes('Unrecognized name')) {
-                t.comment(`Skipping: ${error.message}`)
+                t.comment(`Skipping: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -78,7 +79,7 @@ for (const [index, x] of jsonRandom.map((x, index) => [index, x] as [number, typ
         } catch (error:any) {
         // Skip ciphersuites not supported in the current environment (e.g., X448/Ed448 in browsers)
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError' || error?.name === 'CryptoError' || error?.name === 'DeriveKeyPairError' || error?.message?.includes('SubtleCrypto') || error?.message?.includes('Unrecognized name')) {
-                t.comment(`Skipping: ${error.message}`)
+                t.comment(`Skipping: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -94,7 +95,7 @@ for (const [index, x] of jsonWelcome.map((x, index) => [index, x] as [number, ty
         } catch (error:any) {
         // Skip ciphersuites not supported in the current environment (e.g., X448/Ed448 in browsers)
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError' || error?.name === 'CryptoError' || error?.name === 'DeriveKeyPairError' || error?.message?.includes('SubtleCrypto') || error?.message?.includes('Unrecognized name')) {
-                t.comment(`Skipping: ${error.message}`)
+                t.comment(`Skipping: ${skipReason(error)}`)
                 return
             }
             throw error

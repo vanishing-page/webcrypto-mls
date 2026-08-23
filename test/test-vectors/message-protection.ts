@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import json from '../../test_vectors/message-protection.json'
 import { hexToBytes } from '@noble/ciphers/utils.js'
 import type { GroupContext } from '../../src/group-context.js'
@@ -51,7 +52,7 @@ for (const [index, x] of json.entries()) {
                 error?.name === 'DeriveKeyPairError' ||
                 error?.message?.includes('SubtleCrypto') ||
                 error?.message?.includes('Unrecognized name')) {
-                t.comment(`Skipping: ${error.message}`)
+                t.comment(`Skipping: ${skipReason(error)}`)
                 return
             }
             throw error

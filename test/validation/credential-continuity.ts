@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import {
     createGroup,
     joinGroup,
@@ -43,7 +44,7 @@ for (const cs of sampleCiphersuites()) {
             await identityChangeRejected(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (isUnsupported(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -56,7 +57,7 @@ for (const cs of sampleCiphersuites()) {
             await identityChangeAllowed(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (isUnsupported(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -69,7 +70,7 @@ for (const cs of sampleCiphersuites()) {
             await commitPathLeafSeesPriorCredential(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (isUnsupported(error)) {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

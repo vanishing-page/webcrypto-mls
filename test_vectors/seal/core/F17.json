@@ -1,0 +1,57 @@
+{
+	"name": "F.17.1 Two Segment, AES-256-GCM-SIV, HKDF-SHA-256, 65536 (Rewrite)",
+	"source": "draft-sullivan-cfrg-raae-02 Appendix F.17.1 (== 2026-07-06 snapshot E.17.1)",
+	"protocol_id": "SEAL-RW-v1",
+	"cek_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	"payload_info": {
+		"aead_id": 31,
+		"segment_max": 65536,
+		"kdf_id": 1,
+		"snap_id": 1,
+		"nonce_mode": 1,
+		"epoch_length": 0,
+		"salt_hex": "0404040404040404040404040404040404040404040404040404040404040404"
+	},
+	"schedule": {
+		"commitment_hex": "bf20f8c7691934f0ccf767b2a5ac19e467228674414f68d839a6698a3edd1813",
+		"payload_key_hex": "d2f4ae67c4024a3b61b902188a75cdc4757245350393608e8d4af530b91a4411",
+		"acc_key_hex": "18e303acfa725f11d6a75a48723fb408c481e5703032b0e5f1724461f8901bbc",
+		"nonce_base_hex": "8a2860a4c1e733427aaa7aeb"
+	},
+	"segments": [
+		{
+			"index": 0,
+			"is_final": 0,
+			"nonce_hex": "8a2860a4c1e733427aaa7aeb",
+			"segment_key_hex": "a65f10ea805ada25b9f1ef7527383cde423b104e8813edaed5490747633291c6",
+			"ciphertext_hex": "b3b34ccfb3481851057f1eab",
+			"tag_hex": "2d143f398a84cdfd47146c194e1c177c",
+			"contrib_hex": "fce4eed2d488b1ee8994c270cd145202ea63b9fd0c0f7401c5cad41c767e91c6"
+		},
+		{
+			"index": 1,
+			"is_final": 1,
+			"nonce_hex": "8a2860a4c1e733427aaa7ae8",
+			"segment_key_hex": "3cd69f36c405895994a14b8b5aafaf0909517de95d17e6b903cf350fa8769826",
+			"ciphertext_hex": "3392acaffbaaa0224644ee4b0efa53adc0d21628",
+			"tag_hex": "408046d4fb0789a8ae0c41ddb0f66fc3",
+			"contrib_hex": "7e2e00b404bf5962b6220c4196298f4bd25bff62bd9e3230ddd0d344e2b78cc1"
+		}
+	],
+	"snapshot": {
+		"accumulator_hex": "82caee66d037e88c3fb6ce315b3ddd493838469fb1914631181a075894c91d07",
+		"mask_hex": "b0c48fd39186cb0b55dd036ffd1c46ef73c6b282977ecd28e6065cdcc64e36d2",
+		"wrapped_acc_hex": "320e61b541b123876a6bcd5ea6219ba64bfef41d26ef8b19fe1c5b8452872bd5",
+		"snapshot_tag_hex": "44dea9b3ed7c07f3e95bfe10848430f3cc1059251c3cf85d2c2e717634155aaf"
+	},
+	"rewrite_segment_0": {
+		"is_final": 0,
+		"new_nonce_hex": "8a2860a4c1e733427aaa7aeb",
+		"new_ciphertext_hex": "f1cb96bd31369de3d8f26e007bf7175951a0c59330b0",
+		"new_tag_hex": "74105b3b59dd624421f67f295921841d",
+		"new_contrib_hex": "64064c4b612f62cafad57b458158d12508164dc2bef7594568a978f6f2a1ae55",
+		"new_accumulator_hex": "1a284cff65903ba84cf7770417715e6eda4db2a003696b75b579abb210162294",
+		"new_wrapped_acc_hex": "4569c918d7297bcbd7b8d176003f811f72c132b54157b828a16ae0a551ce4b36",
+		"new_snapshot_tag_hex": "a4ad2d7fa8abbbec998af5c3ced3514fe420923c403ba57771bad99a8d03034a"
+	}
+}

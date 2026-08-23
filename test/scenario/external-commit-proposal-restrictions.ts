@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { applyProposals, createGroup, makePskIndex } from '../../src/client-state.js'
 import { addUnappliedProposal } from '../../src/unapplied-proposals.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
@@ -23,7 +24,7 @@ for (const cs of testCiphersuites()) {
             await externalCommitRejectsProposalByReference(cs as CiphersuiteName, t)
         } catch (error:any) {
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error
@@ -35,7 +36,7 @@ for (const cs of testCiphersuites()) {
             await externalCommitRejectsDuplicatePskIds(cs as CiphersuiteName, t)
         } catch (error:any) {
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

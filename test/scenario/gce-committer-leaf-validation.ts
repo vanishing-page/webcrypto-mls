@@ -1,4 +1,5 @@
 import { test } from '@substrate-system/tapzero'
+import { skipReason } from '../helpers/skip.js'
 import { createGroup, joinGroup, makePskIndex } from '../../src/client-state.js'
 import { createCommit } from '../../src/create-commit.js'
 import { createContentCommitSignature } from '../../src/framed-content.js'
@@ -31,7 +32,7 @@ for (const cs of testCiphersuites()) {
         } catch (error:any) {
             // Skip ciphersuites not supported in the current environment (e.g., X448/Ed448 in browsers)
             if (error?.name === 'NotSupportedError' || error?.name === 'DependencyError') {
-                t.comment(`Skipping ${cs}: ${error.message}`)
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
                 return
             }
             throw error

@@ -44,6 +44,8 @@ which means it is usable in the browser.
     + [`indexedDB` Helpers](#indexeddb-helpers)
   * [Catching Up](#catching-up)
     + [Catch Up Example](#catch-up-example)
+- [Encrypted attachments](#encrypted-attachments)
+  * [Things to know](#things-to-know)
 - [API](#api)
   * [`createCommit`](#createcommit)
     + [parameters](#parameters)
@@ -80,6 +82,7 @@ which means it is usable in the browser.
   * [pre-built JS](#pre-built-js)
     + [copy](#copy)
     + [HTML](#html)
+- [See Also](#see-also)
 
 <!-- tocstop -->
 
@@ -116,8 +119,8 @@ The core flow:
    receive encrypted group messages.
 
 An _application message_ is the spec's term for arbitrary user data sent
-through the group (as opposed to a [`proposal`](#proposal) or [`commit`](#commit),
-which carry protocol control data).
+through the group (as opposed to a [`proposal`](#proposal) or
+[`commit`](#commit), which carry protocol control data).
 
 In MLS [(RFC 9420)](https://www.rfc-editor.org/rfc/rfc9420),
 group membership and keying material never change
@@ -274,6 +277,15 @@ The private key **can be non-extractable**, meaning it is never readable.
 >
 
 ```ts
+import {
+    generateKeyPackage,
+    defaultCapabilities,
+    defaultLifetime,
+    getCipherSuite
+} from '@vanishing.page/webcrypto-mls'
+
+const cipherSuite = await getCipherSuite()
+
 // Generate a non-extractable Ed25519 keypair
 // (pass `true` instead of `false` to make it extractable if you need to
 // persist the private key)
@@ -308,7 +320,8 @@ alice.publicPackage.leafNode.signaturePublicKey  // Uint8Array
 MLS gives us
 [forward secrecy](#1-the-message-level-ratchet-secret-tree--hash-ratchet)
 (a stolen key can't decrypt past messages)
-and [post-compromise security](#2-the-epoch-level-ratchet-post-compromise-security)
+and
+[post-compromise security](#2-the-epoch-level-ratchet-post-compromise-security)
 (the group automatically heals to a secure state after a compromise).
 Membership changes atomically rekey the group at `O(log N)` cost, not `O(N)`.
 In short: a naive scheme leaks all past and future traffic the moment one key
@@ -656,6 +669,9 @@ Whenever the state advances, like after `createApplicationMessage`,
 saved state knows the group's current epoch:
 
 ```ts
+import { createApplicationMessage } from '@vanishing.page/webcrypto-mls'
+
+// `saveState` is application code -- see the indexedDB helpers below.
 const { newState, privateMessage } = await createApplicationMessage(
     aliceState,
     new TextEncoder().encode('hello, bob'),
@@ -670,6 +686,11 @@ In a new session, restore the state. The cipher suite is stateless,
 so re-derive it with `getCipherSuite`:
 
 ```ts
+import {
+    createApplicationMessage,
+    getCipherSuite
+} from '@vanishing.page/webcrypto-mls'
+
 const cipherSuite = await getCipherSuite()
 
 // Use the same config that was passed to createGroup/joinGroup.
@@ -692,6 +713,11 @@ await saveState(groupId, aliceState)
 #### `indexedDB` Helpers
 
 ```ts
+import {
+    type ClientConfig,
+    type ClientState
+} from '@vanishing.page/webcrypto-mls'
+
 // Minimal indexedDB helpers keyed by groupId (hex string)
 function saveState (groupId:string, state:ClientState):Promise<void> {
     const { clientConfig: _clientConfig, ...persistableState } = state
@@ -824,13 +850,301 @@ await saveState(groupId, state)
 
 
 
+## Encrypted attachments
 
+Implements [Encrypted Attachments for MLS][attach-spec].
 
--------------------------------
+A file is too big to send through the group as a message, so typically it will
+be encrypted, then go to an object store. The object store holds opaque
+bytes and answers Range requests over them. It is not given a key, and it learns
+nothing about the content. What travels through MLS is an `AttachmentRef` -- a
+few dozen bytes -- small enough to ride in an application message.
+
+Attachments are opt in. You import from subpaths.
+
+```ts
+import {
+    encryptAttachmentForGroup
+} from '@vanishing.page/webcrypto-mls/attachment/writer'
+import {
+    decryptAttachmentStreamForGroup
+} from '@vanishing.page/webcrypto-mls/attachment/reader'
+import {
+    openAttachmentRangeForGroup
+} from '@vanishing.page/webcrypto-mls/attachment/range'
+import {
+    type AttachmentRef,
+    refFromAuthData,
+    refToAuthData
+} from '@vanishing.page/webcrypto-mls/attachment/reference'
+```
+
+### Upload Example
+
+Nothing here is a separate key exchange. The key that seals an attachment
+comes from the ratchet tree the group already maintains.
+
+Every member's copy of the tree produces the same epoch secret, and the key
+schedule expands that into, among other things, an `applicationExportSecret`.
+That secret is the root of the safe-extension exporter tree: sixteen levels,
+one leaf per ComponentID. Attachments take the leaf for their own
+ComponentID, and that component secret plus the objectId expands to the 32
+byte content encryption key. A reader runs the identical walk from their own
+copy of the tree, so no key ever travels with the object, and the object
+store never holds anything that would let it derive one.
+
+Membership in the tree at that epoch is the entire access control story.
+Any leaf is in the tree can recompute the CEK for any objectId in that
+epoch. A commit re-keys the direct path, which moves
+the epoch secret, which moves every attachment key derived beneath it. That
+is why a reference stops decrypting at the next commit
+(see [Things to know](#things-to-know)), and that's why a member who joins at
+epoch N cannot read an attachment sealed in epoch N-1 even though the
+ciphertext is still sitting in the store.
+
+`ObjectStore`, below, is the blob store interface, with methods `put`, `get`,
+`getRange`, and `size`. Function `decodePrivateMessage` unwraps a wire
+message down to its `PrivateMessage`. Function `drain` collects a
+`ReadableStream<Uint8Array>` into one `Uint8Array`.
+
+Every key comes from `state.keySchedule`. The `xForGroup` wrappers
+derive the per-object content encryption key from the current epoch and
+the objectId, use it, and wipe it. A `ClientState` is the only
+secret an application holds.
+
+Sealing and sending is one call plus an upload.
+You can upload a stream instead of a buffer by calling `.readable`. To upload
+a buffer, call `.bytes`.
+
+```ts
+import {
+    type CiphersuiteImpl,
+    type ClientState,
+    createApplicationMessage,
+    encodeMlsMessage
+} from '@vanishing.page/webcrypto-mls'
+import {
+    encryptAttachmentForGroup
+} from '@vanishing.page/webcrypto-mls/attachment/writer'
+import {
+    type AttachmentRef,
+    refToAuthData
+} from '@vanishing.page/webcrypto-mls/attachment/reference'
+
+export async function sendAttachment (
+    state:ClientState,
+    plaintext:Uint8Array,
+    caption:string,
+    store:ObjectStore,
+    cs:CiphersuiteImpl
+):Promise<{
+    newState:ClientState,
+    wire:Uint8Array,
+    ref:AttachmentRef
+}> {
+    // Any unique octets will do. The objectId is not secret; it binds
+    // the CEK to this one object, so reusing one across two files
+    // would reuse a key.
+    const objectId = new Uint8Array(16)
+    globalThis.crypto.getRandomValues(objectId)
+
+    const encrypted = await encryptAttachmentForGroup(
+        state.keySchedule,
+        objectId,
+        plaintext,
+        cs
+    )
+    await store.put(objectId, encrypted.readable)
+
+    const { newState, privateMessage } = await createApplicationMessage(
+        state,
+        new TextEncoder().encode(caption),
+        cs,
+        // add a reference to the encrypted blob
+        // the group is able to decrypt the blob
+        refToAuthData(encrypted.reference)
+    )
+
+    const wire = encodeMlsMessage({
+        privateMessage,
+        wireformat: 'mls_private_message',
+        version: 'mls10'
+    })
+
+    return { newState, wire, ref: encrypted.reference }
+}
+```
+
+---------------------------------------------
+
+### Receive an Attachment
+
+The blob reference is in the application message's authenticated data.
+The sender's signature authenticates it, and the delivery service can route
+on it. **The blob reference is not hidden**.
+
+Processing a message verifies the signature.
+
+The example's own `decodePrivateMessage` unwraps the wire bytes and
+checks the format before anything else touches them:
+
+```ts
+import {
+    type PrivateMessage,
+    decodeMlsMessage
+} from '@vanishing.page/webcrypto-mls'
+
+function decodePrivateMessage (wire:Uint8Array):PrivateMessage {
+    const decoded = decodeMlsMessage(wire, 0)?.[0]
+    if (!decoded || decoded.wireformat !== 'mls_private_message') {
+        throw new Error('expected a private message')
+    }
+    return decoded.privateMessage
+}
+```
+
+```ts
+import {
+    type CiphersuiteImpl,
+    type ClientState,
+    makePskIndex,
+    processPrivateMessage
+} from '@vanishing.page/webcrypto-mls'
+import {
+    decryptAttachmentStreamForGroup
+} from '@vanishing.page/webcrypto-mls/attachment/reader'
+import {
+    type AttachmentRef,
+    refFromAuthData
+} from '@vanishing.page/webcrypto-mls/attachment/reference'
+
+export async function receiveAttachment (
+    state:ClientState,
+    wire:Uint8Array,
+    store:ObjectStore,
+    cs:CiphersuiteImpl
+):Promise<{
+    newState:ClientState,
+    caption:string,
+    ref:AttachmentRef,
+    plaintext:Uint8Array
+}> {
+    const privateMessage = decodePrivateMessage(wire)
+
+    const result = await processPrivateMessage(
+        state,
+        privateMessage,
+        makePskIndex(state, {}),
+        cs
+    )
+    if (result.kind !== 'applicationMessage') {
+        throw new Error('expected an application message')
+    }
+
+    const ref = refFromAuthData(privateMessage.authenticatedData)
+
+    const plain = await decryptAttachmentStreamForGroup(
+        state.keySchedule,
+        ref,
+        store.get(ref.objectId),
+        cs
+    )
+
+    return {
+        newState: result.newState,
+        caption: new TextDecoder().decode(result.message),
+        ref,
+        plaintext: await drain(plain)
+    }
+}
+```
+
+For a seek, `openAttachmentRangeForGroup` reports the ciphertext ranges
+that plaintext range needs. They are not contiguous, so they cannot be
+collapsed into a single request. Turn each into a `bytes=START-END`
+header, fetch them, and hand `decrypt` one stream per range in the same
+order:
+
+```ts
+import {
+    type CiphersuiteImpl,
+    type ClientState
+} from '@vanishing.page/webcrypto-mls'
+import {
+    openAttachmentRangeForGroup
+} from '@vanishing.page/webcrypto-mls/attachment/range'
+import {
+    type AttachmentRef
+} from '@vanishing.page/webcrypto-mls/attachment/reference'
+
+export async function receiveAttachmentRange (
+    state:ClientState,
+    ref:AttachmentRef,
+    range:{ offset:number, length:number },
+    store:ObjectStore,
+    cs:CiphersuiteImpl
+):Promise<{ bytes:Uint8Array, httpRanges:string[] }> {
+    const read = await openAttachmentRangeForGroup(
+        state.keySchedule, ref, range, cs
+    )
+
+    try {
+        const httpRanges = read.ranges.map(r => (
+            `bytes=${r.offset}-${r.offset + r.length - 1}`
+        ))
+        const streams = httpRanges.map(header => (
+            store.getRange(ref.objectId, header)
+        ))
+
+        return { bytes: await drain(read.decrypt(streams)), httpRanges }
+    } finally {
+        read.close()
+    }
+}
+```
+
+See [example/attachment-end-to-end.ts](./example/attachment-end-to-end.ts).
+The test suite runs that file, and the code above is
+copied from it, with each snippet's imports gathered from the top of
+the file. For a version you can click through, see the
+attachments page of the [live demo][demo], wired up in
+[example/attachments-demo.ts](./example/attachments-demo.ts).
+
+[demo]: https://vanishing-page.github.io/webcrypto-mls/attachments
+
+### Things to know
+
+**The objectId is yours to keep unique.** It is 1 to 255 octets, it is
+not secret, and it binds the CEK to one object. It must be unique
+within the epoch and must never be reused across epochs: two objects
+sharing an objectId in the same epoch share a key.
+
+**A reference dies at the next commit.** The CEK comes from the epoch
+that sealed the object, so once the group commits, that object stops
+decrypting for everyone, the sender included. The failure is a plain
+decrypt failure, deliberately indistinguishable from a tampered object,
+so an application cannot tell the two apart and should not try. If an
+attachment has to outlive the epoch, then re-seal it in the new epoch.
+
+**Finish the stream or cancel it.** The stream returned by
+`decryptAttachmentStreamForGroup` owns the CEK and zeroes it when it
+ends, errors, or is cancelled. Walking away from a partly read stream
+runs none of those, and the key stays in memory until the stream is
+collected. Read to the end, or cancel the reader.
+
+**`close()` is not optional, and it is final.** A range read owns the
+CEK it derived; `close()` is what zeroes it. Call it in a `finally`,
+as above. It also makes the read single use: to seek again, open
+another one.
+
+**Two `plaintextLength` types.** `AttachmentRef.plaintextLength` is a
+`bigint`, because the wire format carries a `uint64`. The lower level
+`openObject` takes a `number`. Converting is the caller's job, and a
+file large enough to lose precision in a `number` is one you should be
+streaming anyway.
+
 
 ## API
-
-Some notes about the API.
 
 ### `createCommit`
 
@@ -930,8 +1244,8 @@ throwing away the old keys. In Signal, the two ratchets are:
    only. It can't heal from a compromise, because an attacker who learns
    `chainKey_n` can compute all future chain keys.
 2. **Diffie-Hellman ratchet** -- the "asymmetric ratchet." Each party attaches a
-   fresh DH public key to messages. When you receive a new DH key from your peer,
-   you do a new DH computation and reseed the root key:
+   fresh DH public key to messages. When you receive a new DH key from
+   your peer, you do a new DH computation and reseed the root key:
    `rootKey, chainKey = KDF(rootKey, DH(myNewPriv, theirPub))`.
    This injects fresh entropy the attacker doesn't have, which is what provides
    PCS/healing.
@@ -980,7 +1294,8 @@ the next epoch's secrets:
 
 1. TreeKEM produces the root secret - `commitSecret`.
    The `UpdatePath` in the Commit lets every member derive the same new secret
-   at the root of the ratchet tree. That root value is called the `commitSecret`.
+   at the root of the ratchet tree. That root value is called the
+   `commitSecret`.
    It's the "fresh entropy the attacker doesn't have" -- the
    PCS/healing ingredient.
 2. The **key schedule** is MLS's fixed recipe of HKDF calls that turns one
@@ -1104,7 +1419,8 @@ cryptography.
 
 A proposal is a single, standalone request to change the group state.
 It doesn't take effect on its own; it just gets broadcast and buffered
-(`addUnappliedProposal` in [`create-message.ts:54`](./src/create-message.ts#L51))
+(`addUnappliedProposal` in
+[`create-message.ts:54`](./src/create-message.ts#L51))
 until someone commits it. [`src/proposal.ts:20-90`](./src/proposal.ts#L20)
 shows the variants, each corresponding to one kind of change:
 
@@ -1112,7 +1428,8 @@ shows the variants, each corresponding to one kind of change:
 * Update -- a member rotates their own leaf key material (`LeafNodeUpdate`)
 * Remove -- evict a member by leaf index
 * PSK -- inject an external pre-shared key into the key schedule
-* Reinit -- restart the group under new parameters (version/ciphersuite/extensions)
+* Reinit -- restart the group under new parameters
+  (version/ciphersuite/extensions)
 * ExternalInit -- how an external joiner enters via an external commit
 * GroupContextExtensions -- change the group's extension set
 
@@ -1158,7 +1475,8 @@ an attacker compute the new secrets.
 other means in some cases), but in practice committers usually include one.
 
 Applying all of this -- processing the proposals and the path, then deriving
-the next epoch's keys -- is what [`src/create-commit.ts`](./src/create-commit.ts)
+the next epoch's keys -- is what
+[`src/create-commit.ts`](./src/create-commit.ts)
 does. It's the code that actually advances `keySchedule` and `secretTree` to
 the next epoch.
 
@@ -1399,10 +1717,18 @@ accessible to your web server, then link to them in HTML.
 
 #### copy
 ```sh
-cp ./node_modules/@vanishing.page/webcrypto-mls/dist/index.min.js ./public/mls.min.js
+cp ./node_modules/@vanishing.page/webcrypto-mls/dist/index.min.js \
+    ./public/mls.min.js
 ```
 
 #### HTML
 ```html
 <script type="module" src="/mls.min.js"></script>
 ```
+
+## See Also
+
+* [Encrypted Attachments for MLS][attach-spec]
+* [SEAL Cipher Suites and Instantiations](https://www.ietf.org/archive/id/draft-sullivan-seal-concrete-00.html)
+
+[attach-spec]: https://www.ietf.org/archive/id/draft-sullivan-mls-attachments-01.html

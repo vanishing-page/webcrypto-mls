@@ -13,7 +13,8 @@ import {
 import {
     createDeliveryClient,
     socketUrl,
-    type DeliveryClient
+    type DeliveryClient,
+    type PageOrigin
 } from '../../example-realistic-demo/client/delivery-client.js'
 import { MalformedEntryError } from
     '../../example-realistic-demo/client/malformed-entry.js'
@@ -91,14 +92,21 @@ function makeSocket (url:string):FakeSocket {
 
 interface Fakes {
     sockets:FakeSocket[]
+    page:PageOrigin
     restore ():void
 }
 
+/**
+ * `WebSocket` is an ordinary writable global, so it can be swapped. The
+ * page origin cannot: `window.location` is unforgeable, and assigning
+ * to it in a browser navigates the page instead of replacing it. So the
+ * origin is handed to the code under test as a value rather than
+ * installed, and `page` is what the caller passes along.
+ */
 function installFakes (protocol = 'https:', host = 'demo.test'):Fakes {
     const g = globalThis as any
     const sockets:FakeSocket[] = []
     const prevSocket = g.WebSocket
-    const prevLocation = g.location
 
     // `new` on a function that returns an object yields that object,
     // which is all `createDeliveryClient` asks of the constructor.
@@ -111,13 +119,12 @@ function installFakes (protocol = 'https:', host = 'demo.test'):Fakes {
     ctor.OPEN = OPEN
 
     g.WebSocket = ctor
-    g.location = { protocol, host }
 
     return {
         sockets,
+        page: { protocol, host },
         restore () {
             g.WebSocket = prevSocket
-            g.location = prevLocation
         }
     }
 }
@@ -172,7 +179,8 @@ function harness (opts:{
         },
         onOpen (isReconnect) {
             opens.push(isReconnect)
-        }
+        },
+        page: fakes.page
     })
 
     return { state, client, seen, opens, fakes }
@@ -184,7 +192,7 @@ test('delivery-client - the socket url comes from where the page loaded',
     (t) => {
         const fakes = installFakes('https:', 'demo.test')
         try {
-            t.equal(socketUrl('aB3xK9pQ2m'),
+            t.equal(socketUrl('aB3xK9pQ2m', fakes.page),
                 'wss://demo.test/api/room/aB3xK9pQ2m/ws')
         } finally {
             fakes.restore()
@@ -194,7 +202,7 @@ test('delivery-client - the socket url comes from where the page loaded',
 test('delivery-client - a plain-http page gets a ws socket', (t) => {
     const fakes = installFakes('http:', 'localhost:8787')
     try {
-        t.equal(socketUrl('aB3xK9pQ2m'),
+        t.equal(socketUrl('aB3xK9pQ2m', fakes.page),
             'ws://localhost:8787/api/room/aB3xK9pQ2m/ws')
     } finally {
         fakes.restore()

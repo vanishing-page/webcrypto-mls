@@ -84,12 +84,21 @@ function installFakeIndexedDB (
         }
     }
 
-    const had = 'indexedDB' in globalThis
-    const previous = (globalThis as any).indexedDB;
-    (globalThis as any).indexedDB = fake
+    // In a browser `indexedDB` is an inherited getter-only accessor on
+    // `Window.prototype`, so plain assignment throws. Defining an own
+    // data property shadows it in both runtimes, and restoring means
+    // putting back the own descriptor there was -- or deleting ours and
+    // letting the prototype's accessor show through again.
+    const previous = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB')
+    Object.defineProperty(globalThis, 'indexedDB', {
+        value: fake,
+        writable: true,
+        configurable: true,
+        enumerable: true
+    })
 
     return () => {
-        if (had) (globalThis as any).indexedDB = previous
+        if (previous) Object.defineProperty(globalThis, 'indexedDB', previous)
         else delete (globalThis as any).indexedDB
     }
 }
