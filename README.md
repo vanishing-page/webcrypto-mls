@@ -39,16 +39,26 @@ which means it is usable in the browser.
 - [Scenarios](#scenarios)
   * [Key Rotation](#key-rotation)
     + [What data is transferred?](#what-data-is-transferred)
+      - [Not Transferred](#not-transferred)
     + [Key Rotation Example Code](#key-rotation-example-code)
   * [Persistence](#persistence)
     + [`indexedDB` Helpers](#indexeddb-helpers)
   * [Catching Up](#catching-up)
     + [Catch Up Example](#catch-up-example)
 - [Encrypted attachments](#encrypted-attachments)
+  * [Attachments vs X](#attachments-vs-x)
+  * [Why not put it in the MLS tree](#why-not-put-it-in-the-mls-tree)
+    + [The object store](#the-object-store)
+      - [Random Access](#random-access)
+  * [Attachment Import](#attachment-import)
+  * [Upload Example](#upload-example)
+  * [Receive an Attachment](#receive-an-attachment)
   * [Things to know](#things-to-know)
 - [API](#api)
   * [`createCommit`](#createcommit)
     + [parameters](#parameters)
+      - [`context`](#context)
+      - [`options`](#options)
     + [returns](#returns)
 - [Ratchet](#ratchet)
   * [Double Ratchet](#double-ratchet)
@@ -854,11 +864,84 @@ await saveState(groupId, state)
 
 Implements [Encrypted Attachments for MLS][attach-spec].
 
-A file is too big to send through the group as a message, so typically it will
+### Attachments vs X
+
+Why use an _encrypted attachment_ vs encrypting a blob, then including the
+_decrypt key_ inside an MLS message?
+
+Two things: **where the key comes from**, and **how long it stays useful**.
+
+An attachment key is derived, never transferred. `attachmentCek` starts at
+the current epoch's `applicationExportSecret` and walks sixteen levels of
+`ExpandWithLabel`, one per bit of the 16 bit `ComponentID`, down to the leaf
+that belongs to attachments.
+
+The secret sitting at that leaf is the attachment's component secret: one
+value per epoch, encrypting every attachment the group sends in that epoch. It
+expands with the `objectId` to a 32 byte content encryption key, so each
+object still gets a key of its own.
+
+Every member of the epoch does the same walk and arrives at the same key.
+The key never has to be transferred. There is no second key exchange to run,
+and no per-file key to store, ship, or garbage collect.
+
+A `ComponentID` is the 16 bit number that identifies one consumer of the MLS
+extension API, drawn from an IANA (Internet Assigned Numbers Authority)
+registry with a private-use range. Each component gets its own leaf of the
+exporter tree, and the walk down to it is one way, so a component cannot
+derive any other component's secrets from its own. Attachments use the
+private-use value `0xF001` (`ATTACHMENT_COMPONENT_ID`),
+until the attachments draft receives an IANA assignment.
+
+The MLS message carries an `AttachmentRef` -- objectId, plaintext length,
+a commitment, a locator -- and no key material at all.
+
+### Why not put it in the MLS tree
+
+Putting the key in a message makes a copy of it, and that copy lives as long
+as the message does. Anyone holding that plaintext later -- a member you
+removed, a client that never pruned its local history, a backup, a device
+that gets seized -- can still fetch the ciphertext from the object store and
+read it. The blob's confidentiality ends up resting on message retention
+rather than on group membership.
+
+Deriving the key ties it to the epoch, so attachments get forward
+secrecy with epoch granularity. An attacker who compromises a key at
+epoch N+3 cannot walk back to epoch N's `applicationExportSecret`,
+and therefore cannot decrypt an attachment from epoch `N`.
+
+A file is too big to send through the group as a message. Typically a file will
 be encrypted, then go to an object store. The object store holds opaque
 bytes and answers Range requests over them. It is not given a key, and it learns
 nothing about the content. What travels through MLS is an `AttachmentRef` -- a
 few dozen bytes -- small enough to ride in an application message.
+
+That ref is also the integrity story. It travels signed, inside the MLS
+message. The reader sees the ref, and they can also recompute the blob's
+snapshot themselves, which lets them check that the given blob matches
+the `ref.snapshot` in the MLS message.
+
+
+#### The object store
+
+You have to implement an object store in the application code (it is not part
+of this library). The object store a blob backend such as S3 or a CDN.
+The application uploads the ciphertext produced by `encryptAttachmentForGroup`,
+keyed by the reference's `objectId`. The object store later supplies the
+ciphertext stream to `decryptAttachmentStreamForGroup`.
+
+##### Random Access
+
+The application must turn the ciphertext ranges returned by
+`openAttachmentRangeForGroup` into HTTP `Range` requests and pass each
+response back to this library. The object store holds opaque ciphertext only.
+It receives no CEK or group state and cannot decrypt the object. This library
+does not provide an HTTP server, bucket adapter, or other storage backend.
+`memoryObjectStore` in the example is a small in-memory implementation
+of the expected interface.
+
+
+### Attachment Import
 
 Attachments are opt in. You import from subpaths.
 
@@ -894,7 +977,7 @@ copy of the tree, so no key ever travels with the object, and the object
 store never holds anything that would let it derive one.
 
 Membership in the tree at that epoch is the entire access control story.
-Any leaf is in the tree can recompute the CEK for any objectId in that
+Any leaf in the tree can recompute the CEK for any objectId in that
 epoch. A commit re-keys the direct path, which moves
 the epoch secret, which moves every attachment key derived beneath it. That
 is why a reference stops decrypting at the next commit

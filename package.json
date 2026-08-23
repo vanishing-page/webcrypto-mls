@@ -32,7 +32,7 @@
   ],
   "scripts": {
     "lint": "eslint \"./**/*.{ts,js}\"",
-  "typecheck": "tsc -p tsconfig.json --noEmit --listFiles false && tsc -p tsconfig.scripts.json --noEmit --listFiles false",
+    "typecheck": "tsc -p tsconfig.json --noEmit --listFiles false && tsc -p tsconfig.scripts.json --noEmit --listFiles false",
     "test": "npm run test:node",
     "test:checks": "node scripts/check-attachment-invariants.mjs && node scripts/check-vector-determinism.mjs && node scripts/check-signal-batching.mjs && node scripts/check-readme-attachments.mjs && node scripts/check-audit-closed.mjs",
     "check:style": "node scripts/check-house-style.mjs",
@@ -56,7 +56,7 @@
     "deploy:realistic": "npm run build:realistic && wrangler deploy -c example-realistic-demo/wrangler.jsonc",
     "start:realistic": "mkdir -p example-realistic-demo/public && concurrently -k -n worker,client -c blue,green \"npm run worker:realistic\" \"npm run dev:realistic\"",
     "start": "vite",
-    "toc": "markdown-toc --maxdepth 4 -i README.md",
+    "toc": "markdown-toc --maxdepth 5 -i README.md",
     "preversion": "npm run lint",
     "version": "npm run toc && auto-changelog -p --template keepachangelog --breaking-pattern 'BREAKING CHANGE:' && git add CHANGELOG.md README.md",
     "postversion": "git push --follow-tags && npm publish",

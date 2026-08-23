@@ -23,6 +23,10 @@
     --color-transparent: transparent;
 }
 
+h1 {
+    margin-bottom: 1rem;
+}
+
 body {
     color: var(--color-text);
     font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
