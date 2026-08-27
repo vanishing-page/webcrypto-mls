@@ -1,3 +1,25 @@
+export type DemoPage =
+    | { kind:'main'; showAttachments:boolean }
+    | { kind:'persistence' }
+    | { kind:'multi-device' }
+
+/** Select the hook-free page composition for the current client-side route. */
+export function selectDemoPage (
+    href:string,
+    basePath:string
+):DemoPage {
+    if (isPersistencePath(href, basePath)) {
+        return { kind: 'persistence' }
+    }
+    if (isMultiDevicePath(href, basePath)) {
+        return { kind: 'multi-device' }
+    }
+    return {
+        kind: 'main',
+        showAttachments: isAttachmentsPath(href, basePath)
+    }
+}
+
 /**
  * True when `href` (a pathname, optionally with a query string) points at
  * the client-side-routed persistence demo page under `<basePath>/persistence`,

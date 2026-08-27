@@ -5,6 +5,8 @@ import {
     sliceRanges,
     errorStatus,
     releasePlayback,
+    attachmentScope,
+    sameAttachmentScope,
     type PlaybackResources
 } from '../../example/attachment-plan.js'
 import { SAMPLE_RATE } from '../../example/attachment-audio.js'
@@ -25,6 +27,29 @@ import type { CiphersuiteImpl } from '../../src/crypto/ciphersuite.js'
  * exercised through the exported functions, so none of these tests
  * touch preact or rendered markup.
  */
+
+test('attachment scopes require a group and epoch', (t) => {
+    t.equal(attachmentScope(null, 0n), null,
+        'a missing group is unusable')
+    t.equal(attachmentScope(new Uint8Array([1]), null), null,
+        'a missing epoch is unusable')
+})
+
+test('attachment scopes compare group bytes and bigint epochs', (t) => {
+    const left = attachmentScope(new Uint8Array([1, 2]), 3n)!
+    const same = attachmentScope(new Uint8Array([1, 2]), 3n)!
+    const otherGroup = attachmentScope(new Uint8Array([1, 3]), 3n)!
+    const otherEpoch = attachmentScope(new Uint8Array([1, 2]), 4n)!
+
+    t.equal(sameAttachmentScope(left, same), true,
+        'equal group bytes and epoch match')
+    t.equal(sameAttachmentScope(left, otherGroup), false,
+        'different group bytes do not match')
+    t.equal(sameAttachmentScope(left, otherEpoch), false,
+        'different epochs do not match')
+    t.equal(sameAttachmentScope(left, null), false,
+        'a missing scope does not match')
+})
 
 let cs:CiphersuiteImpl
 
