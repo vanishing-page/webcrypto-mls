@@ -104,6 +104,26 @@ The empty panel has no encrypted bytes, reference, group snapshot, reader, or
 audio context. Its progress is zero. Its status tells the user to create a
 group when none exists and reads `Ready` when a group is available.
 
+The panel will have an explicit phase:
+
+* `idle`, with or without a current generated attachment;
+* `generating`;
+* `playing`; or
+* `seeking`.
+
+Only one action may own the panel at a time. Starting Generate clears any
+previous generated attachment before entering `generating`. Play and Seek can
+start only from `idle`, and each enters its matching phase before its first
+await. Generate cannot run twice, and playback cannot start while generation
+is in progress.
+
+`AttachmentsDemo` will create its component-local signals with `useSignal`.
+The functions that mutate those signals will be attached to an
+`AttachmentState` object in `example/attachment-state.ts`. The component will
+delegate Generate, Play, Seek, Stop, scope reset, and unmount cleanup to that
+object. This follows the demo's State-object convention and leaves the
+lifecycle testable without rendering a component.
+
 `Generate` will read the representative group and ciphersuite at the start of
 the action. It will encrypt with that group's key schedule and record the
 current group and epoch scope beside the result. It will publish the encrypted
@@ -134,24 +154,38 @@ resource-release path with Stop and unmount cleanup.
 
 Group actions and attachment work are asynchronous. A group can advance while
 generation, range setup, or playback is awaiting another operation. The panel
-will use an operation generation or equivalent cancellation token. Reset will
-invalidate the token before releasing resources.
+will assign a generation token to each action. Reset and Stop will invalidate
+the active token before releasing resources. A Stop during range setup must
+prevent that setup from later creating a reader or starting audio.
 
 Every asynchronous action will check that token and the recorded group scope
-before it publishes results. A stale action may clean up resources that it
-owns, but it must not restore old bytes, progress, or status after reset.
+after every await and before it publishes results. A stale action must clean up
+every resource it owns, and it must not restore old bytes, progress, phase, or
+status after Stop or reset.
+
+Readers, range reads, and audio contexts belong to the operation that created
+them. An operation will keep each new resource local until it confirms that
+its token and scope are current. It may then transfer the resource to a shared
+playback slot tagged with that token so Stop can release it. Cleanup for one
+token must never cancel or close resources tagged with a later token.
+
+Every exit path must release resources that have not been transferred. A stale
+or failed sequential read must cancel its reader. A stale or failed range read
+must call `close()`, even if it never called `decrypt()`. These steps are
+mandatory because the attachment wrappers wipe their derived CEKs only when a
+stream ends or is cancelled, or when a range read closes.
 
 Stop applies only to playback in the current scope. It clears playback
 resources and progress but keeps the generated attachment available for
-another Play or Seek. An epoch reset clears both playback and the generated
-attachment.
+another Play or Seek. It returns the phase to `idle` after cleanup. An epoch
+reset clears both playback and the generated attachment.
 
 ## Controls and status
 
-`Generate` will be disabled until both a visible group and ciphersuite exist.
-It will also be disabled while playback is active. `Play` and `Seek` will be
-disabled until a current attachment exists. `Stop` will be enabled only during
-playback.
+`Generate` will be enabled only in `idle` when both a visible group and
+ciphersuite exist. `Play` and `Seek` will be enabled only in `idle` when a
+current attachment exists. `Stop` will be enabled in `playing` and `seeking`,
+including while either action is still setting up its reader or audio context.
 
 The card will retain its two live regions for operation status and decrypted
 segment progress. Reset status will distinguish these states:
@@ -178,7 +212,9 @@ existing responsive behavior.
 
 The existing `errorStatus` mapping remains the user-facing error path for
 generation, decryption, range, and playback failures. A failed action must
-leave the controls in a retryable state.
+release its operation-local resources, return the phase to `idle`, and leave
+the controls in a retryable state. Its status write is allowed only while its
+token and scope are still current.
 
 Reset, Stop, and unmount may race a reader or audio context that has already
 closed. The existing `releasePlayback` behavior tolerates both cases. Cleanup
@@ -198,6 +234,18 @@ Plain tests for `example/attachment-plan.ts` will cover:
 * replacing a `ClientState` inside the same scope does not force a reset; and
 * a missing group has no usable attachment scope.
 
+Plain tests for `example/attachment-state.ts` will use deferred promises and
+fake readers, range reads, and audio contexts. They will cover:
+
+* Generate cannot overlap another Generate, Play, or Seek;
+* Play and Seek cannot overlap each other;
+* reset during encryption prevents stale bytes and status from publishing;
+* Stop during stream or range setup prevents playback from starting;
+* stale progress and completion callbacks cannot update the panel;
+* a stale sequential reader is cancelled exactly once;
+* a stale range read is closed exactly once, even before `decrypt()`; and
+* an old operation cannot release resources owned by a newer token.
+
 Tests for `selectDemoPage` will verify that `/attachments` selects the main
 demo with the panel enabled, while `/` selects the main demo without it. They
 will also pin the existing persistence and multi-device selections. The tests
@@ -211,17 +259,21 @@ test-only constructor.
 Implementation verification will run:
 
 ```sh
+npm run test:checks
 npm run test:unit
+npm run test:browser
 npm run typecheck
 npx tsc -p example-realistic-demo/tsconfig.json --noEmit
 npm run check:style
 npm run build-example
 grep -o 'window\.state=' public/assets/*.js
+npm run build:realistic
+grep -o 'window\.state=' example-realistic-demo/public/assets/*.js
 ```
 
-The final grep must print nothing. Browser verification will check the main
-and attachments routes at desktop and narrow widths. It will also create a
-group, generate audio, advance the epoch, and confirm that the audio panel
+Both grep commands must print nothing. Browser verification will check the
+main and attachments routes at desktop and narrow widths. It will also create
+a group, generate audio, advance the epoch, and confirm that the audio panel
 returns to its empty state while the tree and membership controls remain.
 
 ## Acceptance criteria
@@ -246,6 +298,8 @@ returns to its empty state while the tree and membership controls remain.
   playback and clears generated attachment state.
 * A normal application message does not clear the attachment.
 * An asynchronous action from an old scope cannot repopulate cleared state.
+* Stop during playback setup prevents that operation from later starting.
+* Every stale or failed read releases the CEK-owning resource it created.
 
 ### attachments-demo-composition.AC4: UI quality
 
@@ -259,10 +313,12 @@ returns to its empty state while the tree and membership controls remain.
 * `example/index.ts`
 * `example/attachments-demo.ts`
 * `example/attachment-plan.ts`
+* `example/attachment-state.ts`, new
 * `example/style.css`
 * `example/attachment-group.ts`, removed
 * `example/routing.ts`
 * `test/example/attachment-plan.ts`
+* `test/example/attachment-state.ts`, new
 * `test/example/attachment-group.ts`
 * `test/example/routing.ts`
 * `test/helpers/attachment-group.ts`

@@ -10,7 +10,7 @@ import {
     type PlaybackResources
 } from '../../example/attachment-plan.js'
 import { SAMPLE_RATE } from '../../example/attachment-audio.js'
-import { createDemoGroup } from '../../example/attachment-group.js'
+import { createDemoGroup } from '../helpers/attachment-group.js'
 import { AttachmentError } from '../../src/attachment/error.js'
 import { getCipherSuite } from
     '../../src/crypto/get-ciphersuite-impl.js'
