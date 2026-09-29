@@ -299,6 +299,18 @@ export async function applyUpdatePath (
 
     if (hasDuplicateKeyWithinPath) { throw new ValidationError('Public keys in the UpdatePath must be distinct from each other') }
 
+    // the committer's new leaf key is a node of the new tree too, so it
+    // must not equal any key on its own UpdatePath either; the join-time
+    // duplicate-key check would otherwise refuse the resulting tree
+    const leafKeyOnPath = path.nodes.some((node) =>
+        constantTimeEqual(node.hpkePublicKey, path.leafNode.hpkePublicKey))
+
+    if (leafKeyOnPath) {
+        throw new ValidationError(
+            'LeafNode public key may not appear in the UpdatePath',
+        )
+    }
+
     const copy = tree.slice()
 
     copy[leafToNodeIndex(senderLeafIndex)] = { nodeType: 'leaf', leaf: path.leafNode }

@@ -26,6 +26,7 @@ import type { ExternalSender } from '../../src/external-sender.js'
 import { encodeExternalSenders } from '../../src/external-sender.js'
 import type { Extension } from '../../src/extension.js'
 import { proposeAddExternal } from '../../src/external-proposal.js'
+import { acceptAll } from '../../src/incoming-message-action.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
 import { testClientConfig } from '../helpers/client-config.js'
 
@@ -137,6 +138,7 @@ async function externalAddProposalTest (cipherSuite:CiphersuiteName, t:any) {
         addCharlieProposal.publicMessage,
         emptyPskIndex,
         impl,
+        acceptAll,
     )
 
     aliceGroup = aliceProcessCharlieProposalResult.newState
@@ -146,6 +148,7 @@ async function externalAddProposalTest (cipherSuite:CiphersuiteName, t:any) {
         addCharlieProposal.publicMessage,
         emptyPskIndex,
         impl,
+        acceptAll,
     )
 
     bobGroup = bobProcessCharlieProposalResult.newState

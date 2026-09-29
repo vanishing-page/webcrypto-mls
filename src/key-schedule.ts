@@ -7,7 +7,6 @@ import { extractWelcomeSecret } from './group-info.js'
 
 export interface KeySchedule {
     senderDataSecret:Uint8Array
-    encryptionSecret:Uint8Array
     exporterSecret:Uint8Array
     externalSecret:Uint8Array
     confirmationKey:Uint8Array
@@ -18,8 +17,18 @@ export interface KeySchedule {
     applicationExportSecret:Uint8Array
 }
 
-export interface EpochSecrets {
+/**
+ * `encryptionSecret` is handed to the caller rather than kept on
+ * `KeySchedule`: it regenerates the whole secret tree, including every
+ * consumed generation, so it must not live for the epoch. The caller
+ * allocated it, passes it to `createSecretTree`, then zeroes it.
+ */
+export interface DerivedKeySchedule {
     keySchedule:KeySchedule
+    encryptionSecret:Uint8Array
+}
+
+export interface EpochSecrets extends DerivedKeySchedule {
     joinerSecret:Uint8Array
     welcomeSecret:Uint8Array
 }
@@ -42,7 +51,7 @@ export async function deriveKeySchedule (
     pskSecret:Uint8Array,
     groupContext:GroupContext,
     kdf:Kdf,
-) {
+):Promise<DerivedKeySchedule> {
     const epochSecret = await extractEpochSecret(
         groupContext,
         joinerSecret,
@@ -50,13 +59,27 @@ export async function deriveKeySchedule (
         pskSecret
     )
 
-    return await initializeKeySchedule(epochSecret, kdf)
+    return await deriveEpochKeys(epochSecret, kdf)
 }
 
+/**
+ * Derives the epoch's `KeySchedule` alone, for callers that build no
+ * secret tree. The encryption secret is wiped before returning.
+ */
 export async function initializeKeySchedule (
     epochSecret:Uint8Array,
     kdf:Kdf,
 ):Promise<KeySchedule> {
+    const { keySchedule, encryptionSecret } = await deriveEpochKeys(
+        epochSecret, kdf)
+    encryptionSecret.fill(0)
+    return keySchedule
+}
+
+export async function deriveEpochKeys (
+    epochSecret:Uint8Array,
+    kdf:Kdf,
+):Promise<DerivedKeySchedule> {
     const newInitSecret = await deriveSecret(epochSecret, 'init', kdf)
     const senderDataSecret = await deriveSecret(epochSecret, 'sender data', kdf)
     const encryptionSecret = await deriveSecret(epochSecret, 'encryption', kdf)
@@ -77,7 +100,6 @@ export async function initializeKeySchedule (
     const newKeySchedule:KeySchedule = {
         initSecret: newInitSecret,
         senderDataSecret,
-        encryptionSecret,
         exporterSecret,
         externalSecret,
         confirmationKey,
@@ -87,7 +109,7 @@ export async function initializeKeySchedule (
         applicationExportSecret,
     }
 
-    return newKeySchedule
+    return { keySchedule: newKeySchedule, encryptionSecret }
 }
 
 export async function initializeEpoch (
@@ -107,12 +129,12 @@ export async function initializeEpoch (
     const welcomeSecret = await extractWelcomeSecret(
         joinerSecret, pskSecret, kdf)
 
-    const newKeySchedule:KeySchedule = await deriveKeySchedule(
+    const derived = await deriveKeySchedule(
         joinerSecret,
         pskSecret,
         groupContext,
         kdf
     )
 
-    return { welcomeSecret, joinerSecret, keySchedule: newKeySchedule }
+    return { welcomeSecret, joinerSecret, ...derived }
 }

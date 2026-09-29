@@ -18,6 +18,10 @@ import {
 } from '../../example-realistic-demo/client/delivery-client.js'
 import { MalformedEntryError } from
     '../../example-realistic-demo/client/malformed-entry.js'
+import { EntryProcessingError } from
+    '../../example-realistic-demo/client/commit-verdict.js'
+import type { ClientState } from '../../src/client-state.js'
+import { bytesToBase64url } from '../../src/index.js'
 
 /**
  * `delivery-client.ts` is the only module in the client that touches a
@@ -505,6 +509,78 @@ test('delivery-client - a commit that is not an MLS message is skipped',
             h.fakes.restore()
         }
     })
+
+// security-audit-2026-09.md H6
+
+const CREATOR_KEY = new Uint8Array([7, 7, 7, 7])
+const CREATOR = bytesToBase64url(CREATOR_KEY)
+const GROUP_ID = new Uint8Array([9, 8, 7])
+
+/**
+ * Only the fields `onError` reads: the epoch and group id this client is
+ * at, and the leaf-0 signature key it takes the creator from.
+ */
+function groupAtEpoch (epoch:bigint):ClientState {
+    return {
+        groupContext: { epoch, groupId: GROUP_ID },
+        ratchetTree: [{
+            nodeType: 'leaf',
+            leaf: {
+                signaturePublicKey: CREATOR_KEY,
+                credential: { credentialType: 'basic', identity: CREATOR_KEY }
+            }
+        }]
+    } as unknown as ClientState
+}
+
+/** Run a failing commit from the creator framed at `framedEpoch`. */
+async function failedCommit (framedEpoch:bigint) {
+    const applied:number[] = []
+    const h = harness({
+        async applyEntry (e) {
+            if (e.seq === 1) {
+                throw new EntryProcessingError(
+                    { epoch: framedEpoch, groupId: GROUP_ID },
+                    new Error('bad epoch')
+                )
+            }
+            applied.push(e.seq)
+        }
+    })
+    try {
+        h.state.group.value = groupAtEpoch(5n)
+        h.client.queue.push([
+            { ...entry(1, 'commit'), sender: CREATOR },
+            entry(2, 'application')
+        ])
+        await h.client.queue.idle()
+        return {
+            applied,
+            cursor: h.state.cursor.value,
+            stopped: h.client.queue.stopped,
+            status: h.state.status.value
+        }
+    } finally {
+        h.client.close()
+        h.fakes.restore()
+    }
+}
+
+test('delivery-client - a replayed commit is skipped past', async (t) => {
+    const skipped = await failedCommit(4n)
+    const stopped = await failedCommit(5n)
+
+    t.equal(skipped.stopped, false, 'an old commit does not halt the room')
+    t.equal(skipped.cursor, 1, 'the cursor moved past the skipped commit')
+    t.deepEqual(skipped.applied, [2], 'and the entry behind it applied')
+
+    t.equal(stopped.stopped, true, 'a current commit from the creator stops')
+    t.equal(stopped.cursor, 0, 'and leaves the cursor where it was')
+    t.deepEqual(stopped.applied, [], 'nothing after it was applied')
+
+    t.notEqual(skipped.status, stopped.status,
+        'the status tells a skipped commit apart from a fatal one')
+})
 
 test('delivery-client - closing during a pending reconnect says closed',
     async (t) => {

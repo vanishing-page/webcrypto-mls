@@ -10,6 +10,8 @@ import {
     MAX_CREATOR_TOKEN_LENGTH,
     MAX_PAYLOAD_LENGTH,
     MAX_WIRE_MESSAGE_LENGTH,
+    MAX_PROOF_LENGTH,
+    MAX_CHALLENGE_LENGTH,
 } from '../../example-realistic-demo/protocol.js'
 
 /**
@@ -340,6 +342,13 @@ test('isRoomMessage - error not-member', (t) => {
     t.ok(isRoomMessage({
         type: 'error',
         reason: 'not-member'
+    }))
+})
+
+test('isRoomMessage - error commit-not-creator', (t) => {
+    t.ok(isRoomMessage({
+        type: 'error',
+        reason: 'commit-not-creator'
     }))
 })
 
@@ -946,6 +955,10 @@ test('isErrorReason - rate-limited', (t) => {
     t.ok(isErrorReason('rate-limited'))
 })
 
+test('isErrorReason - commit-not-creator', (t) => {
+    t.ok(isErrorReason('commit-not-creator'))
+})
+
 test('isErrorReason - reject near-miss', (t) => {
     t.ok(!isErrorReason('room-exist'))
 })
@@ -1143,4 +1156,98 @@ test('isRoomMessage - roster identity over the limit', (t) => {
  */
 test('the frame wall leaves room for a maximum-size payload', (t) => {
     t.ok(MAX_WIRE_MESSAGE_LENGTH > MAX_PAYLOAD_LENGTH)
+})
+
+// H4 -- the identity proof and the challenge it answers
+
+test('isClientMessage - create and hello with a proof', (t) => {
+    t.ok(isClientMessage({ type: 'create', identity: 'k1', proof: 'sig' }))
+    t.ok(isClientMessage({
+        type: 'hello',
+        identity: 'k1',
+        cursor: 0,
+        proof: 'sig'
+    }))
+})
+
+test('isClientMessage - a proof at its bound is legal', (t) => {
+    const proof = 'a'.repeat(MAX_PROOF_LENGTH)
+    t.ok(isClientMessage({ type: 'create', identity: 'k1', proof }))
+    t.ok(isClientMessage({ type: 'hello', identity: 'k1', cursor: 0, proof }))
+})
+
+test('isClientMessage - a proof over its bound is refused', (t) => {
+    const proof = 'a'.repeat(MAX_PROOF_LENGTH + 1)
+    t.ok(!isClientMessage({ type: 'create', identity: 'k1', proof }))
+    t.ok(!isClientMessage({
+        type: 'hello',
+        identity: 'k1',
+        cursor: 0,
+        proof
+    }))
+})
+
+test('isClientMessage - a proof that is not a string is refused', (t) => {
+    t.ok(!isClientMessage({ type: 'create', identity: 'k1', proof: 7 }))
+    t.ok(!isClientMessage({
+        type: 'hello',
+        identity: 'k1',
+        cursor: 0,
+        proof: {}
+    }))
+})
+
+test('isRoomMessage - challenge', (t) => {
+    t.ok(isRoomMessage({ type: 'challenge', challenge: 'c1' }))
+    t.ok(isRoomMessage({
+        type: 'challenge',
+        challenge: 'a'.repeat(MAX_CHALLENGE_LENGTH)
+    }), 'at its bound')
+    t.ok(!isRoomMessage({
+        type: 'challenge',
+        challenge: 'a'.repeat(MAX_CHALLENGE_LENGTH + 1)
+    }), 'over its bound')
+    t.ok(!isRoomMessage({ type: 'challenge' }), 'missing')
+    t.ok(!isRoomMessage({ type: 'challenge', challenge: 1 }), 'not a string')
+})
+
+test('isErrorReason - bad-proof', (t) => {
+    t.ok(isErrorReason('bad-proof'))
+})
+
+test('isRoomMessage - error bad-proof', (t) => {
+    t.ok(isRoomMessage({ type: 'error', reason: 'bad-proof' }))
+})
+
+// Paginated replay
+
+test('isRoomMessage - a log page says whether more remain', (t) => {
+    t.ok(isRoomMessage({ type: 'log', entries: [], more: true }))
+    t.ok(isRoomMessage({ type: 'log', entries: [], more: false }))
+    t.ok(!isRoomMessage({ type: 'log', entries: [], more: 'yes' }),
+        'more is a boolean when present')
+})
+
+test('isClientMessage - replay asks for the page after a cursor', (t) => {
+    t.ok(isClientMessage({ type: 'replay', cursor: 12 }))
+    t.ok(!isClientMessage({ type: 'replay' }), 'a cursor is required')
+    t.ok(!isClientMessage({ type: 'replay', cursor: '12' }))
+    t.ok(!isClientMessage({ type: 'replay', cursor: Infinity }))
+})
+
+// The log's volume caps each have their own reason (classifyMlsWrite).
+test('isErrorReason - log-full', (t) => {
+    t.ok(isErrorReason('log-full'))
+})
+
+test('isErrorReason - log-too-large', (t) => {
+    t.ok(isErrorReason('log-too-large'))
+})
+
+test('isRoomMessage - error log-full', (t) => {
+    t.ok(isRoomMessage({ type: 'error', reason: 'log-full' }))
+})
+
+test('isRoomMessage - error log-too-large', (t) => {
+    t.ok(isRoomMessage({ type: 'error', reason: 'log-too-large' }))
 })

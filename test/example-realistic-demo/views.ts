@@ -27,6 +27,8 @@ import { Persistence } from
 import { Gone } from '../../example-realistic-demo/client/views/gone.js'
 import { Explainer, ROOM_STEPS } from
     '../../example-realistic-demo/client/views/explainer.js'
+import type { Decrypted } from
+    '../../example-realistic-demo/client/timeline.js'
 import { createRealisticState, type SentMessage } from
     '../../example-realistic-demo/client/state.js'
 import type { Member } from
@@ -1274,7 +1276,12 @@ test('Room says plainly when this client was removed', t => {
  */
 function chatRoom (opts:{
     entries?:LogEntry[]
+
+    /** Plaintexts, each credited to the sender its entry names. */
     decrypted?:Record<number, string>
+
+    /** Plaintexts with the sender MLS authenticated, used verbatim. */
+    authenticated?:Record<number, Decrypted>
     outbound?:SentMessage[]
     draft?:string
     joinCursor?:number
@@ -1286,7 +1293,13 @@ function chatRoom (opts:{
 
     state.roomId.value = 'abcdeFGH12'
     state.entries.value = opts.entries ?? []
-    state.decrypted.value = opts.decrypted ?? {}
+    const credited:Record<number, Decrypted> = {}
+    for (const [seq, text] of Object.entries(opts.decrypted ?? {})) {
+        const found = state.entries.value
+            .find(e => e.seq === Number(seq))
+        credited[Number(seq)] = { text, sender: found?.sender ?? '' }
+    }
+    state.decrypted.value = opts.authenticated ?? credited
     state.outbound.value = opts.outbound ?? []
     state.draft.value = opts.draft ?? ''
     state.joinCursor.value = opts.joinCursor ?? 0
@@ -1332,6 +1345,44 @@ test('Room renders a decrypted message with the sender\'s name', t => {
 })
 
 // realistic-demo.AC6.3 / AC6.4 -- placeholders, through the pure fold
+
+// H5 -- a room that misnames the sender is marked, not believed
+
+test('Room marks a message whose room sender disagrees with MLS', t => {
+    // The room says Alice sent seq 1; MLS says Bob did. Seq 2 agrees.
+    const tree = chatRoom({
+        entries: [appEntry(1, aliceIdentity), appEntry(2, bobIdentity)],
+        authenticated: {
+            1: { text: 'forged', sender: bobIdentity },
+            2: { text: 'honest', sender: bobIdentity }
+        }
+    })
+
+    const messages = findByClass(tree, 'message')
+    const flagged = messages.find(node => node.props['data-seq'] === 1)
+    const plain = messages.find(node => node.props['data-seq'] === 2)
+
+    t.equal(
+        flagged?.props['data-mismatch'],
+        true,
+        'the disagreeing message carries the mark'
+    )
+    t.equal(
+        findByClass(flagged ?? tree, 'mismatch-mark').length,
+        1,
+        'as a real element'
+    )
+    t.equal(
+        plain ? plain.props['data-mismatch'] : 'no row',
+        undefined,
+        'the agreeing one does not'
+    )
+    t.equal(
+        plain ? findByClass(plain, 'mismatch-mark').length : -1,
+        0,
+        'and renders no mark element'
+    )
+})
 
 test('Room renders unreadable entries as counted placeholders', t => {
     const tree = chatRoom({

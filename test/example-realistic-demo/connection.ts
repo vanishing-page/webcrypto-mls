@@ -125,6 +125,8 @@ interface Harness {
     socket ():FakeSocket
     /** Deliver a room message down the socket, as the room would. */
     deliver (msg:RoomMessage):void
+    /** Deliver this socket's challenge and let the proof resolve. */
+    challenge (challenge?:string):Promise<void>
     sent ():any[]
     stop ():void
 }
@@ -135,6 +137,7 @@ function harness (opts:{
     joinRequest?:string|null
     applyEntry? (e:LogEntry):Promise<void>
     onControl? (msg:RoomMessage):void|Promise<void>
+    prove? (challenge:string):Promise<string>
 } = {}):Harness {
     const fakes = installFakes()
     const state = createRealisticState()
@@ -155,6 +158,7 @@ function harness (opts:{
             control.push(msg)
             return opts.onControl?.(msg)
         },
+        prove: opts.prove ?? (async (challenge) => `proof-of-${challenge}`),
         page: fakes.page
     })
 
@@ -172,6 +176,10 @@ function harness (opts:{
         deliver (msg) {
             socket().delivers(JSON.stringify(msg))
         },
+        async challenge (challenge = 'chal-1') {
+            socket().delivers(JSON.stringify({ type: 'challenge', challenge }))
+            await tick()
+        },
         sent () {
             return socket().sent.map(s => JSON.parse(s))
         },
@@ -184,53 +192,126 @@ function harness (opts:{
 
 // realistic-demo.AC10.4 -- the open hook
 
-test('connection - an open with no identity says nothing', (t) => {
+test('connection - an open with no identity says nothing', async (t) => {
     const h = harness({ identity: null })
     try {
         h.client.connect('aB3xK9pQ2m')
         h.socket().opened()
+        await h.challenge()
         t.deepEqual(h.sent(), [], 'nothing was written')
     } finally {
         h.stop()
     }
 })
 
-test('connection - a creating client sends create, not hello', (t) => {
-    const h = harness({ isCreating: true })
-    try {
-        h.client.connect('aB3xK9pQ2m')
-        h.socket().opened()
-        t.deepEqual(h.sent(), [{ type: 'create', identity: 'alice-key' }])
-    } finally {
-        h.stop()
-    }
-})
+test('connection - a creating client sends create, not hello',
+    async (t) => {
+        const h = harness({ isCreating: true })
+        try {
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-1')
+            t.deepEqual(h.sent(), [{
+                type: 'create',
+                identity: 'alice-key',
+                proof: 'proof-of-chal-1'
+            }], 'create carries a proof over the challenge')
+        } finally {
+            h.stop()
+        }
+    })
 
-test('connection - a joining client says hello from its cursor', (t) => {
-    const h = harness()
-    try {
-        h.state.cursor.value = 7
-        h.client.connect('aB3xK9pQ2m')
-        h.socket().opened()
-        t.deepEqual(h.sent(), [{
-            type: 'hello',
-            identity: 'alice-key',
-            cursor: 7
-        }], 'no creatorToken when there is none')
+test('connection - nothing is said on open before the challenge',
+    async (t) => {
+        for (const opts of [
+            { isCreating: true },
+            { joinRequest: 'kp-b64' }
+        ]) {
+            const h = harness(opts)
+            try {
+                h.client.connect('aB3xK9pQ2m')
+                h.socket().opened()
+                await tick()
+                t.deepEqual(h.sent(), [],
+                    'the room has not issued a challenge to answer')
+            } finally {
+                h.stop()
+            }
+        }
+    })
 
-        h.state.creatorToken.value = 'tok'
-        h.client.connect('aB3xK9pQ2m')
-        h.socket().opened()
-        t.deepEqual(h.sent(), [{
-            type: 'hello',
-            identity: 'alice-key',
-            cursor: 7,
-            creatorToken: 'tok'
-        }], 'the token is carried when there is one')
-    } finally {
-        h.stop()
-    }
-})
+test('connection - a proof that cannot be made sends nothing',
+    async (t) => {
+        const h = harness({
+            async prove () { throw new Error('no key') }
+        })
+        try {
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge()
+            t.deepEqual(h.sent(), [], 'no hello without a proof')
+        } finally {
+            h.stop()
+        }
+    })
+
+test('connection - a challenge from a retired socket is not answered',
+    async (t) => {
+        let release:(() => void)|null = null
+        const h = harness({
+            prove: (challenge) => new Promise(resolve => {
+                release = () => resolve(`proof-of-${challenge}`)
+            })
+        })
+        try {
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            h.deliver({ type: 'challenge', challenge: 'old' })
+            const first = h.socket()
+
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            ;(release as unknown as () => void)()
+            await tick()
+
+            t.deepEqual(h.sent(), [],
+                'the new socket is not sent the old socket\'s proof')
+            t.deepEqual(first.sent, [], 'nor is the old one')
+        } finally {
+            h.stop()
+        }
+    })
+
+test('connection - a joining client says hello from its cursor',
+    async (t) => {
+        const h = harness()
+        try {
+            h.state.cursor.value = 7
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-1')
+            t.deepEqual(h.sent(), [{
+                type: 'hello',
+                identity: 'alice-key',
+                cursor: 7,
+                proof: 'proof-of-chal-1'
+            }], 'no creatorToken when there is none')
+
+            h.state.creatorToken.value = 'tok'
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-2')
+            t.deepEqual(h.sent(), [{
+                type: 'hello',
+                identity: 'alice-key',
+                cursor: 7,
+                creatorToken: 'tok',
+                proof: 'proof-of-chal-2'
+            }], 'the token is carried when there is one, and a fresh proof')
+        } finally {
+            h.stop()
+        }
+    })
 
 test('connection - opening clears a stopped queue', async (t) => {
     const h = harness({
@@ -618,72 +699,137 @@ test('connection - entries before any group and no join are dropped',
 
 // realistic-demo.AC3.1 -- the request is published from the open hook
 
-test('connection - a joiner follows hello with a join-request', (t) => {
-    const h = harness({ joinRequest: 'kp-b64' })
-    try {
-        h.client.connect('aB3xK9pQ2m')
-        h.socket().opened()
+test('connection - a joiner follows hello with a join-request',
+    async (t) => {
+        const h = harness({ joinRequest: 'kp-b64' })
+        try {
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-1')
 
-        t.deepEqual(h.sent(), [
-            { type: 'hello', identity: 'alice-key', cursor: 0 },
-            {
-                type: 'join-request',
-                identity: 'alice-key',
-                keyPackage: 'kp-b64'
-            }
-        ], 'hello first, then the request, under the same identity')
-    } finally {
-        h.stop()
-    }
-})
+            t.deepEqual(h.sent(), [
+                {
+                    type: 'hello',
+                    identity: 'alice-key',
+                    cursor: 0,
+                    proof: 'proof-of-chal-1'
+                },
+                {
+                    type: 'join-request',
+                    identity: 'alice-key',
+                    keyPackage: 'kp-b64'
+                }
+            ], 'hello first, then the request, under the same identity')
+        } finally {
+            h.stop()
+        }
+    })
 
-test('connection - a member publishes no join-request', (t) => {
+test('connection - a member publishes no join-request', async (t) => {
     const h = harness({ joinRequest: null })
     try {
         h.client.connect('aB3xK9pQ2m')
         h.socket().opened()
+        await h.challenge('chal-1')
 
         t.deepEqual(h.sent(), [
-            { type: 'hello', identity: 'alice-key', cursor: 0 }
+            {
+                type: 'hello',
+                identity: 'alice-key',
+                cursor: 0,
+                proof: 'proof-of-chal-1'
+            }
         ], 'a client already in the group asks for nothing')
     } finally {
         h.stop()
     }
 })
 
-test('connection - a creating client publishes no join-request', (t) => {
-    const h = harness({ isCreating: true, joinRequest: 'kp-b64' })
+test('connection - a creating client publishes no join-request',
+    async (t) => {
+        const h = harness({ isCreating: true, joinRequest: 'kp-b64' })
+        try {
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-1')
+
+            t.deepEqual(h.sent(), [
+                {
+                    type: 'create',
+                    identity: 'alice-key',
+                    proof: 'proof-of-chal-1'
+                }
+            ], 'the creator of a room never asks to join it')
+        } finally {
+            h.stop()
+        }
+    })
+
+test('connection - the request is re-published on a reconnect',
+    async (t) => {
+        const h = harness({ joinRequest: 'kp-b64' })
+        try {
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-1')
+            const first = h.socket()
+
+            // A reconnected socket carries no attachment, so the request
+            // has to be made again. The room keys `pending` by identity, so
+            // this replaces rather than duplicates.
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-2')
+
+            t.ok(h.socket() !== first, 'should be a second socket')
+            t.deepEqual(
+                h.sent().map(m => m.type),
+                ['hello', 'join-request'],
+                'the second socket asks again'
+            )
+        } finally {
+            h.stop()
+        }
+    })
+
+// Paginated replay
+
+test('connection - a log page with more asks for the next page',
+    async (t) => {
+        const h = harness()
+        try {
+            h.state.group.value = group()
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+
+            h.deliver({
+                type: 'log',
+                entries: [entry(1), entry(2)],
+                more: true
+            })
+            await h.client.queue.idle()
+
+            const asks = h.sent().filter(m => m.type === 'replay')
+            t.deepEqual(asks, [{ type: 'replay', cursor: 2 }],
+                'one ask, from the last seq received')
+        } finally {
+            h.stop()
+        }
+    })
+
+test('connection - a final log page asks for nothing', async (t) => {
+    const h = harness()
     try {
+        h.state.group.value = group()
         h.client.connect('aB3xK9pQ2m')
         h.socket().opened()
 
-        t.deepEqual(h.sent(), [
-            { type: 'create', identity: 'alice-key' }
-        ], 'the creator of a room never asks to join it')
-    } finally {
-        h.stop()
-    }
-})
+        h.deliver({ type: 'log', entries: [entry(1)], more: false })
+        h.deliver({ type: 'log', entries: [entry(2)] })
+        await h.client.queue.idle()
 
-test('connection - the request is re-published on a reconnect', (t) => {
-    const h = harness({ joinRequest: 'kp-b64' })
-    try {
-        h.client.connect('aB3xK9pQ2m')
-        h.socket().opened()
-        const first = h.socket()
-
-        // A reconnected socket carries no attachment, so the request
-        // has to be made again. The room keys `pending` by identity, so
-        // this replaces rather than duplicates.
-        h.client.connect('aB3xK9pQ2m')
-        h.socket().opened()
-
-        t.ok(h.socket() !== first, 'should be a second socket')
-        t.deepEqual(
-            h.sent().map(m => m.type),
-            ['hello', 'join-request'],
-            'the second socket asks again'
-        )
+        t.equal(h.sent().filter(m => m.type === 'replay').length, 0)
+        t.deepEqual(h.applied, [1, 2])
     } finally {
         h.stop()
     }

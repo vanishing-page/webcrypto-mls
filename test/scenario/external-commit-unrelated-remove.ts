@@ -178,7 +178,11 @@ async function forgeExternalCommitWithRemove (
     const state:ClientState = {
         ratchetTree: newTree,
         groupContext,
-        secretTree: await createSecretTree(leafWidth(newTree.length), epochSecrets.keySchedule.encryptionSecret, cs.kdf),
+        secretTree: await createSecretTree(
+            leafWidth(newTree.length),
+            epochSecrets.encryptionSecret,
+            cs.kdf,
+        ),
         privatePath: privateKeyPath,
         confirmationTag,
         historicalReceiverData: new Map(),

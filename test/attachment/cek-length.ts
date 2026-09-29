@@ -1,6 +1,8 @@
 import { test } from '@substrate-system/tapzero'
 import { sealObject, openObject } from '../../src/attachment/object.js'
 import { encryptAttachment } from '../../src/attachment/writer.js'
+import { decryptAttachmentStream } from '../../src/attachment/reader.js'
+import { openAttachmentRange } from '../../src/attachment/range.js'
 import { sealCryptoFromIds } from '../../src/attachment/crypto.js'
 import type { SealCrypto } from '../../src/attachment/crypto.js'
 import { CEK_LENGTH } from '../../src/attachment/keys.js'
@@ -133,5 +135,137 @@ test('US-015: a CEK_LENGTH CEK still round-trips', async t => {
     t.ok(
         opened.every((b, i) => b === plaintext[i]),
         'round-trip bytes match',
+    )
+})
+
+/**
+ * A source that counts how often it was pulled. A reader that checked
+ * the CEK only at the commitment gate would have pulled at least once.
+ */
+function countingSource (bytes:Uint8Array):{
+    stream:ReadableStream<Uint8Array>
+    pulls:() => number
+} {
+    let n = 0
+    return {
+        stream: new ReadableStream<Uint8Array>({
+            pull (controller) {
+                n++
+                controller.enqueue(bytes)
+                controller.close()
+            },
+        }, { highWaterMark: 0 }),
+        pulls: () => n,
+    }
+}
+
+function byteStream (bytes:Uint8Array):ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+        start (controller) {
+            controller.enqueue(bytes)
+            controller.close()
+        },
+    })
+}
+
+async function encrypted () {
+    const crypto = await sealCryptoFromIds(2, 1)
+    const enc = await encryptAttachment(
+        goodCek(), objectId, plaintext, crypto,
+    )
+    return { crypto, enc }
+}
+
+test(
+    'decryptAttachmentStream rejects a wrong-length CEK before reading',
+    async t => {
+        const { crypto, enc } = await encrypted()
+        for (const len of BAD_LENGTHS) {
+            const src = countingSource(enc.bytes)
+            try {
+                decryptAttachmentStream(
+                    new Uint8Array(len), enc.reference, src.stream, crypto,
+                )
+                t.fail(`decryptAttachmentStream accepted ${len} octets`)
+            } catch (err) {
+                t.ok(
+                    err instanceof AttachmentError,
+                    `decryptAttachmentStream rejects a ${len}-octet CEK`,
+                )
+            }
+            t.equal(src.pulls(), 0, `no pulls for a ${len}-octet CEK`)
+        }
+    },
+)
+
+test('openAttachmentRange rejects a wrong-length CEK', async t => {
+    const { crypto, enc } = await encrypted()
+    for (const len of BAD_LENGTHS) {
+        try {
+            await openAttachmentRange(
+                new Uint8Array(len), enc.reference,
+                { offset: 0, length: 10 }, crypto,
+            )
+            t.fail(`openAttachmentRange accepted ${len} octets`)
+        } catch (err) {
+            t.ok(
+                err instanceof AttachmentError,
+                `openAttachmentRange rejects a ${len}-octet CEK`,
+            )
+        }
+    }
+})
+
+test('a CEK_LENGTH CEK still reads through the stream', async t => {
+    const { crypto, enc } = await encrypted()
+    const out = await new Response(decryptAttachmentStream(
+        goodCek(), enc.reference, byteStream(enc.bytes), crypto,
+    )).arrayBuffer()
+    t.equal(out.byteLength, plaintext.length, 'stream length matches')
+})
+
+test('openAttachmentRange rejects non-finite ranges', async t => {
+    const { crypto, enc } = await encrypted()
+    for (const bad of [NaN, Infinity, -Infinity]) {
+        for (const range of [
+            { offset: bad, length: 10 },
+            { offset: 0, length: bad },
+        ]) {
+            try {
+                await openAttachmentRange(
+                    goodCek(), enc.reference, range, crypto,
+                )
+                t.fail(`accepted ${range.offset}, ${range.length}`)
+            } catch (err) {
+                t.ok(
+                    err instanceof AttachmentError,
+                    `rejects ${range.offset}, ${range.length}`,
+                )
+            }
+        }
+    }
+})
+
+test('mutating the returned ranges does not change the read', async t => {
+    const { crypto, enc } = await encrypted()
+    const range = { offset: 100, length: 50 }
+    const read = await openAttachmentRange(
+        goodCek(), enc.reference, range, crypto,
+    )
+    // Fetch from the plan as returned, then vandalize it.
+    const streams = read.ranges.map(r => byteStream(
+        enc.bytes.subarray(r.offset, r.offset + r.length),
+    ))
+    read.ranges[0].offset = 7
+    read.ranges[0].length = 1
+    read.ranges.push({ offset: 0, length: 1 })
+
+    const out = new Uint8Array(
+        await new Response(read.decrypt(streams)).arrayBuffer(),
+    )
+    t.equal(out.length, range.length, 'decrypt returns the range')
+    t.ok(
+        out.every((b, i) => b === plaintext[range.offset + i]),
+        'decrypt returns the right bytes',
     )
 })

@@ -10,10 +10,21 @@ import { nodeWidth, root, right, isLeaf, left, leafToNodeIndex, toLeafIndex, toN
 import { updateArray } from './util/array.js'
 import { repeatAsync } from './util/repeat.js'
 
+/**
+ * The AEAD key and raw nonce for one skipped generation. RFC 9420
+ * section 9.2 allows a receiver to keep these for a message that has not
+ * arrived yet, but never the chain secret: that derives every later
+ * generation too. The reuse guard is applied to the nonce at use.
+ */
+export interface GenerationKeyNonce {
+    key:Uint8Array
+    nonce:Uint8Array
+}
+
 export interface GenerationSecret {
     secret:Uint8Array
     generation:number
-    unusedGenerations:Record<number, Uint8Array>
+    unusedGenerations:Record<number, GenerationKeyNonce>
 }
 
 export interface SecretTreeNode {
@@ -100,7 +111,12 @@ export function zeroHandshakeRatchets (tree:SecretTree):void {
         if (node === undefined) continue
 
         node.handshake.secret.fill(0)
-        for (const secret of Object.values(node.handshake.unusedGenerations)) secret.fill(0)
+        const retainedGenerations =
+            Object.values(node.handshake.unusedGenerations)
+        for (const retained of retainedGenerations) {
+            retained.key.fill(0)
+            retained.nonce.fill(0)
+        }
     }
 }
 
@@ -129,11 +145,20 @@ export async function deriveKey (secret:Uint8Array, generation:number, cs:Cipher
     return await deriveTreeSecret(secret, 'key', generation, cs.hpke.keyLength, cs.kdf)
 }
 
+/**
+ * Ratchets `current` forward to `desiredGen`, storing the key and nonce
+ * of each generation it steps past (up to the retention limit) rather
+ * than its chain secret.
+ *
+ * `current.secret` belongs to the caller's tree and is left alone. Every
+ * chain secret this call derives on the way, except the one it returns,
+ * is wiped as soon as the next one exists.
+ */
 export async function ratchetUntil (
     current:GenerationSecret,
     desiredGen:number,
     config:KeyRetentionConfig,
-    kdf:Kdf,
+    cs:CiphersuiteImpl,
 ):Promise<GenerationSecret> {
     const generationDifference = desiredGen - current.generation
 
@@ -143,11 +168,23 @@ export async function ratchetUntil (
 
     return await repeatAsync(
         async (s) => {
-            const nextSecret = await deriveTreeSecret(s.secret, 'secret', s.generation, kdf.size, kdf)
+            const unusedGenerations = await updateUnusedGenerations(
+                s,
+                config.retainKeysForGenerations,
+                cs,
+            )
+            const nextSecret = await deriveTreeSecret(
+                s.secret,
+                'secret',
+                s.generation,
+                cs.kdf.size,
+                cs.kdf,
+            )
+            if (s.secret !== current.secret) s.secret.fill(0)
             return {
                 secret: nextSecret,
                 generation: s.generation + 1,
-                unusedGenerations: updateUnusedGenerations(s, config.retainKeysForGenerations),
+                unusedGenerations,
             }
         },
         current,
@@ -155,15 +192,26 @@ export async function ratchetUntil (
     )
 }
 
-function updateUnusedGenerations (s:GenerationSecret, retainGenerationsMax:number):Record<number, Uint8Array> {
-    const withNew = { ...s.unusedGenerations, [s.generation]: s.secret }
+async function updateUnusedGenerations (
+    s:GenerationSecret,
+    retainGenerationsMax:number,
+    cs:CiphersuiteImpl,
+):Promise<Record<number, GenerationKeyNonce>> {
+    if (retainGenerationsMax <= 0) return {}
+
+    const withNew = {
+        ...s.unusedGenerations,
+        [s.generation]: {
+            key: await deriveKey(s.secret, s.generation, cs),
+            nonce: await deriveNonce(s.secret, s.generation, cs),
+        },
+    }
 
     const generations = Object.keys(withNew)
 
-    const result =
-        generations.length >= retainGenerationsMax ? removeOldGenerations(withNew, retainGenerationsMax) : withNew
-
-    return result
+    return generations.length >= retainGenerationsMax ?
+        removeOldGenerations(withNew, retainGenerationsMax) :
+        withNew
 }
 
 /**
@@ -183,9 +231,9 @@ function updateUnusedGenerations (s:GenerationSecret, retainGenerationsMax:numbe
  * `client-state.ts` has the same guard.
  */
 function removeOldGenerations (
-    historicalReceiverData:Record<number, Uint8Array>,
+    historicalReceiverData:Record<number, GenerationKeyNonce>,
     max:number,
-):Record<number, Uint8Array> {
+):Record<number, GenerationKeyNonce> {
     if (max <= 0) return {}
 
     const sortedGenerations = Object.keys(historicalReceiverData)
@@ -206,7 +254,14 @@ export async function derivePrivateMessageNonce (
     cs:CiphersuiteImpl,
 ):Promise<Uint8Array> {
     const nonce = await deriveNonce(secret, generation, cs)
+    return applyReuseGuard(nonce, reuseGuard)
+}
 
+/** XORs `reuseGuard` into the first four bytes of `nonce`, in place. */
+function applyReuseGuard (
+    nonce:Uint8Array,
+    reuseGuard:Uint8Array,
+):Uint8Array {
     if (nonce.length >= 4 && reuseGuard.length >= 4) {
         for (let i = 0; i < 4; i++) {
             nonce[i]! ^= reuseGuard[i]!
@@ -238,19 +293,22 @@ export async function ratchetToGeneration (
             const { [senderData.generation]: _, ...removedDesiredGen } = ratchet.unusedGenerations
             const ratchetState = { ...ratchet, unusedGenerations: removedDesiredGen }
 
-            return await createRatchetResultWithSecret(
-                node,
-                index,
-                desired,
-                senderData.generation,
-                senderData.reuseGuard,
-                tree,
-                contentType,
-                cs,
-                ratchetState,
-                // `desired` belongs to the input tree's unusedGenerations
-                false,
-            )
+            const newNode = contentType === 'application' ?
+                { ...node, application: ratchetState } :
+                { ...node, handshake: ratchetState }
+
+            // `desired` belongs to the input tree, and the caller wipes
+            // what it gets back, so it gets copies
+            return {
+                generation: senderData.generation,
+                reuseGuard: senderData.reuseGuard,
+                key: desired.key.slice(),
+                nonce: applyReuseGuard(
+                    desired.nonce.slice(),
+                    senderData.reuseGuard,
+                ),
+                newTree: updateArray(tree, index, newNode),
+            }
         }
 
         throw new ValidationError('Desired gen in the past')
@@ -260,7 +318,7 @@ export async function ratchetToGeneration (
         ratchetForContentType(node, contentType),
         senderData.generation,
         config,
-        cs.kdf,
+        cs,
     )
 
     // ratchetUntil returns its input unchanged when there is nothing to

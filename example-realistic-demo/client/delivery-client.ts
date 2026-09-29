@@ -8,6 +8,8 @@ import {
 import { advanceCursor, reconnectDelay } from './delivery-cursor.js'
 import { createEntryQueue, type EntryQueue } from './entry-queue.js'
 import { isMalformedEntry } from './malformed-entry.js'
+import { commitFailureVerdict, framingOf } from './commit-verdict.js'
+import { creatorOf } from './membership.js'
 import type { RealisticState } from './state.js'
 
 /** Where the page was loaded from: the `location` fields used here. */
@@ -96,9 +98,28 @@ export function createDeliveryClient (
                 return 'continue'
             }
 
-            // A commit that will not process is fatal for group state.
-            // Advancing past it would corrupt the epoch silently, so
-            // stop and say so.
+            // A commit that will not process is fatal for group state
+            // only if it was the group's next epoch: framed for this
+            // group at this client's epoch, by the creator, who is the
+            // only member that commits. Anything else is a replay or a
+            // forgery, and stopping on it halts every member for the
+            // life of the room, since a reconnect replays the same
+            // entry. See `commit-verdict.ts`.
+            if (entry.kind === 'commit' && commitVerdict(err, entry)) {
+                batch(() => {
+                    state.status.value =
+                        'Skipped a group change that was not for ' +
+                        'this epoch.'
+                    state.cursor.value = advanceCursor(
+                        state.cursor.value,
+                        entry.seq
+                    )
+                })
+                return 'continue'
+            }
+
+            // Advancing past a real epoch change would corrupt the
+            // epoch silently, so stop and say so.
             if (entry.kind === 'commit') {
                 state.status.value =
                     'Could not process a group change. Reload to ' +
@@ -122,6 +143,22 @@ export function createDeliveryClient (
             return 'continue'
         }
     })
+
+    /**
+     * True when a failed commit should be skipped. A failure that
+     * carries no framing, or arrives with no group to compare it to, is
+     * the unknown case and stops, as every commit failure used to.
+     */
+    function commitVerdict (err:unknown, entry:LogEntry):boolean {
+        const framed = framingOf(err)
+        const group = state.group.value
+        if (!framed || !group) return false
+        return commitFailureVerdict({
+            framed,
+            current: group.groupContext,
+            senderIsCreator: entry.sender === creatorOf(group.ratchetTree)
+        }) === 'skip'
+    }
 
     function connect (roomId:string):void {
         // Never leave a previous socket open. connect() is called on

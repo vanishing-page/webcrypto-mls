@@ -26,7 +26,8 @@ import {
     identityOf,
     encodeKeyPackageB64,
     initCiphersuite,
-    joinFromWelcome
+    joinFromWelcome,
+    proveIdentity
 } from './mls-actions.js'
 import type { Member } from './membership.js'
 import { roomUrl } from './routing.js'
@@ -107,6 +108,13 @@ function ownIdentity ():string|null {
     return keyPackage ? identityOf(keyPackage) : null
 }
 
+/**
+ * The room the socket was pointed at, which is the room a proof names.
+ * Taken from `connect` rather than from `state.roomId`, so the proof
+ * binds the room the socket is actually talking to.
+ */
+let socketRoom:string|null = null
+
 /** One socket for this page, whichever room it ends up in. */
 const delivery = createConnection({
     state,
@@ -128,6 +136,15 @@ const delivery = createConnection({
         const keyPackage = state.user.value?.keyPackage
         if (!keyPackage || state.group.value) return null
         return encodeKeyPackageB64(keyPackage)
+    },
+
+    async prove (challenge:string):Promise<string> {
+        const user = state.user.value
+        const cs = state.ciphersuite.value
+        if (!user || !cs || !socketRoom) {
+            throw new Error('there is no identity to prove yet')
+        }
+        return proveIdentity(user, cs, socketRoom, challenge)
     },
 
     /**
@@ -221,6 +238,7 @@ function connect (roomId:string, creatingRoom:boolean):void {
         `Opening room ${roomId}...` :
         'Asking to be let in...'
 
+    socketRoom = roomId
     delivery.connect(roomId)
 }
 

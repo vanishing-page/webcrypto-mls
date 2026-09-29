@@ -139,7 +139,10 @@ export function rangesFor (
     offset:number,
     length:number,
 ):{ segFirst:number, segLast:number, ranges:ByteRange[] } {
-    if (length <= 0 || offset < 0 ||
+    // NaN compares false against everything, so the bounds test
+    // below would let it through on its own.
+    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) ||
+        length <= 0 || offset < 0 ||
         offset + length > p.plaintextLength) {
         throw new AttachmentError()
     }

@@ -16,6 +16,7 @@ export { type RatchetTree } from './ratchet-tree.js'
 
 export {
     acceptAll,
+    defaultIncomingMessageCallback,
     type IncomingMessageCallback,
     type IncomingMessageAction
 } from './incoming-message-action.js'
@@ -91,6 +92,7 @@ export {
     processMessage,
     processPublicMessage,
     type ProcessMessageResult,
+    type AuthenticatedSender,
 } from './process-messages.js'
 
 export { type PrivateMessage } from './private-message.js'
@@ -111,7 +113,17 @@ export { type Proposal } from './proposal.js'
 
 export { UsageError } from './mls-error.js'
 
-export { type ClientConfig, defaultClientConfig } from './client-config.js'
+export {
+    type ClientConfig,
+    defaultClientConfig,
+    defaultMaxPendingProposals,
+} from './client-config.js'
+export {
+    type PendingProposal,
+    type ProposalWithSender,
+    listPendingProposals,
+    discardPendingProposal,
+} from './unapplied-proposals.js'
 
 export { type Welcome } from './welcome.js'
 

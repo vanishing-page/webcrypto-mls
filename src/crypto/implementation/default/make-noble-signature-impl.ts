@@ -1,5 +1,9 @@
 import { DependencyError } from '../../../mls-error.js'
 import type { SignatureAlgorithm, Signature } from '../../signature.js'
+import {
+    isSmallOrderEd25519,
+    isSmallOrderEd448,
+} from '../../small-order.js'
 
 export async function makeNobleSignatureImpl (alg:SignatureAlgorithm):Promise<Signature> {
     switch (alg) {
@@ -11,7 +15,10 @@ export async function makeNobleSignatureImpl (alg:SignatureAlgorithm):Promise<Si
                         return ed25519.sign(message, signKey as Uint8Array)
                     },
                     async verify (publicKey, message, signature) {
-                        return ed25519.verify(signature, message, publicKey)
+                        // strict RFC 8032, matching WebCrypto (M4)
+                        if (isSmallOrderEd25519(publicKey)) return false
+                        return ed25519.verify(signature, message, publicKey,
+                            { zip215: false })
                     },
                     async keygen () {
                         const signKey = ed25519.utils.randomSecretKey()
@@ -35,7 +42,9 @@ export async function makeNobleSignatureImpl (alg:SignatureAlgorithm):Promise<Si
                         return ed448.sign(message, signKey as Uint8Array)
                     },
                     async verify (publicKey, message, signature) {
-                        return ed448.verify(signature, message, publicKey)
+                        if (isSmallOrderEd448(publicKey)) return false
+                        return ed448.verify(signature, message, publicKey,
+                            { zip215: false })
                     },
                     async keygen () {
                         const signKey = ed448.utils.randomSecretKey()

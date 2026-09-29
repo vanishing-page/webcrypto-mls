@@ -1,3 +1,4 @@
+import { emptyUnappliedProposals } from './unapplied-proposals.js'
 import type {
     ClientState,
     ApplyProposalsResult,
@@ -9,7 +10,8 @@ import {
     nextEpochContext,
     exportSecret,
     checkCanSendHandshakeMessages,
-    validateExternalSenders
+    validateExternalSenders,
+    validateProposalOnReceipt
 } from './client-state.js'
 import type { AuthenticatedContentCommit } from './authenticated-content.js'
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
@@ -45,6 +47,7 @@ import { pathToPathSecrets } from './path-secrets.js'
 import type { PrivateKeyPath } from './private-key-path.js'
 import { mergePrivateKeyPaths, pruneBlankedNodes, updateLeafKey, toPrivateKeyPath } from './private-key-path.js'
 import type { Proposal, ProposalExternalInit } from './proposal.js'
+import { encodeProposal } from './proposal.js'
 import type { ProposalOrRef } from './proposal-or-ref-type.js'
 import type { PskIndex } from './psk-index.js'
 import type { RatchetTree } from './ratchet-tree.js'
@@ -68,10 +71,14 @@ import {
     firstMatchAncestor,
     zeroPathSecretsArray
 } from './update-path.js'
-import { base64ToBytes } from './util/byte-array.js'
+import { base64ToBytes, bytesToBase64 } from './util/byte-array.js'
 import type { Welcome, EncryptedGroupSecrets } from './welcome.js'
 import { encryptGroupInfo, encryptGroupSecrets } from './welcome.js'
-import { CryptoVerificationError, InternalError, UsageError, ValidationError } from './mls-error.js'
+import {
+    CryptoVerificationError,
+    UsageError,
+    ValidationError,
+} from './mls-error.js'
 import type { ClientConfig } from './client-config.js'
 import { defaultClientConfig } from './client-config.js'
 import type { Extension } from './extension.js'
@@ -111,7 +118,10 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
 
     const wireformat = wireAsPublicMessage ? 'mls_public_message' : 'mls_private_message'
 
-    const allProposals = bundleAllProposals(state, extraProposals)
+    const allProposals = bundleAllProposals(
+        await filterPendingProposals(state, cipherSuite),
+        extraProposals,
+    )
 
     const res = await applyProposals(
         state,
@@ -148,16 +158,6 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
             addedLeafNodeIndices,
         )
         : [res.tree, undefined, [] as PathSecret[], undefined]
-
-    const privateKeys = pruneBlankedNodes(
-        mergePrivateKeyPaths(
-            newPrivateKey !== undefined
-                ? updateLeafKey(state.privatePath, await cipherSuite.hpke.exportPrivateKey(newPrivateKey))
-                : state.privatePath,
-            await toPrivateKeyPath(pathToPathSecrets(pathSecrets), state.privatePath.leafIndex, cipherSuite),
-        ),
-        tree,
-    )
 
     const lastPathSecret = pathSecrets.at(-1)
 
@@ -230,10 +230,30 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
         groupInfoExtensions,
     )
 
+    // built only once every step that can throw has run, so a failed
+    // commit leaves nothing of itself in the private path
+    const privateKeys = pruneBlankedNodes(
+        mergePrivateKeyPaths(
+            newPrivateKey !== undefined ?
+                updateLeafKey(
+                    state.privatePath,
+                    await cipherSuite.hpke.exportPrivateKey(newPrivateKey)
+                ) :
+                state.privatePath,
+            await toPrivateKeyPath(
+                pathToPathSecrets(pathSecrets),
+                state.privatePath.leafIndex,
+                cipherSuite
+            ),
+        ),
+        tree,
+    )
+
     // zeroize only once every consumer -- including createWelcome, which
-    // encrypts each new member's share of these same secrets -- has read
-    // from pathSecrets; doing this any earlier would hand new joiners an
-    // all-zero pathSecret instead of the real one.
+    // encrypts each new member's share of these same secrets, and the
+    // private path above -- has read from pathSecrets; doing this any
+    // earlier would hand new joiners an all-zero pathSecret instead of the
+    // real one.
     zeroPathSecretsArray(pathSecrets)
 
     const groupActiveState:GroupActiveState = res.selfRemoved
@@ -242,17 +262,20 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
             ? { kind: 'suspendedPendingReinit', reinit: suspendedPendingReinit }
             : { kind: 'active' }
 
+    const secretTree = await createSecretTree(
+        leafWidth(tree.length),
+        epochSecrets.encryptionSecret,
+        cipherSuite.kdf,
+    )
+    epochSecrets.encryptionSecret.fill(0)
+
     const newState:ClientState = {
         groupContext: updatedGroupContext,
         ratchetTree: tree,
-        secretTree: await createSecretTree(
-            leafWidth(tree.length),
-            epochSecrets.keySchedule.encryptionSecret,
-            cipherSuite.kdf,
-        ),
+        secretTree,
         keySchedule: epochSecrets.keySchedule,
         privatePath: privateKeys,
-        unappliedProposals: {},
+        unappliedProposals: emptyUnappliedProposals(),
         historicalReceiverData: addHistoricalReceiverData(state),
         confirmationTag,
         signaturePrivateKey: state.signaturePrivateKey,
@@ -263,15 +286,76 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
     return { newState, welcome, commit }
 }
 
-function bundleAllProposals (state:ClientState, extraProposals:Proposal[]):ProposalOrRef[] {
-    const refs:ProposalOrRef[] = Object.keys(state.unappliedProposals).map((p) => ({
+function bundleAllProposals (
+    pendingRefs:Uint8Array[],
+    extraProposals:Proposal[],
+):ProposalOrRef[] {
+    const refs:ProposalOrRef[] = pendingRefs.map((reference) => ({
         proposalOrRefType: 'reference',
-        reference: base64ToBytes(p),
+        reference,
     }))
 
     const proposals:ProposalOrRef[] = extraProposals.map((p) => ({ proposalOrRefType: 'proposal', proposal: p }))
 
     return [...refs, ...proposals]
+}
+
+/**
+ * The references of the pending proposals this client may commit, per
+ * RFC 9420 section 12.2. A pending proposal is dropped when it is
+ * invalid against the tree the kept proposals leave (so a second Remove
+ * of one leaf names a blank leaf), when it Updates a leaf being removed
+ * or the committer's own leaf, or when it repeats a kept proposal.
+ * Removes are placed first because every other check depends on which
+ * leaves they blank. A dropped proposal is simply not committed; the
+ * committed state starts the new epoch with no pending proposals.
+ */
+async function filterPendingProposals (
+    state:ClientState,
+    cs:CiphersuiteImpl,
+):Promise<Uint8Array[]> {
+    const own = state.privatePath.leafIndex
+    const pending = Object.entries(state.unappliedProposals)
+    const ordered = [
+        ...pending.filter(([, p]) => p.proposal.proposalType === 'remove'),
+        ...pending.filter(([, p]) => p.proposal.proposalType !== 'remove'),
+    ]
+
+    let tree = state.ratchetTree
+    const removed = new Set<number>()
+    const seen = new Set<string>()
+    const kept:Uint8Array[] = []
+
+    for (const [ref, { proposal, senderLeafIndex }] of ordered) {
+        const encoded = bytesToBase64(encodeProposal(proposal))
+        if (seen.has(encoded)) continue
+
+        if (proposal.proposalType === 'update' &&
+            (senderLeafIndex === own ||
+                (senderLeafIndex !== undefined &&
+                    removed.has(senderLeafIndex)))) {
+            continue
+        }
+
+        const err = await validateProposalOnReceipt(
+            { ...state, ratchetTree: tree },
+            proposal,
+            senderLeafIndex,
+            senderLeafIndex === own,
+            cs,
+        )
+        if (err !== undefined) continue
+
+        if (proposal.proposalType === 'remove') {
+            removed.add(proposal.remove.removed)
+            tree = removeLeafNode(tree, toLeafIndex(proposal.remove.removed))
+        }
+
+        seen.add(encoded)
+        kept.push(base64ToBytes(ref))
+    }
+
+    return kept
 }
 
 async function createWelcome (
@@ -513,7 +597,8 @@ export async function applyUpdatePathSecret (
         }
     }
 
-    throw new InternalError('No overlap between provided private keys and update path')
+    throw new ValidationError(
+        'No overlap between provided private keys and update path')
 }
 
 export async function joinGroupExternal (
@@ -658,16 +743,23 @@ export async function joinGroupExternal (
         cs.hash,
     )
 
+    const secretTree = await createSecretTree(
+        leafWidth(newTree.length),
+        epochSecrets.encryptionSecret,
+        cs.kdf,
+    )
+    epochSecrets.encryptionSecret.fill(0)
+
     const state:ClientState = {
         ratchetTree: newTree,
         groupContext,
-        secretTree: await createSecretTree(leafWidth(newTree.length), epochSecrets.keySchedule.encryptionSecret, cs.kdf),
+        secretTree,
         privatePath: privateKeyPath,
         confirmationTag,
         historicalReceiverData: new Map(),
         signaturePrivateKey: privateKeys.signaturePrivateKey,
         keySchedule: epochSecrets.keySchedule,
-        unappliedProposals: {},
+        unappliedProposals: emptyUnappliedProposals(),
         groupActiveState: { kind: 'active' },
         clientConfig,
     }

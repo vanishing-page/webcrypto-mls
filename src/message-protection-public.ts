@@ -16,7 +16,11 @@ import {
     verifyFramedContentSignature,
 } from './framed-content.js'
 import type { GroupContext } from './group-context.js'
-import { CryptoVerificationError, UsageError } from './mls-error.js'
+import {
+    CryptoVerificationError,
+    UsageError,
+    ValidationError,
+} from './mls-error.js'
 import type { Proposal } from './proposal.js'
 import type { ExternalPublicMessage, PublicMessage } from './public-message.js'
 import { findSignaturePublicKey } from './public-message.js'
@@ -144,7 +148,11 @@ export async function unprotectPublicMessage (
     cs:CiphersuiteImpl,
     overrideSignatureKey?:Uint8Array,
 ):Promise<AuthenticatedContentProposalOrCommit> {
-    if (msg.content.contentType === 'application') throw new UsageError("Can't make an application message public")
+    if (msg.content.contentType === 'application') {
+        throw new ValidationError(
+            'A PublicMessage cannot carry application content',
+        )
+    }
 
     if (msg.senderType === 'member') {
         const authenticatedContent:AuthenticatedContentTBM = {

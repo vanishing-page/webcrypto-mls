@@ -16,6 +16,15 @@ Guard order inside a handler is part of the behavior. `requireRoom` runs
 before `requireMember`, because an expired room's ledger is empty and the
 reverse order would tell a member they are not one.
 
+An expired room is not the same state as an id that never held one.
+The alarm deletes every row of group data but writes a one-row
+`tombstone`, and `create` asks `mayCreateRoom` with the state
+`roomState()` reads (`absent`, `live`, `tombstoned`). Every other read
+goes through `readMeta()` and sees no room either way, so `hello` and
+the GET probe still answer `no-room` and 404 identically. A new table
+of group data must be emptied by the alarm; a new table that outlives
+expiry must hold no group data.
+
 ## The client
 
 `client/` follows the same split as the Worker. It is not covered by
@@ -66,8 +75,19 @@ the only owner of the open hook. Extend `applyEntry` and `onControl`
 through `ConnectionDeps`; do not add a second switch over `msg.type`
 somewhere else, and do not call `deps.onControl` more than once per
 message. The cursor moves in exactly two places -- here after a
-successful apply, and in `delivery-client.ts`'s `onError` for an
-undecryptable `application` entry -- and never from a control message.
+successful apply, and in `delivery-client.ts`'s `onError` for an entry
+it skips (undecryptable `application`, malformed, or a commit the
+verdict skips) -- and never from a control message.
+
+The replay is paged. The room sends one `log` page per request, chosen
+by `replayPage` in `room-logic.ts` against `REPLAY_PAGE_BUDGET`, and
+sets `more` when entries remain; the dispatcher's `log` case answers
+with `replay` from the last seq on the page -- not from the cursor,
+which the queue may not have reached yet. `onHello` sends the first
+page, so the post-`welcome-you` replay is paged by the same path. No
+handler may send the whole tail in one frame: past 1 MiB `send` fails
+on an open socket and the client believes it is caught up. The budget
+is copied into `scripts/probe.mjs` check 37; change the two together.
 
 Entries with no group are not simply dropped. `pushEntries` has three
 states, not two: group present (queue it), a Welcome in flight (hold,
@@ -77,15 +97,30 @@ into a plain null check throws away the entire replay of a joiner who
 was offline when approved, which is the demo's headline scenario, and
 nothing re-requests it because the keepalive prevents the reconnect.
 
-Everything the client says on a fresh socket goes in `onOpen`, not in
-the handler that decided to connect. `connect()` returns while the
-socket is still CONNECTING, so a submit handler has nothing to send on;
-and a message sent from `onOpen` is re-sent on every reconnect for free,
-which is what makes a join request outlive a dropped connection. The
+Everything the client says on a fresh socket goes in `introduce` in
+`connection.ts`, run by the dispatcher's `challenge` case -- not in
+`onOpen`, and not in the handler that decided to connect. The room
+challenges every socket as soon as it accepts it, and `create` and
+`hello` carry a signature over that challenge (`proveIdentity` in
+`mls-actions.ts`, checked by `verifyIdentityProof` in `room-logic.ts`),
+so nothing can be said before it arrives. `onOpen` resets the queue and
+forgets the last challenge, and nothing else. Every socket gets its own
+challenge, so what `introduce` sends is re-sent on every reconnect for
+free, which is what makes a join request outlive a dropped connection.
+Signing is async: `introduce` drops a proof whose challenge is no longer
+the current socket's, since the new socket would only refuse it. The
 page supplies the *decision* through `ConnectionDeps` -- `isCreating()`,
-`joinRequest()` -- and `onOpen` owns the order the messages go in.
-`hello` comes first either way: the room attaches a socket to an
-identity there, and an unattached socket has nobody to answer.
+`joinRequest()`, `prove()` -- and `introduce` owns the order the
+messages go in. `hello` comes first either way: the room attaches a
+socket to an identity there, and an unattached socket has nobody to
+answer.
+
+The signed bytes are `identityProofMessage` in `protocol.ts`, shared by
+both sides. `scripts/probe.mjs` cannot import TypeScript and carries a
+copy; change the two together. The room learns its own id from the
+socket URL in `Room.fetch` and keeps it in the attachment's `handshake`
+beside the challenge, because a Durable Object has no other way to know
+the name it was reached by.
 
 `mls-actions.ts` is the only place the client calls the MLS library.
 Base64 is split: the two encoders come from `../../src/index.js`, and
@@ -112,6 +147,15 @@ disconnected marks, joined against this list by `identity`. `identity`
 is the base64url of the leaf's `signaturePublicKey`, which is what the
 room uses on the wire -- not the credential name, which is a display
 label and is not unique.
+
+A chat message is credited to the leaf MLS authenticated, never to the
+`sender` the room wrote beside it; that field is a routing hint, and a
+disagreement is flagged on the timeline item. The leaf index is turned
+into an identity in `apply-entry.ts` when the message is decrypted, and
+against the tree it was processed under -- `processEntry` returns that
+tree, which for a past-epoch message is the one kept for that epoch. A
+leaf blanked by a Remove is reused by the next Add, so resolving at
+render time, or against the current tree, names the wrong person.
 
 The list is not compacted. A removed member's leaf is blanked, and the
 survivors keep their original leaf indices, because a leaf index is
@@ -187,20 +231,24 @@ silence the page for the rest of the session.
 
 ## A join request is the one write a stranger can cause
 
-`onJoinRequest` asks only that the room exist, deliberately -- the join
-flow is open. That makes it the only handler whose limits are about
-volume rather than authority, and they live in `classifyJoinRequest` in
-`room-logic.ts`: a size ceiling on the key package, a cap on distinct
-pending identities, and a per-socket interval. A refusal writes nothing,
-including the throttle, so a refused request can never be the storage
-growth the limits exist to stop.
+`onJoinRequest` asks only that the room exist and that the socket
+proved, at `hello`, the identity it is asking for -- the join flow is
+open to any key, just not to a claim. That makes it the only handler
+whose limits are about volume rather than authority, and they live in
+`classifyJoinRequest` in `room-logic.ts`: a size ceiling on the key
+package, a cap on distinct pending identities, and a per-socket
+interval. A refusal writes nothing, including the throttle, so a refused
+request can never be the storage growth the limits exist to stop.
 
 The throttle is socket-scoped and rides `SocketState`, not a table.
 Identities are free to mint, so a per-identity limit throttles nobody;
 opening a socket is the cost a flooder actually pays. Because it lives
 in the attachment, `attach` has to carry it across every rewrite --
 otherwise `hello` clears it and one `hello` per request is the reset.
-Any future field with that property gets the same treatment.
+Any future field with that property gets the same treatment. `handshake`
+(the socket's challenge and room id) is the second such field; before
+`hello` it is the whole attachment, so `readAttachment` still reads the
+socket as unattached and `readHandshake` reads it raw.
 
 The cap counts rows, not requests: `pending` is keyed by identity, so a
 repeat request from an identity already queued replaces its own row and
@@ -208,10 +256,28 @@ is allowed through a full queue. Probe checks 24 and 25 prove the Worker
 consults the rule; the cap itself is proved in Node, where sixty-five
 requests cost nothing.
 
+## Log writes are volume-limited too
+
+`onMls` applies `classifyMlsWrite` last, after the membership and
+commit-kind guards, through `requireLogRoom`. Same shape as the join
+request: a per-socket interval on `lastMlsAt` in `SocketState` (carried
+by `attach`), and room caps on log rows and payload characters read
+from storage with a `COUNT`/`SUM` over `log` rather than a counter. A
+refusal writes nothing, the throttle included.
+
+The interval is deliberately short (`MLS_WRITE_INTERVAL_MS`): the
+creator commits back to back while approving a pending list, and a
+refused commit strands the creator at an epoch nobody reached. Raising
+it needs the client to pace or retry those commits first.
+`scripts/probe.mjs` carries a copy of the constant and sends bursts of
+`mls` through `sendPaced`; a new probe check that writes twice from one
+socket must pace too, or it fails as `rate-limited`.
+
 ## Nothing binds the two halves of a join request but the creator
 
-A `join-request` carries `identity` and `keyPackage` as separate fields
-and the room stores both verbatim -- it holds key packages as opaque
+A `join-request` carries `identity` and `keyPackage` as separate fields.
+The room checks `identity` against the one the socket proved, and
+stores `keyPackage` verbatim -- it holds key packages as opaque
 strings and could not check them. The creator is the only party that
 decodes one, so the creator is the only party that can check they agree,
 and `keyPackageBelongsTo` in `mls-actions.ts` is where that happens.
@@ -364,6 +430,38 @@ field's label is a prop on that tag rather than a sibling `<label>`.
 `findByClass` is unaffected, since all three keep the author's `class`
 on the host.
 
+## The room registry, and the limit in front of it
+
+`RoomRegistry` in `index.ts` is one Durable Object (named `rooms`)
+listing each id as `live` or `expired`. `route` reads it before a GET
+names a room, and `roomInfoDecision` in `room-logic.ts` turns the
+listing into an answer, so a GET for an unused id is 404 without
+instantiating anything. It is a Durable Object and not Workers KV
+because it has to be read-after-write consistent: KV can serve a cached
+miss for up to a minute, and an invitee opening a link seconds after
+creation would be told the room is gone. D1 would also do; one object
+is less to configure.
+
+`onCreate` lists the id *before* writing `meta` and before sending
+`created`, so a live room is never unlisted. The alarm marks it expired
+last, after the tombstone, so a failed registry call retries the whole
+idempotent alarm. A room object is not told its own name, so `onCreate`
+stores it in the `name` table for the alarm to read before
+`deleteAll`. The registry is not the authority on `create` -- the
+room's tombstone is. A room created before the registry existed is
+unlisted and reads as 404 until it expires.
+
+Socket upgrades are limited per `CF-Connecting-IP` by the
+`UPGRADE_LIMITER` rate-limiting binding, before the room is named.
+Its numbers live in `wrangler.jsonc` and are copied as `UPGRADE_LIMIT`
+and `UPGRADE_PERIOD_SECONDS` in `room-logic.ts`, where a Node test
+holds them against `reconnectDelay`; change them together. Local
+`wrangler dev` passes a client-supplied `CF-Connecting-IP` through, so
+probe check 35 spends a made-up address and leaves every other check's
+budget alone -- a probe that exhausted `127.0.0.1` would fail whatever
+runs after it for a minute. Rerun `npm run types:realistic` after any
+binding change and commit `worker-configuration.d.ts`.
+
 ## Adding an error reason
 
 Three edits, and missing any one of them is silent. `ErrorReason` in
@@ -400,6 +498,24 @@ identity deletes its `removed` row. Anything that subtracts removed from
 admitted -- the roster's `known` set, `mayWriteLog` -- depends on that
 delete, so a code path that adds a status without clearing its opposite
 silently breaks the undo case.
+
+## A socket is unattached until it proves an identity
+
+`SocketState.proven` is written by `attach`, which only runs after
+`requireProof`, and `readAttachment` returns null for an attachment
+without it. So "attached" and "proven" are one fact, and every handler
+that reads `identity` through `readAttachment` sees a signed one. A
+missing proof is refused like a bad one. Anything that sends to more
+than one socket has to skip a peer `readAttachment` reads as null --
+`onMls` and `broadcastRoster` both do -- or an unproven socket hears
+the room; a new broadcast needs the same line. Socket replacement is
+`mayReplaceSocket` in `room-logic.ts`: only a proof of the same
+identity replaces a live socket, whoever it belongs to.
+
+In `scripts/probe.mjs` every name is a real Ed25519 key from the `I`
+table, and `hello`, `create` and `joinRequest` sign over the socket's
+own challenge. A new check that needs an unproven socket sends the
+frame by hand, as checks 18 and 29 do.
 
 ## Testing
 
@@ -510,6 +626,21 @@ inside that step deliberately: `atob` throws on a payload that is not
 base64 in a browser while node's `Buffer` quietly drops the bad
 characters, so a catch that looks unreachable in the Node suite is the
 path a browser actually takes.
+
+A commit that decodes and then fails is not always a desync either. A
+replayed old commit, or one from a member who is not the creator,
+decodes perfectly and fails for ever in the same way. So
+`processEntry` wraps its `processMessage` call in
+`EntryProcessingError`, carrying the group id and epoch the message was
+framed for (cleartext in both wire formats), and `onError` hands that
+to `commitFailureVerdict` in `commit-verdict.ts`. Only a commit framed
+for this group, at this client's epoch, whose `entry.sender` is the
+identity at leaf 0 of the client's own tree (`creatorOf` in
+`membership.ts`) stops the queue; anything else advances the cursor. A
+failure carrying no framing still stops, because it is the unknown case.
+The room's half is `mayWriteKind` in `room-logic.ts`, which refuses a
+`commit` from anyone but the creator (probe check 28). It reads the
+sender's claimed `kind`, so it cannot replace the client's verdict.
 
 ## `processMessage` refuses nothing on your behalf
 

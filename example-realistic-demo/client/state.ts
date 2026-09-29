@@ -2,6 +2,7 @@ import { signal, computed, type Signal } from '@preact/signals'
 import type { ClientState, CiphersuiteImpl } from '../../src/index.js'
 import type { LogEntry, PendingRequest } from '../protocol.js'
 import type { DemoUser } from '../../example-shared/demo-user.js'
+import type { Decrypted } from './timeline.js'
 import type { StorageStatus } from
     '../../example-shared/storage-persistence.js'
 import type { PersistRequest } from '../../example-shared/storage-panel.js'
@@ -59,8 +60,12 @@ export interface RealisticState {
     /** Application entries only, in seq order, as the room numbered them. */
     entries:Signal<LogEntry[]>
 
-    /** seq -> plaintext, for the entries this client could read. */
-    decrypted:Signal<Record<number, string>>
+    /**
+     * seq -> plaintext and the identity MLS authenticated as its sender,
+     * for the entries this client could read. Held in memory only; the
+     * session record does not persist it.
+     */
+    decrypted:Signal<Record<number, Decrypted>>
 
     /**
      * Messages this client sent that the room has not yet handed back

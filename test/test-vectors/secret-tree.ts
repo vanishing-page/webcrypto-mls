@@ -66,7 +66,12 @@ async function testSecretTree (
         const nodeIndex = leafToNodeIndex(toLeafIndex(index))
         const handshakeSecret = tree[nodeIndex]!.handshake
         for (const gen of leaf) {
-            const ratcheted = await ratchetUntil(handshakeSecret, gen.generation, defaultKeyRetentionConfig, impl.kdf)
+            const ratcheted = await ratchetUntil(
+                handshakeSecret,
+                gen.generation,
+                defaultKeyRetentionConfig,
+                impl,
+            )
             t.equal(ratcheted.generation, gen.generation, `ratcheted generation should match for leaf ${index}`)
 
             // handshake_key = handshake_ratchet_key_[i]_[generation]
@@ -80,7 +85,12 @@ async function testSecretTree (
 
         const applicationSecret = tree[nodeIndex]!.application
         for (const gen of leaf) {
-            const ratcheted = await ratchetUntil(applicationSecret, gen.generation, defaultKeyRetentionConfig, impl.kdf)
+            const ratcheted = await ratchetUntil(
+                applicationSecret,
+                gen.generation,
+                defaultKeyRetentionConfig,
+                impl,
+            )
             t.equal(ratcheted.generation, gen.generation, `ratcheted generation should match for leaf ${index}`)
 
             // application_key = application_ratchet_key_[i]_[generation]

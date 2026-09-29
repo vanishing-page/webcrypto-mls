@@ -530,7 +530,11 @@ them.
 - Signature/MAC verification is performed before state mutation on both
   message paths; membership tag and confirmation tag verified; MAC compares
   are constant-time (WebCrypto `verify` or `constantTimeEqual`); group_id
-  compared with `constantTimeEqual`.
+  compared with `constantTimeEqual`. Correction (audit 2026-09 H1): the
+  confirmation tag was the exception. The commit receive path merged the
+  new private key path, zeroizing the input state's superseded HPKE path
+  keys, before `verifyConfirmationTag` ran, so a bad-tag commit wiped a
+  live state. Fixed by `.scratch/audit-2026-09-core/spec.md`.
 - Padding validation is constant-time and post-authentication (no oracle);
   trailing bytes rejected on the outer envelope.
 - Welcome/GroupInfo: signer leaf existence + credential + GroupInfo
@@ -585,7 +589,7 @@ Of the attachment findings, A1-A5 are fixed; A6 remains open.
 | --- | --- | --- |
 | C1 | US-001 | `createRatchetResultWithSecret` takes an `ownsSecret` flag and wipes only what its own call chain allocated; `removeOldGenerations` stopped wiping evicted buffers. |
 | H1 | US-002 | `removeOldGenerations` returns `{}` when the retention max is 0 or less, instead of `slice(-0)` retaining everything. |
-| H2 | US-008 | The demo room validates a `commit`-kind entry before appending it, so one garbage entry can no longer wedge every member. |
+| H2 | US-008; audit-2026-09 demo spec | The room never decodes an entry, so it does not validate a commit's contents. Under the audit-2026-09 demo spec it refuses a `commit`-kind entry from anyone but the creator, and the client skips a garbage entry and any commit it cannot process unless that commit is framed for this group at the current epoch by the creator. |
 | H3 | US-009 | `classifyJoinRequest` caps the pending queue, bounds a join request's key package, and rate-limits per socket. |
 | M1 | US-010 | Every client-supplied wire string in `protocol.ts` is length-bounded, and an oversized frame is refused before `JSON.parse`. |
 | M2 | US-003 | `toPrivateKeyPath` takes the tree and verifies each derived public key against the node's advertised `hpkePublicKey`, on both the commit and the Welcome path. |
@@ -595,7 +599,7 @@ Of the attachment findings, A1-A5 are fixed; A6 remains open.
 | M6 | US-011 | `defaultLifetimeConfig.validateLifetimeOnReceive` defaults to `true`. |
 | M7 | US-012 | `defaultAuthenticationService` is replaced by `failClosedAuthenticationService` (the new default) and `unsafeAcceptAllAuthenticationService` (opt-in by name). |
 | M8 | US-013 | The teaching demo assigns `window.state` only behind a dev check. |
-| M10 | US-014 | `.gitignore` covers `.env.*` and key files. |
+| M10 | US-014, `.scratch/audit-2026-09-demo/spec.md` | US-014 widened `.gitignore` to `.env.*` and key files, but a squash merge lost it; the 2026-09 demo spec restored the patterns and added `.dev.vars*`. |
 | L1, L2 | US-015 | Sender-data and content key/nonce are zeroized in a `finally`, so they are wiped on the AEAD error path too. |
 | L3 | US-016 | `processPrivateMessage`/`processPublicMessage` refuse all inbound traffic once `groupActiveState.kind === 'removedFromGroup'`. |
 | L4 | US-017 | `needsUpdatePath` reads `allProposals`, so a custom-proposal-only commit still rotates key material. |

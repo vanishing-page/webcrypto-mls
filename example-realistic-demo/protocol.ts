@@ -50,17 +50,23 @@ export type ErrorReason =
     | 'key-package-too-large'
     | 'too-many-pending'
     | 'rate-limited'
+    | 'commit-not-creator'
+    | 'bad-proof'
+    | 'log-full'
+    | 'log-too-large'
 
 export type ClientMessage =
     | {
         type:'create'
         identity:string
+        proof?:string
     }
     | {
         type:'hello'
         identity:string
         cursor:number
         creatorToken?:string
+        proof?:string
     }
     | {
         type:'mls'
@@ -89,8 +95,18 @@ export type ClientMessage =
         to:string
         payload:string
     }
+    | {
+        // The next replay page, after the last seq the client received.
+        // Sent only in answer to a `log` page that said `more`.
+        type:'replay'
+        cursor:number
+    }
 
 export type RoomMessage =
+    | {
+        type:'challenge'
+        challenge:string
+    }
     | {
         type:'created'
         creatorToken:string
@@ -108,6 +124,9 @@ export type RoomMessage =
     | {
         type:'log'
         entries:LogEntry[]
+        // True when entries after this page remain; the client asks for
+        // them with `replay`. Absent means none do. See `replayPage`.
+        more?:boolean
     }
     | {
         type:'entry'
@@ -167,6 +186,9 @@ function isStr (v:unknown):v is string {
  *   thousands, which this demo will never be, and still refuses the
  *   megabyte writes an unbounded field invites.
  *
+ * - A challenge is 32 random bytes as base64url, 43 characters.
+ * - A proof is a signature as base64url: 86 characters for Ed25519.
+ *
  * A display name has no bound of its own because it has no field of its
  * own -- it rides inside a key package as a basic credential, so it is
  * bounded by whatever bounds the key package.
@@ -185,6 +207,8 @@ function isStr (v:unknown):v is string {
  */
 export const MAX_IDENTITY_LENGTH = 512
 export const MAX_CREATOR_TOKEN_LENGTH = 128
+export const MAX_CHALLENGE_LENGTH = 128
+export const MAX_PROOF_LENGTH = 512
 export const MAX_PAYLOAD_LENGTH = 256 * 1024
 export const MAX_WIRE_MESSAGE_LENGTH = MAX_PAYLOAD_LENGTH + 64 * 1024
 
@@ -200,6 +224,12 @@ function isIdentity (v:unknown):v is string {
 
 function isPayload (v:unknown):v is string {
     return isBounded(v, MAX_PAYLOAD_LENGTH)
+}
+
+// Optional until every client sends one; see `verifyIdentityProof` in
+// `room-logic.ts` for what it proves.
+function isOptionalProof (v:unknown):boolean {
+    return v === undefined || isBounded(v, MAX_PROOF_LENGTH)
 }
 
 // Rejects NaN and Infinity, which survive a `typeof === 'number'` check
@@ -221,7 +251,11 @@ const ERROR_REASONS:readonly string[] = [
     'bad-message',
     'key-package-too-large',
     'too-many-pending',
-    'rate-limited'
+    'rate-limited',
+    'commit-not-creator',
+    'bad-proof',
+    'log-full',
+    'log-too-large'
 ]
 
 export function isEntryKind (v:unknown):v is EntryKind {
@@ -259,11 +293,12 @@ export function isClientMessage (v:unknown):v is ClientMessage {
 
     switch (v.type) {
         case 'create':
-            return isIdentity(v.identity)
+            return isIdentity(v.identity) && isOptionalProof(v.proof)
         case 'hello':
             return isIdentity(v.identity) && isNum(v.cursor) &&
                 (v.creatorToken === undefined ||
-                    isBounded(v.creatorToken, MAX_CREATOR_TOKEN_LENGTH))
+                    isBounded(v.creatorToken, MAX_CREATOR_TOKEN_LENGTH)) &&
+                isOptionalProof(v.proof)
         case 'mls':
             return isEntryKind(v.kind) && isPayload(v.payload)
         case 'join-request':
@@ -274,6 +309,8 @@ export function isClientMessage (v:unknown):v is ClientMessage {
             return isIdentity(v.identity)
         case 'welcome':
             return isIdentity(v.to) && isPayload(v.payload)
+        case 'replay':
+            return isNum(v.cursor)
         default:
             return false
     }
@@ -283,6 +320,8 @@ export function isRoomMessage (v:unknown):v is RoomMessage {
     if (!isObject(v)) return false
 
     switch (v.type) {
+        case 'challenge':
+            return isBounded(v.challenge, MAX_CHALLENGE_LENGTH)
         case 'created':
             return isBounded(v.creatorToken, MAX_CREATOR_TOKEN_LENGTH) &&
                 isNum(v.expiresAt)
@@ -293,7 +332,8 @@ export function isRoomMessage (v:unknown):v is RoomMessage {
                 isNum(v.createdAt) && isNum(v.expiresAt)
         case 'log':
             return Array.isArray(v.entries) &&
-                v.entries.every(isLogEntry)
+                v.entries.every(isLogEntry) &&
+                (v.more === undefined || typeof v.more === 'boolean')
         case 'entry':
             return isLogEntry(v.entry)
         case 'welcome-you':
@@ -309,4 +349,36 @@ export function isRoomMessage (v:unknown):v is RoomMessage {
         default:
             return false
     }
+}
+
+/**
+ * The bytes a client signs to prove it holds the identity it claims.
+ * A fixed label keeps the signature from meaning anything anywhere
+ * else, and the room id binds it to one room, so a proof captured in
+ * one room is refused in another. Each part is length-prefixed, so no
+ * split of room id and challenge can collide with another.
+ *
+ * Shared by the room, which verifies, and the client, which signs, so
+ * the two cannot drift apart.
+ */
+export const IDENTITY_PROOF_LABEL = 'webcrypto-mls realistic demo hello v1'
+
+export function identityProofMessage (
+    roomId:string,
+    challenge:string
+):Uint8Array<ArrayBuffer> {
+    const enc = new TextEncoder()
+    const parts = [IDENTITY_PROOF_LABEL, roomId, challenge]
+        .map(part => enc.encode(part))
+    const out = new Uint8Array(
+        parts.reduce((n, part) => n + 4 + part.length, 0)
+    )
+    const view = new DataView(out.buffer)
+    let at = 0
+    for (const part of parts) {
+        view.setUint32(at, part.length)
+        out.set(part, at + 4)
+        at += 4 + part.length
+    }
+    return out
 }

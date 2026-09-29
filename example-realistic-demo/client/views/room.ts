@@ -593,16 +593,30 @@ function memberItem (
  * A plain function rather than a child component, for the same reason
  * `requestItem` is one.
  */
+function mismatchMark () {
+    return html`
+        <span class="mismatch-mark"> (the room named someone else)</span>
+    `
+}
+
 function messageItem (item:TimelineText, own:boolean) {
+    // The name is the member MLS authenticated. When the room wrote
+    // somebody else beside the ciphertext, the row says so: the room is
+    // not trusted to attribute, and a disagreement is the one place a
+    // reader can see it tried. A real element with its space inside, as
+    // `.own-mark` is, so it is announced and does not run into the name.
     return html`
         <li
             key=${`text-${item.seq}`}
             class="message"
             data-seq=${item.seq}
             data-own=${own}
+            data-mismatch=${item.mismatch || undefined}
         >
             <span class="seq">${String(item.seq)}</span>
-            <span class="message-from">${item.from}</span>
+            <span class="message-from">${item.from}${item.mismatch ?
+                mismatchMark() :
+                undefined}</span>
             <span class="message-text">${item.text}</span>
         </li>
     `

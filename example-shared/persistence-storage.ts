@@ -16,17 +16,42 @@ const SESSION_STORE_NAME = 'session'
 const SESSION_KEY = 'current'
 
 /**
- * Shared by both stores so one upgrade path creates both. The two
- * existing demo databases are already at version 1, so their upgrade
- * handler never re-runs and they simply never gain a `session` store --
- * which they do not need. Bumping the version to give them one would
- * force an upgrade on databases that are working fine.
+ * Bumped whenever the persisted `ClientState` shape changes in a way
+ * the library cannot load. Version 2: `unusedGenerations` in the secret
+ * tree holds key/nonce pairs instead of chain secrets.
+ */
+export const PERSISTENCE_DB_VERSION = 2
+
+/**
+ * The stores whose records were saved under `oldVersion` in a shape
+ * this build cannot load, and so are cleared on upgrade. Both stores
+ * hold a `ClientState`, so both go. A brand-new database (version 0)
+ * has nothing to clear.
+ */
+export function staleStoresOnUpgrade (oldVersion:number):string[] {
+    if (oldVersion <= 0 || oldVersion >= PERSISTENCE_DB_VERSION) return []
+    return [STORE_NAME, SESSION_STORE_NAME]
+}
+
+/**
+ * Shared by both stores so one upgrade path creates both. The version
+ * is bumped only when the persisted state changes shape: an upgrade then
+ * discards the old sessions rather than loading a `ClientState` the
+ * library would misread, and the page starts from an empty group. Do
+ * not bump it just to add a store -- add the store here and let a
+ * future shape change create it.
  */
 function openDb (dbName:string):Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
-        const open = indexedDB.open(dbName, 1)
-        open.onupgradeneeded = () => {
+        const open = indexedDB.open(dbName, PERSISTENCE_DB_VERSION)
+        open.onupgradeneeded = (event?:IDBVersionChangeEvent) => {
             const db = open.result
+            const stale = staleStoresOnUpgrade(event?.oldVersion ?? 0)
+            for (const name of stale) {
+                if (db.objectStoreNames.contains(name)) {
+                    open.transaction!.objectStore(name).clear()
+                }
+            }
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME)
             }

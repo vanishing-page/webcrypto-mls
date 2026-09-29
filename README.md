@@ -46,7 +46,7 @@ which means it is usable in the browser.
   * [Catching Up](#catching-up)
     + [Catch Up Example](#catch-up-example)
 - [Encrypted attachments](#encrypted-attachments)
-  * [Attachments vs X](#attachments-vs-x)
+  * [Attachments vs _](#attachments-vs-_)
   * [Why not put it in the MLS tree](#why-not-put-it-in-the-mls-tree)
     + [The object store](#the-object-store)
       - [Random Access](#random-access)
@@ -67,11 +67,13 @@ which means it is usable in the browser.
     + [2. The epoch-level ratchet (post-compromise security)](#2-the-epoch-level-ratchet-post-compromise-security)
 - [Root Secret](#root-secret)
 - [Defaults](#defaults)
+  * [Incoming message callback](#incoming-message-callback)
   * [Optional Ciphersuite Dependencies](#optional-ciphersuite-dependencies)
 - [Some Terms](#some-terms)
   * [Leaf-node Keypair](#leaf-node-keypair)
   * [Commits and Proposals](#commits-and-proposals)
     + [Proposal](#proposal)
+    + [Pending proposals](#pending-proposals)
     + [Commit](#commit)
   * [Key Schedule](#key-schedule)
     + [Epoch Authenticator](#epoch-authenticator)
@@ -269,6 +271,20 @@ if (result.kind === 'applicationMessage') {
     console.log(new TextDecoder().decode(result.message))  // "hello, bob"
 }
 ```
+
+The result also says who sent the message, as MLS authenticated it.
+`result.sender` is `{ senderType, leafIndex }` -- for an application
+message, `senderType` is `'member'` and `leafIndex` is the sender's leaf
+in the ratchet tree -- and `result.authenticatedData` is the
+`authenticatedData` the sender passed to `createApplicationMessage`.
+Attribute messages by these fields, not by transport metadata: the
+transport can lie, the signature cannot.
+
+When the message is a commit that was accepted, the `newState` result
+carries `committer` in the same shape. A member commit reports
+`senderType: 'member'` and the committer's leaf index; an external
+commit reports `senderType: 'new_member_commit'` and the leaf the joiner
+was placed in. `committer` is absent for proposals and rejected commits.
 
 ### Use with pre-existing keypairs
 
@@ -468,6 +484,12 @@ through.
 * Unmerged-leaf validation constrains only the nodes between the unmerged
   leaf and the parent under inspection. The previous whole-path rule
   rejected RFC-valid trees, which blocked joins entirely.
+* Ed25519 and Ed448 signatures are verified strictly (RFC 8032), under
+  the noble provider as well as WebCrypto, so a signature with a
+  non-canonical `R` is refused by every member rather than by some. A
+  LeafNode or KeyPackage whose signature key is the identity point or
+  any other small-order point is refused with a `ValidationError`: with
+  such a key, one fixed signature verifies for every message.
 
 All of these throw a `ValidationError`, or a `CryptoVerificationError`
 when a signature or MAC is what failed, or a `CodecError` when the bytes
@@ -475,6 +497,18 @@ will not decode at all. All three subclass `MlsError`, so catching that
 one covers a rejected message. An `InternalError` means the library found
 a bug in itself; if remote input ever produces one, that is worth
 reporting.
+
+One property is documented rather than enforced:
+
+* **ECDSA signatures are malleable in `s`.** On the P-256, P-384 and
+  P-521 suites, anyone holding a valid signature can produce a second
+  valid one over the same bytes by replacing `s` with `n - s`. WebCrypto
+  accepts both forms, so the noble provider does too; enforcing low-`s`
+  in one provider alone would fork a group that mixes them. A signature
+  therefore does not identify a message. Never key anything -- a
+  deduplication cache, a message ID, a replay filter -- on a hash of a
+  signature or of the signed bytes that contain one. Key on the content
+  instead, for example the proposal reference or the epoch and sender.
 
 ## Scenarios
 
@@ -1459,6 +1493,24 @@ Note that changing the signature algorithm away from `Ed25519` switches
 signing to `@noble/curves` (see `make-signature-impl.ts`), so the
 *all-WebCrypto* guarantee applies specifically to the defaults.
 
+### Incoming message callback
+
+`processMessage` takes a callback that decides whether to accept each
+incoming proposal and commit. Each proposal it sees carries a
+`senderType` -- `member`, `external`, `new_member_proposal` or
+`new_member_commit` -- alongside `senderLeafIndex`.
+
+Pass `undefined` and the library uses `defaultIncomingMessageCallback`,
+which rejects a `new_member_proposal` and accepts everything else. A
+`new_member_proposal` is a self-signed Add: it is authenticated only by
+the proposer's own KeyPackage signature, and anyone who knows the
+group's id and epoch (both cleartext) can send one. Accepting it by
+default would let the next routine commit add an outsider and send them
+a Welcome.
+
+`acceptAll` accepts everything, including a `new_member_proposal`. Pass
+it only if your application deliberately allows open self-add.
+
 ### Optional Ciphersuite Dependencies
 
 Non-default ciphersuites pull in extra packages that are declared as
@@ -1517,6 +1569,35 @@ shows the variants, each corresponding to one kind of change:
   (version/ciphersuite/extensions)
 * ExternalInit -- how an external joiner enters via an external commit
 * GroupContextExtensions -- change the group's extension set
+
+#### Pending proposals
+
+A buffered proposal blocks `createApplicationMessage` until a commit
+applies it (RFC 9420 behaviour). If none ever will -- the proposer left,
+or the proposal can never be committed -- the application can list and
+discard it. Both are pure functions over `ClientState`:
+
+```ts
+import {
+    listPendingProposals,
+    discardPendingProposal,
+} from '@vanishing.page/webcrypto-mls'
+
+// each entry: { ref, proposal, senderLeafIndex, senderType }
+for (const p of listPendingProposals(state)) {
+    if (shouldDrop(p)) state = discardPendingProposal(state, p.ref)
+}
+```
+
+`discardPendingProposal` returns a new state and leaves its input
+unchanged; an unknown reference returns the state as it was.
+
+The pending set is capped by `ClientConfig.maxPendingProposals`
+(default `defaultMaxPendingProposals`, 256). A proposal received or
+created while that many are pending is rejected with a
+`ValidationError`, and nothing already pending is evicted, so a flood
+of outsider proposals cannot push out an honest one. A cap of 0 accepts
+no proposals at all.
 
 #### Commit
 

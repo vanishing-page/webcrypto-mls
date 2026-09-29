@@ -1,8 +1,12 @@
 import type { CipherSuite } from '@hpke/core'
+import { OpenError } from '@hpke/core'
 import type { Aead } from '../../crypto/aead.js'
 import type { HpkeAlgorithm, Hpke, PrivateKey, PublicKey } from '../../crypto/hpke.js'
 import { bytesToBuffer, concatUint8Arrays } from '../../util/byte-array.js'
-import { CryptoError } from '../../mls-error.js'
+import {
+    CryptoError,
+    CryptoVerificationError,
+} from '../../mls-error.js'
 
 export async function makeGenericHpke (hpkealg:HpkeAlgorithm, aead:Aead, cs:CipherSuite):Promise<Hpke> {
     return {
@@ -15,6 +19,11 @@ export async function makeGenericHpke (hpkealg:HpkeAlgorithm, aead:Aead, cs:Ciph
                 )
                 return new Uint8Array(result)
             } catch (e) {
+                // An AEAD failure is a forged or corrupted ciphertext,
+                // the same class as a MAC or signature failure.
+                if (e instanceof OpenError) {
+                    throw new CryptoVerificationError(`${e}`)
+                }
                 throw new CryptoError(`${e}`)
             }
         },

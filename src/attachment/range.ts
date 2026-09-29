@@ -12,7 +12,7 @@ import type { SealCrypto } from './crypto.js'
 import { sealCryptoFromCiphersuite } from './crypto.js'
 import { AttachmentError } from './error.js'
 import { wipeSealState } from './schedule.js'
-import { attachmentCek } from './keys.js'
+import { attachmentCek, assertCekLength } from './keys.js'
 import type { KeySchedule } from '../key-schedule.js'
 import type { CiphersuiteImpl } from '../crypto/ciphersuite.js'
 import {
@@ -43,6 +43,13 @@ import {
  */
 export interface AttachmentRangeRead {
     ranges:ByteRange[]
+    /**
+     * Decrypts from one stream per entry of `ranges`, in order. A
+     * stream that sends more than its range's length is cancelled and
+     * the read errors with AttachmentError. If the read fails or its
+     * output is cancelled, every stream not yet read to its end is
+     * cancelled; the caller need not cancel them itself.
+     */
     decrypt:(
         streams:ReadableStream<Uint8Array>[]
     ) => ReadableStream<Uint8Array>
@@ -74,6 +81,7 @@ export async function openAttachmentRange (
     // Validate reference. As in reader.ts, the ciphersuite is known
     // here, so the snapshot length is pinned exactly.
     validateAttachmentRef(ref, crypto.kdf.size)
+    assertCekLength(cek)
 
     // Validate offset and length are safe integers
     if (!Number.isSafeInteger(range.offset) ||
@@ -112,8 +120,10 @@ export async function openAttachmentRange (
         }
     }
 
+    // The caller gets its own copy: the read keeps using `ranges`,
+    // and mutating the returned plan must not change what it checks.
     return {
-        ranges,
+        ranges: ranges.map(r => ({ ...r })),
         decrypt (streams) {
             return decryptRangeStream(
                 cek, ref, range, layoutParams, segFirst,
@@ -175,24 +185,51 @@ function decryptRangeStream (
         if (cancelled) throw new AttachmentError()
     }
 
+    // Sources before `undrained` were read to their end and need
+    // nothing. The one at `undrained` may be mid-drain, holding
+    // `activeReader`; the rest are untouched. A failed or cancelled
+    // read cancels all of those, so no connection keeps streaming a
+    // body nobody will read. cancel() on a closed or errored source
+    // is a no-op, and the rejections are swallowed because the read
+    // is already failing for its own reason.
+    let undrained = 0
+    let activeReader:ReadableStreamDefaultReader<Uint8Array>|null = null
+    const cancelSources = () => {
+        for (let j = undrained; j < streams.length; j++) {
+            if (j === undrained && activeReader) {
+                activeReader.cancel().catch(() => {})
+            } else if (!streams[j].locked) {
+                streams[j].cancel().catch(() => {})
+            }
+        }
+        activeReader = null
+        undrained = streams.length
+    }
+
     return new ReadableStream({
         async start (_controller) {
             try {
+                // Verify we have the right number of streams, before
+                // draining any: each drain is capped by its range.
+                if (streams.length !== ranges.length) {
+                    throw new AttachmentError()
+                }
+
                 // Drain all streams to bytes
                 const rangeBytes:Array<Uint8Array> = []
                 for (let i = 0; i < streams.length; i++) {
-                    const bytes = await drainStream(streams[i])
+                    activeReader = streams[i].getReader()
+                    const bytes = await drainStream(
+                        activeReader, ranges[i].length,
+                    )
+                    activeReader = null
+                    undrained = i + 1
                     throwIfCancelled()
                     rangeBytes.push(bytes)
                 }
 
                 // Build sparse view from ranges
                 const sparseView = new Map<number, Uint8Array>()
-
-                // Verify we have the right number of streams
-                if (rangeBytes.length !== ranges.length) {
-                    throw new AttachmentError()
-                }
 
                 // Verify each stream's length matches its range
                 for (let i = 0; i < ranges.length; i++) {
@@ -368,6 +405,7 @@ function decryptRangeStream (
                     plaintextWindowEnd,
                 )
             } catch (err) {
+                cancelSources()
                 doWipe()
                 if (err instanceof AttachmentError) {
                     throw err
@@ -414,22 +452,33 @@ function decryptRangeStream (
 
         cancel () {
             cancelled = true
+            cancelSources()
             doWipe()
         },
     })
 }
 
 /**
- * Helper to drain a ReadableStream to bytes.
+ * Drain a source to bytes, reading no further than one chunk past
+ * `expected`. A body longer than its range is cut off there: the
+ * reader is cancelled and the drain throws, so a hostile server cannot
+ * make the read buffer an oversized or endless body. A short body is
+ * returned as-is and rejected by the caller's length comparison.
  */
 async function drainStream (
-    stream:ReadableStream<Uint8Array>,
+    reader:ReadableStreamDefaultReader<Uint8Array>,
+    expected:number,
 ):Promise<Uint8Array> {
-    const reader = stream.getReader()
     const chunks:Uint8Array[] = []
+    let received = 0
     let result = await reader.read()
     while (!result.done) {
-        if (result.value) chunks.push(result.value)
+        chunks.push(result.value)
+        received += result.value.length
+        if (received > expected) {
+            reader.cancel().catch(() => {})
+            throw new AttachmentError()
+        }
         result = await reader.read()
     }
     const totalLen = chunks.reduce((sum, c) => sum + c.length, 0)

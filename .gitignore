@@ -5,6 +5,17 @@ test/*.js
 dist
 .wrangler
 .env
+.env.*
+!.env.example
+.dev.vars*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
 public
 .claude
 .test-bundle*.cjs
@@ -22,3 +33,4 @@ WIP.md
 .browser-tap-bundle.mjs
 specs
 .superpowers
+.scratch/**/logs

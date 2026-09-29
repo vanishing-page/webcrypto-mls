@@ -12,13 +12,14 @@ import { getCipherSuite } from
 import { getCiphersuiteFromName } from
     '../../src/crypto/ciphersuite.js'
 import {
-    decryptAttachmentStreamForGroup,
+    decryptAttachmentStream, decryptAttachmentStreamForGroup,
 } from '../../src/attachment/reader.js'
 import {
     openAttachmentRangeForGroup,
 } from '../../src/attachment/range.js'
-import { sealCryptoFromCiphersuite } from
-    '../../src/attachment/crypto.js'
+import {
+    sealCryptoFromCiphersuite, sealCryptoFromIds, type SealCrypto,
+} from '../../src/attachment/crypto.js'
 import { buildLayout } from './attachment-fixtures.js'
 import {
     drainStream, chunked,
@@ -1481,5 +1482,115 @@ test(
             'cancelled start() derived less than a full read ' +
                 `(${recorded.length} < ${fullCount})`
         )
+    },
+)
+
+// L10: the SEAL KDF's own scratch buffers
+
+/**
+ * True when `needle` appears as a contiguous run anywhere in `hay`.
+ */
+function containsBytes (hay:Uint8Array, needle:Uint8Array):boolean {
+    outer: for (let i = 0; i + needle.length <= hay.length; i++) {
+        for (let j = 0; j < needle.length; j++) {
+            if (hay[i + j] !== needle[j]) continue outer
+        }
+        return true
+    }
+    return false
+}
+
+/**
+ * Wrap a SealCrypto so every buffer handed to or returned by
+ * kdf.extract and kdf.expand is captured live (not copied), so a later
+ * wipe shows up in the capture. The payload key is copied out when
+ * produced, since the live buffer is wiped with the SealState.
+ */
+function recordKdfBuffers (base:SealCrypto):{
+    crypto:SealCrypto
+    captured:Uint8Array[]
+    extractInputs:Uint8Array[]
+    prks:Uint8Array[]
+    payloadKeys:Uint8Array[]
+} {
+    const captured:Uint8Array[] = []
+    // Copies of each extract input as it was when handed over, so a
+    // control can show the CEK really did pass through the KDF.
+    const extractInputs:Uint8Array[] = []
+    const prks:Uint8Array[] = []
+    const payloadKeys:Uint8Array[] = []
+    const crypto:SealCrypto = {
+        ...base,
+        kdf: {
+            ...base.kdf,
+            extract: async (salt, ikm) => {
+                const out = await base.kdf.extract(salt, ikm)
+                captured.push(salt, ikm, out)
+                extractInputs.push(ikm.slice())
+                return out
+            },
+            expand: async (prk, info, len) => {
+                const out = await base.kdf.expand(prk, info, len)
+                captured.push(prk, info, out)
+                prks.push(prk)
+                if (labelOf(info).includes('payload_key')) {
+                    payloadKeys.push(out.slice())
+                }
+                return out
+            },
+        },
+    }
+    return { crypto, captured, extractInputs, prks, payloadKeys }
+}
+
+async function sealAndReadRecorded ():Promise<{
+    cek:Uint8Array
+    captured:Uint8Array[]
+    extractInputs:Uint8Array[]
+    prks:Uint8Array[]
+    payloadKeys:Uint8Array[]
+}> {
+    const rec = recordKdfBuffers(await sealCryptoFromIds(2, 1))
+    const cek = new Uint8Array(32).map((_, i) => 0xa0 ^ i)
+    const oid = new TextEncoder().encode('kdf-scratch')
+    const plaintext = new Uint8Array(3000).fill(7)
+    const sealed = await encryptAttachment(
+        cek, oid, plaintext, rec.crypto,
+    )
+    await drainStream(decryptAttachmentStream(
+        cek, sealed.reference, chunked(sealed.bytes, 1024), rec.crypto,
+    ))
+    return { cek, ...rec }
+}
+
+test('L10: no KDF buffer holds the CEK once the caller wipes it',
+    async t => {
+        const { cek, captured, extractInputs } =
+            await sealAndReadRecorded()
+        const cekCopy = cek.slice()
+        t.ok(
+            extractInputs.some(b => containsBytes(b, cekCopy)),
+            'control: the CEK reached the KDF before the wipe',
+        )
+        cek.fill(0)
+        const holders = captured.filter(b => b !== cek &&
+            containsBytes(b, cekCopy))
+        t.equal(holders.length, 0, 'no captured KDF buffer holds the CEK')
+    },
+)
+
+test('L10: no KDF buffer holds the payload key after the read',
+    async t => {
+        const { payloadKeys, captured, prks } =
+            await sealAndReadRecorded()
+        t.equal(payloadKeys.length, 2, 'control: seal and open each ' +
+            'derived a payload key')
+        for (const pk of payloadKeys) {
+            const holders = captured.filter(b => containsBytes(b, pk))
+            t.equal(holders.length, 0,
+                'no captured KDF buffer holds the payload key')
+        }
+        t.ok(prks.length > 0 && prks.every(p => p.every(b => b === 0)),
+            'every PRK sealKdf handed to expand is zeroed')
     },
 )

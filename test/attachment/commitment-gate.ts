@@ -1,6 +1,15 @@
 import { test } from '@substrate-system/tapzero'
 import { sealObject, openObject } from '../../src/attachment/object.js'
-import { decryptAttachmentStream } from '../../src/attachment/reader.js'
+import {
+    decryptAttachmentStream, decryptAttachmentStreamForGroup,
+} from '../../src/attachment/reader.js'
+import { encryptAttachmentForGroup } from
+    '../../src/attachment/writer.js'
+import { getCipherSuite } from
+    '../../src/crypto/get-ciphersuite-impl.js'
+import { getCiphersuiteFromName } from
+    '../../src/crypto/ciphersuite.js'
+import { labelOf } from './helpers.js'
 import { openAttachmentRange } from '../../src/attachment/range.js'
 import { sealCryptoFromIds } from '../../src/attachment/crypto.js'
 import type { SealCrypto } from '../../src/attachment/crypto.js'
@@ -308,3 +317,149 @@ test(
         }
     },
 )
+
+/**
+ * A source over `bytes` in `size`-byte chunks that counts what it has
+ * handed over and records whether it was cancelled.
+ */
+function countingSource (bytes:Uint8Array, size:number):{
+    stream:ReadableStream<Uint8Array>
+    pulled:() => number
+    cancelled:() => boolean
+} {
+    let offset = 0
+    let wasCancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+        pull (controller) {
+            if (offset >= bytes.length) {
+                controller.close()
+                return
+            }
+            const end = Math.min(offset + size, bytes.length)
+            controller.enqueue(bytes.slice(offset, end))
+            offset = end
+        },
+        cancel () {
+            wasCancelled = true
+        },
+    }, { highWaterMark: 0 })
+    return {
+        stream,
+        pulled: () => offset,
+        cancelled: () => wasCancelled,
+    }
+}
+
+/**
+ * Record every `kdf.expand` output by its label, keeping the live
+ * buffer so a later wipe is visible.
+ */
+function recordingKdf<T extends { kdf:SealCrypto['kdf'] }> (base:T):{
+    wrapped:T
+    byLabel:(label:string) => Uint8Array[]
+} {
+    const seen:Array<{ label:string, out:Uint8Array }> = []
+    const wrapped = {
+        ...base,
+        kdf: {
+            ...base.kdf,
+            expand: async (
+                prk:Uint8Array, info:Uint8Array, len:number,
+            ) => {
+                const out = await base.kdf.expand(prk, info, len)
+                seen.push({ label: labelOf(info), out })
+                return out
+            },
+        },
+    }
+    return {
+        wrapped,
+        byLabel: label => seen
+            .filter(s => s.label.includes(label))
+            .map(s => s.out),
+    }
+}
+
+const SCHEDULE_KEYS = ['payload_key', 'acc_key', 'nonce_base']
+
+/** The object with one byte of its stored commitment flipped. */
+function wrongCommitment (bytes:Uint8Array):Uint8Array {
+    const out = bytes.slice()
+    out[32] ^= 0x01
+    return out
+}
+
+// Small chunks, so the header is many chunks long and the bound below
+// is far tighter than the header itself.
+const CHUNK = 16
+
+test('L11: the reader rejects a wrong commitment on the fixed prefix',
+    async t => {
+        const f = await fixture()
+        const nh = f.crypto.kdf.size
+        const rec = recordingKdf(f.crypto)
+        const src = countingSource(wrongCommitment(f.bytes), CHUNK)
+        const cek = goodCek()
+
+        const err = await thrownBy(async () => {
+            const { total } = await drainStream(decryptAttachmentStream(
+                cek, f.ref, src.stream, rec.wrapped, { ownedCek: cek },
+            ))
+            return total
+        })
+
+        t.ok(err instanceof AttachmentError, 'rejects with AttachmentError')
+        t.ok(
+            src.pulled() <= 32 + nh + CHUNK,
+            `pulled ${src.pulled()} bytes, at most prefix plus one chunk`,
+        )
+        t.ok(src.cancelled(), 'the source is cancelled')
+        t.ok(cek.every(b => b === 0), 'the owned CEK is zeroed')
+        for (const label of SCHEDULE_KEYS) {
+            const bufs = rec.byLabel(label)
+            t.ok(bufs.length > 0, `${label} was derived`)
+            t.ok(
+                bufs.every(b => b.every(x => x === 0)),
+                `${label} is zeroed`,
+            )
+        }
+    })
+
+test('L11: the group reader rejects a wrong commitment on the prefix',
+    async t => {
+        const cs = await getCipherSuite(getCiphersuiteFromName(
+            'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        ))
+        const keySchedule = {
+            applicationExportSecret: new Uint8Array(32).fill(7),
+        }
+        const sealed = await encryptAttachmentForGroup(
+            keySchedule, OBJECT_ID, new Uint8Array(PLAINTEXT_LENGTH), cs,
+        )
+        const rec = recordingKdf(cs)
+        const nh = cs.kdf.size
+        const src = countingSource(wrongCommitment(sealed.bytes), CHUNK)
+
+        const err = await thrownBy(async () => {
+            const stream = await decryptAttachmentStreamForGroup(
+                keySchedule, sealed.reference, src.stream, rec.wrapped,
+            )
+            const { total } = await drainStream(stream)
+            return total
+        })
+
+        t.ok(err instanceof AttachmentError, 'rejects with AttachmentError')
+        t.ok(
+            src.pulled() <= 32 + nh + CHUNK,
+            `pulled ${src.pulled()} bytes, at most prefix plus one chunk`,
+        )
+        t.ok(src.cancelled(), 'the source is cancelled')
+        for (const label of SCHEDULE_KEYS) {
+            const bufs = rec.byLabel(label)
+            t.ok(bufs.length > 0, `${label} was derived`)
+            t.ok(
+                bufs.every(b => b.every(x => x === 0)),
+                `${label} is zeroed`,
+            )
+        }
+    })

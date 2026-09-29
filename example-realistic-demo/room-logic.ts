@@ -1,4 +1,9 @@
 import type { EntryKind, LogEntry, Standing } from './protocol.js'
+import { identityProofMessage } from './protocol.js'
+import {
+    base64urlToBytes,
+    bytesToBuffer
+} from '../src/util/byte-array.js'
 
 /**
  * The room's decisions that touch no storage, no globals and no network.
@@ -28,6 +33,49 @@ export function entriesAfter (
     return entries
         .filter(entry => entry.seq > cursor)
         .sort((a, b) => a.seq - b.seq)
+}
+
+/**
+ * How many wire characters of entries one replay page may carry, as
+ * the JSON array `replayPage` measures. A Cloudflare WebSocket frame is
+ * at most 1 MiB; half of it leaves the `log` envelope far more room
+ * than it needs, and still holds a thousand ordinary commits.
+ */
+export const REPLAY_PAGE_BUDGET = 512 * 1024
+
+export interface ReplayPage {
+    entries:LogEntry[]
+    /** True when entries after the last one on this page remain. */
+    more:boolean
+}
+
+/**
+ * One page of the replay after `cursor`: the longest run of entries, in
+ * seq order, whose JSON array fits `budget`. Never empty while anything
+ * remains -- a single entry larger than the budget goes alone, which is
+ * safe because `MAX_PAYLOAD_LENGTH` already bounds one entry well under
+ * a frame. Without that floor an oversized entry would stall the walk.
+ */
+export function replayPage (
+    entries:LogEntry[],
+    cursor:number,
+    budget:number = REPLAY_PAGE_BUDGET
+):ReplayPage {
+    const after = entriesAfter(entries, cursor)
+    // `[` and `]`, then each entry, with a comma between entries.
+    let size = 2
+    let count = 0
+    for (const entry of after) {
+        const next = size + JSON.stringify(entry).length +
+            (count > 0 ? 1 : 0)
+        if (count > 0 && next > budget) break
+        size = next
+        count++
+    }
+    return {
+        entries: after.slice(0, count),
+        more: count < after.length
+    }
 }
 
 /**
@@ -98,11 +146,12 @@ export function classifyStanding (
  * This settles a question left open through Phase 5: before it, any
  * socket that had said `hello` could append. Payloads are opaque and
  * end-to-end encrypted, so what this closes is log noise and unbounded
- * storage growth by a stranger, not a disclosure. It is not
- * authentication either -- an identity is a public signature key that
- * anyone who has seen the log knows, so a stranger who copies an admitted
- * member's identity still gets through. What it stops is a caller who has
- * never been admitted at all.
+ * storage growth by a stranger, not a disclosure. It does not
+ * authenticate: the identity it is handed has already been proved, at
+ * `hello`, by a signature over the socket's challenge (see
+ * `verifyIdentityProof`), and the room attaches no identity to a socket
+ * that has not. What this adds is membership -- it stops a caller who
+ * holds a real key but has never been admitted.
  */
 export function mayWriteLog (
     identity:string,
@@ -113,6 +162,56 @@ export function mayWriteLog (
     if (isCreator) return true
     if (removed.includes(identity)) return false
     return admitted.includes(identity)
+}
+
+/**
+ * What a room id currently holds. `tombstoned` is an id whose room
+ * expired: the alarm deleted every row of group data and left only the
+ * record that the id was used.
+ */
+export type RoomState = 'absent'|'live'|'tombstoned'
+
+/**
+ * Whether a `create` may claim an id. Only an id that never held a room
+ * may. A tombstoned id stays dead, so an old invitation link or a saved
+ * session cannot reconnect into a room somebody else created under the
+ * same id after the first one expired.
+ */
+export function mayCreateRoom (state:RoomState):boolean {
+    return state === 'absent'
+}
+
+/**
+ * Whether a member may write an entry of this kind. Only the creator
+ * commits in this demo -- approvals and removals are both theirs -- so a
+ * `commit` from anyone else is a replay or a forgery, and every other
+ * member's client would have to decide what to do with it. Asked after
+ * `mayWriteLog`: this narrows what a member may write, it does not
+ * admit anyone.
+ *
+ * `kind` is still the sender's claim; the room never decodes a payload.
+ * A member who labels a commit `application` gets it into the log, and
+ * the client's own verdict in `commit-verdict.ts` is what stops that one.
+ */
+export function mayWriteKind (
+    kind:LogEntry['kind'],
+    isCreator:boolean
+):boolean {
+    return kind !== 'commit' || isCreator
+}
+
+/**
+ * Whether an incoming socket may close the live socket held by
+ * `liveIdentity`. Only a socket that proved that same identity may: an
+ * identity is a public key everyone in the room has seen, so a bare
+ * claim to it would let anyone evict any member, and a proof of some
+ * other identity is not a reconnect of this one.
+ */
+export function mayReplaceSocket (
+    liveIdentity:string,
+    incoming:{ identity:string, proven:boolean }
+):boolean {
+    return incoming.proven && incoming.identity === liveIdentity
 }
 
 /**
@@ -231,6 +330,86 @@ export function classifyJoinRequest (req:{
 }
 
 /**
+ * The shortest gap between two `mls` writes from one socket.
+ *
+ * Short on purpose. The creator sends commits back to back while it
+ * walks a pending list, and a refused commit leaves the creator at an
+ * epoch nobody else reached, so the interval has to sit below the time
+ * one commit takes to build. What it still stops is the loop that holds
+ * a socket open and writes as fast as the frames go out: twenty writes
+ * a second is far past any honest chat and far below a flood.
+ */
+export const MLS_WRITE_INTERVAL_MS = 50
+
+/**
+ * How many entries the log may hold. A demo room lives three days;
+ * ten thousand entries is a busy conversation well past anything a
+ * demo sees, and it is the worst case a paginated replay has to walk.
+ */
+export const MAX_LOG_ROWS = 10_000
+
+/**
+ * How many payload characters the log may hold in total, counted as the
+ * room stores them (base64 wire characters, never decoded). Each entry
+ * may be up to `MAX_PAYLOAD_LENGTH`, so the row cap alone would allow
+ * gigabytes; 32 MiB is thousands of ordinary commits and messages and
+ * keeps a full replay a bounded number of frames.
+ */
+export const MAX_LOG_BYTES = 32 * 1024 * 1024
+
+/**
+ * Why an `mls` write was refused, or `ok`. The throttle shares its
+ * reason with the join-request throttle, because to the writer both mean
+ * "wait". The two caps are separate reasons: a full log and a heavy log
+ * are both permanent for this room, but only one says the payload size
+ * mattered.
+ */
+export type MlsWriteVerdict =
+    | 'ok'
+    | 'rate-limited'
+    | 'log-full'
+    | 'log-too-large'
+
+/**
+ * Whether an `mls` write may be appended to the log.
+ *
+ * Most-specific-first, as in `classifyJoinRequest`: the throttle is
+ * about this socket alone, so it is named even into a full log -- a
+ * flooder hears that it is being throttled rather than learning the
+ * room's size. The row cap comes before the byte cap because it does
+ * not depend on the payload in hand; the byte cap is the only check
+ * that a smaller payload could pass.
+ *
+ * `logRows` and `logBytes` are read from storage by the caller (a count
+ * and a sum over the log), never from a counter that could drift.
+ *
+ * A `lastMlsAt` in the future counts as no prior write, for the same
+ * hibernation reason as `lastRequestAt` in `classifyJoinRequest`.
+ */
+export function classifyMlsWrite (req:{
+    payloadLength:number
+    logRows:number
+    logBytes:number
+    lastMlsAt:number|null
+    now:number
+}):MlsWriteVerdict {
+    if (req.lastMlsAt !== null) {
+        const elapsed = req.now - req.lastMlsAt
+        if (elapsed >= 0 && elapsed < MLS_WRITE_INTERVAL_MS) {
+            return 'rate-limited'
+        }
+    }
+
+    if (req.logRows >= MAX_LOG_ROWS) return 'log-full'
+
+    if (req.logBytes + req.payloadLength > MAX_LOG_BYTES) {
+        return 'log-too-large'
+    }
+
+    return 'ok'
+}
+
+/**
  * Room ids are generated with nanoid, whose default alphabet is
  * `A-Za-z0-9_-`. Ten characters is 60 bits, which is far more than a
  * demo room needs to avoid collisions.
@@ -338,3 +517,72 @@ export function securityHeaders (origin:string):Record<string, string> {
         'X-Content-Type-Options': 'nosniff'
     }
 }
+
+/**
+ * Whether `proof` is a signature over this room's `challenge` by the key
+ * that `identity` names. An identity is the base64url of an Ed25519
+ * signature public key, so the identity is its own verification key and
+ * the room needs no registry.
+ *
+ * Anything malformed -- an identity that is not a key, a proof that is
+ * not base64url -- is a failed proof, never a throw: every input here
+ * came off a socket.
+ */
+export async function verifyIdentityProof (
+    identity:string,
+    challenge:string,
+    roomId:string,
+    proof:string
+):Promise<boolean> {
+    try {
+        const subtle = crypto.subtle
+        const key = await subtle.importKey(
+            'raw',
+            bytesToBuffer(base64urlToBytes(identity)),
+            { name: 'Ed25519' },
+            false,
+            ['verify']
+        )
+        return await subtle.verify(
+            { name: 'Ed25519' },
+            key,
+            bytesToBuffer(base64urlToBytes(proof)),
+            identityProofMessage(roomId, challenge)
+        )
+    } catch {
+        return false
+    }
+}
+
+/**
+ * What the room registry says of an id: `live` from `create` until the
+ * expiry alarm, `expired` after it, and null for an id no room was ever
+ * created under.
+ */
+export type RegistryEntry = 'live'|'expired'|null
+
+/**
+ * How the GET route answers an id, decided before any room object is
+ * named. Only a live id is worth asking for its times; anything else is
+ * answered 404 from the registry alone, so a GET for an unused id never
+ * instantiates a Durable Object to say it has no room.
+ */
+export function roomInfoDecision (
+    entry:RegistryEntry
+):'no-room'|'ask-room' {
+    return entry === 'live' ? 'ask-room' : 'no-room'
+}
+
+/**
+ * The per-address limit on socket upgrades, applied at the Worker before
+ * a room is named. The Worker cannot tell a `create` from a `hello`
+ * before the socket opens, so this bounds both and has to leave room for
+ * honest reconnect backoff (`reconnectDelay` in
+ * `client/delivery-cursor.ts`) from several tabs behind one address.
+ *
+ * These are copies: the binding reads its numbers from the `ratelimits`
+ * block in `wrangler.jsonc`, which cannot import them. Change the two
+ * together. The binding accepts a period of 10 or 60 seconds only.
+ */
+export const UPGRADE_LIMIT = 100
+export const UPGRADE_PERIOD_SECONDS = 60

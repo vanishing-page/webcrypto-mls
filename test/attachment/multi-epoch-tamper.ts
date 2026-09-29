@@ -207,3 +207,131 @@ test('multi-epoch tamper: the range path rejects a flipped epoch 1 leaf',
             )
         }
     })
+
+/**
+ * A source over `bytes` in `size`-byte chunks that counts what it has
+ * handed over and records whether it was cancelled. `highWaterMark: 0`
+ * so nothing is pulled ahead of what the reader asks for.
+ */
+function countingSource (bytes:Uint8Array, size:number):{
+    stream:ReadableStream<Uint8Array>
+    pulled:() => number
+    cancelled:() => boolean
+} {
+    let offset = 0
+    let wasCancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+        pull (controller) {
+            if (offset >= bytes.length) {
+                controller.close()
+                return
+            }
+            const end = Math.min(offset + size, bytes.length)
+            controller.enqueue(bytes.slice(offset, end))
+            offset = end
+        },
+        cancel () {
+            wasCancelled = true
+        },
+    }, { highWaterMark: 0 })
+    return {
+        stream,
+        pulled: () => offset,
+        cancelled: () => wasCancelled,
+    }
+}
+
+test('L11: the stream rejects a flipped epoch 0 leaf at epoch 0',
+    async t => {
+        const f = await multiEpochFixture()
+        const { l } = buildLayout(f.plaintext.length, f.crypto)
+        // 16 divides both the metadata offset and the leaf length, so
+        // no chunk straddles the end of epoch 0's run.
+        const CHUNK = 16
+        const epoch1Run = l.metaOffset + (1024 * l.metaLen)
+        const src = countingSource(await tamperedAt(leafOffset(f, 0)), CHUNK)
+        let emitted = 0
+        let caught:unknown = null
+        const reader = decryptAttachmentStream(
+            f.cek, f.ref, src.stream, f.crypto,
+        ).getReader()
+        try {
+            let result = await reader.read()
+            while (!result.done) {
+                emitted += result.value.length
+                result = await reader.read()
+            }
+        } catch (err) {
+            caught = err
+        } finally {
+            reader.releaseLock()
+        }
+
+        t.ok(caught instanceof AttachmentError, 'rejects with AttachmentError')
+        t.equal(emitted, 0, 'no plaintext is emitted')
+        t.ok(
+            src.pulled() <= epoch1Run,
+            `pulled ${src.pulled()} bytes, none of epoch 1's run ` +
+                `(which starts at ${epoch1Run})`,
+        )
+        t.ok(src.cancelled(), 'the source is cancelled')
+    })
+
+test('L11: a flipped epoch 1 head is rejected before any plaintext',
+    async t => {
+        const f = await multiEpochFixture()
+        const { l } = buildLayout(f.plaintext.length, f.crypto)
+        const CHUNK = 16
+        const src = countingSource(await tamperedAt(headOffset(f, 1)), CHUNK)
+        let emitted = 0
+        let caught:unknown = null
+        const reader = decryptAttachmentStream(
+            f.cek, f.ref, src.stream, f.crypto,
+        ).getReader()
+        try {
+            let result = await reader.read()
+            while (!result.done) {
+                emitted += result.value.length
+                result = await reader.read()
+            }
+        } catch (err) {
+            caught = err
+        } finally {
+            reader.releaseLock()
+        }
+
+        t.ok(caught instanceof AttachmentError, 'rejects with AttachmentError')
+        t.equal(emitted, 0, 'no plaintext is emitted')
+        t.ok(
+            src.pulled() <= l.metaOffset,
+            `pulled ${src.pulled()} bytes, none of the metadata ` +
+                `(which starts at ${l.metaOffset})`,
+        )
+        t.ok(src.cancelled(), 'the source is cancelled')
+    })
+
+test('L11: a partial read that cancels inside epoch 0 is correct',
+    async t => {
+        const f = await multiEpochFixture()
+        const src = countingSource(f.sealed.bytes, 1 << 16)
+        const reader = decryptAttachmentStream(
+            f.cek, f.ref, src.stream, f.crypto,
+        ).getReader()
+        const want = 3 * SEGMENT_MAX
+        const got = new Uint8Array(want)
+        let off = 0
+        while (off < want) {
+            const result = await reader.read()
+            if (result.done) break
+            got.set(result.value.subarray(0, want - off), off)
+            off += result.value.length
+        }
+        await reader.cancel()
+
+        t.ok(off >= want, 'the first three segments arrive')
+        t.ok(
+            got.every((b, i) => b === f.plaintext[i]),
+            'they match the plaintext',
+        )
+        t.ok(src.cancelled(), 'the source is cancelled')
+    })

@@ -1,12 +1,21 @@
 import type { ClientState } from './client-state.js'
-import { checkCanSendApplicationMessages, processProposal } from './client-state.js'
+import {
+    checkCanSendApplicationMessages,
+    checkCanSendHandshakeMessages,
+    throwIfDefined,
+    validateProposalOnReceipt
+} from './client-state.js'
+import { makeProposalRef } from './authenticated-content.js'
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
 import type { MLSMessage } from './message.js'
 import type { PrivateMessage } from './private-message.js'
 import { protectProposal, protectApplicationData } from './message-protection.js'
 import { protectProposalPublic } from './message-protection-public.js'
 import type { Proposal } from './proposal.js'
-import { addUnappliedProposal } from './unapplied-proposals.js'
+import {
+    addUnappliedProposal,
+    checkPendingCapacity,
+} from './unapplied-proposals.js'
 
 export async function createProposal (
     state:ClientState,
@@ -15,6 +24,25 @@ export async function createProposal (
     cs:CiphersuiteImpl,
     authenticatedData:Uint8Array = new Uint8Array(),
 ):Promise<{ newState:ClientState; message:MLSMessage }> {
+    checkCanSendHandshakeMessages(state)
+
+    throwIfDefined(checkPendingCapacity(
+        state.unappliedProposals,
+        state.clientConfig.maxPendingProposals,
+    ))
+
+    // the same checks a receiver applies, so this client never stores (or
+    // sends) a proposal every peer would refuse
+    throwIfDefined(
+        await validateProposalOnReceipt(
+            state,
+            proposal,
+            state.privatePath.leafIndex,
+            true,
+            cs,
+        ),
+    )
+
     if (publicMessage) {
         const result = await protectProposalPublic(
             state.signaturePrivateKey,
@@ -25,12 +53,24 @@ export async function createProposal (
             state.privatePath.leafIndex,
             cs,
         )
-        const newState = await processProposal(
-            state,
-            { content: result.publicMessage.content, auth: result.publicMessage.auth, wireformat: 'mls_public_message' },
-            proposal,
+        const ref = await makeProposalRef(
+            {
+                content: result.publicMessage.content,
+                auth: result.publicMessage.auth,
+                wireformat: 'mls_public_message',
+            },
             cs.hash,
         )
+        const newState = {
+            ...state,
+            unappliedProposals: addUnappliedProposal(
+                ref,
+                state.unappliedProposals,
+                proposal,
+                state.privatePath.leafIndex,
+                'member',
+            ),
+        }
         return {
             newState,
             message: { wireformat: 'mls_public_message', version: 'mls10', publicMessage: result.publicMessage },
@@ -56,6 +96,7 @@ export async function createProposal (
                 state.unappliedProposals,
                 proposal,
                 state.privatePath.leafIndex,
+                'member',
             ),
         }
 

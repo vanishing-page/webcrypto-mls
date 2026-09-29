@@ -1,5 +1,7 @@
 import { test } from '@substrate-system/tapzero'
-import { frame, lh, uint16be } from '../../src/attachment/kdf.js'
+import {
+    frame, lh, sealKdf, uint16be,
+} from '../../src/attachment/kdf.js'
 import { sealCryptoFromIds } from '../../src/attachment/crypto.js'
 import { startSeal, SALT_LENGTH } from
     '../../src/attachment/schedule.js'
@@ -149,3 +151,22 @@ test('US-022a: startSeal rejects a long salt', async t => {
         )
     }
 })
+
+/**
+ * kdf.ts sealKdf(): it wipes the extract input and PRK it allocated,
+ * and must not reach past them into the caller's ikm arrays or the
+ * returned output.
+ */
+test('L10: sealKdf leaves the caller ikm and its output intact',
+    async t => {
+        const { kdf } = await sealCryptoFromIds(2, 1)
+        const a = new Uint8Array(32).fill(0x11)
+        const b = new Uint8Array(40).fill(0x22)
+        const out = await sealKdf(
+            kdf, 'proto', 'label', [a, b], [Uint8Array.of(1)], 32,
+        )
+        t.ok(a.every(x => x === 0x11), 'first ikm is unchanged')
+        t.ok(b.every(x => x === 0x22), 'second ikm is unchanged')
+        t.ok(!out.every(x => x === 0), 'the output is not zeroed')
+    },
+)

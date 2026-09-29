@@ -190,6 +190,20 @@ for (const cs of testCiphersuites()) {
         }
     })
 
+    test('retainKeysForGenerations 1 retains the most recent generation ' +
+        cs, async (t) => {
+        try {
+            await retainKeysForGenerationsOneRetainsMostRecent(
+                t, cs as CiphersuiteName)
+        } catch (error:any) {
+            if (skippable(error)) {
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
+                return
+            }
+            throw error
+        }
+    })
+
     test('protectApplicationData zeroizes the derived key and nonce after use ' + cs, async (t) => {
         try {
             await protectZeroizesKeyAndNonce(t, cs as CiphersuiteName)
@@ -214,9 +228,10 @@ for (const cs of testCiphersuites()) {
         }
     })
 
-    test('a commit that blanks a node drops and zeroizes the superseded private key ' + cs, async (t) => {
+    test('a commit that blanks a node drops the private key and leaves the ' +
+        'prior state intact ' + cs, async (t) => {
         try {
-            await blankedNodePrivateKeyIsDroppedAndZeroized(t, cs as CiphersuiteName)
+            await blankedNodePrivateKeyIsDropped(t, cs as CiphersuiteName)
         } catch (error:any) {
             if (skippable(error)) {
                 t.comment(`Skipping ${cs}: ${skipReason(error)}`)
@@ -650,13 +665,18 @@ async function ratchetToGenerationKeepsOutOfOrderSecretIntact (t:any, cipherSuit
 
     // fast-forward the handshake ratchet to generation 2, retaining
     // generations 0 and 1 in unusedGenerations for out-of-order delivery
-    const ratcheted = await ratchetUntil(node.handshake, 2, defaultKeyRetentionConfig, impl.kdf)
+    const ratcheted = await ratchetUntil(
+        node.handshake, 2, defaultKeyRetentionConfig, impl)
     const treeWithRatchetedNode = updateArray(tree, leafNodeIndex, { ...node, handshake: ratcheted })
 
-    const desiredGenerationSecret = ratcheted.unusedGenerations[0]
-    if (desiredGenerationSecret === undefined) throw new Error('Expected generation 0 to be retained')
-    t.ok(desiredGenerationSecret.some((b) => b !== 0), 'sanity: retained out-of-order secret is non-zero')
-    const desiredBefore = desiredGenerationSecret.slice()
+    const desiredGeneration = ratcheted.unusedGenerations[0]
+    if (desiredGeneration === undefined) {
+        throw new Error('Expected generation 0 to be retained')
+    }
+    t.ok(desiredGeneration.key.some((b) => b !== 0),
+        'sanity: retained out-of-order key is non-zero')
+    const keyBefore = desiredGeneration.key.slice()
+    const nonceBefore = desiredGeneration.nonce.slice()
 
     const result = await ratchetToGeneration(
         treeWithRatchetedNode,
@@ -666,12 +686,23 @@ async function ratchetToGenerationKeepsOutOfOrderSecretIntact (t:any, cipherSuit
         impl,
     )
 
-    // the retained secret belongs to the input tree, so consuming it must
-    // drop the reference without wiping the buffer (security-audit.md C1)
+    // the caller wipes what it gets back, so the retained pair it came
+    // from has to be handed out as a copy
+    result.key.fill(0)
+    result.nonce.fill(0)
+
+    // the retained pair belongs to the input tree, so consuming it must
+    // drop the reference without wiping the buffers (security-audit.md C1)
     t.deepEqual(
-        desiredGenerationSecret,
-        desiredBefore,
-        'the consumed out-of-order generation secret should be left intact in the input tree',
+        desiredGeneration.key,
+        keyBefore,
+        'the consumed out-of-order key should be left intact in the input tree',
+    )
+    t.deepEqual(
+        desiredGeneration.nonce,
+        nonceBefore,
+        'the consumed out-of-order nonce should be left intact in the ' +
+            'input tree',
     )
     t.equal(
         result.newTree[leafNodeIndex]!.handshake.unusedGenerations[0],
@@ -691,23 +722,23 @@ async function evictedGenerationSecretsAreDroppedNotWiped (t:any, cipherSuite:Ci
 
     const retainConfig = { ...defaultKeyRetentionConfig, retainKeysForGenerations: 2 }
 
-    const ratchet1 = await ratchetUntil(node.handshake, 1, retainConfig, impl.kdf)
-    const ratchet2 = await ratchetUntil(ratchet1, 2, retainConfig, impl.kdf)
+    const ratchet1 = await ratchetUntil(node.handshake, 1, retainConfig, impl)
+    const ratchet2 = await ratchetUntil(ratchet1, 2, retainConfig, impl)
 
-    const evictedSecret = ratchet2.unusedGenerations[0]
-    if (evictedSecret === undefined) throw new Error('Expected generation 0 to still be retained after step 2')
-    t.ok(evictedSecret.some((b) => b !== 0), 'sanity: generation 0 secret is non-zero before eviction')
-    const evictedBefore = evictedSecret.slice()
+    const evicted = ratchet2.unusedGenerations[0]
+    if (evicted === undefined) {
+        throw new Error('Expected generation 0 to be retained after step 2')
+    }
+    t.ok(evicted.key.some((b) => b !== 0),
+        'sanity: generation 0 key is non-zero before eviction')
+    const evictedBefore = evicted.key.slice()
 
-    // generation 0's secret is the tree node's own starting secret, still
-    // referenced by `node` and by any ClientState holding this tree
-    t.deepEqual(evictedSecret, node.handshake.secret, 'sanity: generation 0 is the node\'s live secret')
+    const ratchet3 = await ratchetUntil(ratchet2, 3, retainConfig, impl)
 
-    const ratchet3 = await ratchetUntil(ratchet2, 3, retainConfig, impl.kdf)
-
+    // `ratchet2` is still a live state that holds the evicted pair
     t.equal(ratchet3.unusedGenerations[0], undefined, 'generation 0 should be evicted once retention limit is exceeded')
     t.deepEqual(
-        evictedSecret,
+        evicted.key,
         evictedBefore,
         'an evicted generation should be dropped for GC, not wiped out from under a live state',
     )
@@ -724,13 +755,38 @@ async function retainKeysForGenerationsZeroRetainsNothing (t:any, cipherSuite:Ci
 
     const retainConfig = { ...defaultKeyRetentionConfig, retainKeysForGenerations: 0 }
 
-    const ratcheted = await ratchetUntil(node.handshake, 5, retainConfig, impl.kdf)
+    const ratcheted = await ratchetUntil(node.handshake, 5, retainConfig, impl)
 
     t.equal(ratcheted.generation, 5, 'sanity: the ratchet advanced 5 generations')
     t.deepEqual(
         Object.keys(ratcheted.unusedGenerations),
         [],
         'retainKeysForGenerations 0 should retain no skipped generation secrets',
+    )
+}
+
+async function retainKeysForGenerationsOneRetainsMostRecent (
+    t:any,
+    cipherSuite:CiphersuiteName,
+) {
+    const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
+
+    const encryptionSecret = impl.rng.randomBytes(impl.kdf.size)
+    const tree = await createSecretTree(1, encryptionSecret, impl.kdf)
+    const node = tree[leafToNodeIndex(toLeafIndex(0))]!
+
+    const retainConfig = {
+        ...defaultKeyRetentionConfig,
+        retainKeysForGenerations: 1,
+    }
+
+    const ratcheted = await ratchetUntil(node.handshake, 5, retainConfig, impl)
+
+    t.deepEqual(
+        Object.keys(ratcheted.unusedGenerations).map(Number),
+        [4],
+        'retainKeysForGenerations 1 should retain only the most recent ' +
+            'skipped generation',
     )
 }
 
@@ -745,7 +801,7 @@ async function retainKeysForGenerationsTwoRetainsMostRecent (t:any, cipherSuite:
 
     const retainConfig = { ...defaultKeyRetentionConfig, retainKeysForGenerations: 2 }
 
-    const ratcheted = await ratchetUntil(node.handshake, 5, retainConfig, impl.kdf)
+    const ratcheted = await ratchetUntil(node.handshake, 5, retainConfig, impl)
 
     t.deepEqual(
         Object.keys(ratcheted.unusedGenerations).map(Number).sort((a, b) => a - b),
@@ -874,7 +930,10 @@ async function protectZeroizesKeyAndNonce (t:any, cipherSuite:CiphersuiteName) {
     t.ok(contentCall.nonce.every((b) => b === 0), 'the derived nonce should be zeroized after the AEAD call')
 }
 
-async function blankedNodePrivateKeyIsDroppedAndZeroized (t:any, cipherSuite:CiphersuiteName) {
+async function blankedNodePrivateKeyIsDropped (
+    t:any,
+    cipherSuite:CiphersuiteName
+) {
     const impl = await getCipherSuite(getCiphersuiteFromName(cipherSuite))
 
     async function makeMember (name:string) {
@@ -931,8 +990,14 @@ async function blankedNodePrivateKeyIsDroppedAndZeroized (t:any, cipherSuite:Cip
     )
     aliceGroup = aliceProcessSelfUpdate.newState
 
-    // snapshot the private key buffers charlie holds before dave is removed
+    // the private key buffers charlie holds before dave is removed, and a
+    // copy of their contents: the pre-removal state is charlie's to keep
+    // (audit 2026-09 H1), so dropping a key from the new state must not
+    // wipe it out of this one
     const preRemovalKeys = { ...charlieGroup.privatePath.privateKeys }
+    const preRemovalCopies = Object.fromEntries(
+        Object.entries(preRemovalKeys).map(([k, v]) => [k, v.slice()]),
+    )
     t.ok(Object.keys(preRemovalKeys).length > 0, 'sanity: charlie holds at least one node private key')
 
     // find dave's actual node index from alice's tree rather than assuming it
@@ -975,9 +1040,11 @@ async function blankedNodePrivateKeyIsDroppedAndZeroized (t:any, cipherSuite:Cip
             undefined,
             `blanked node ${nodeIndex}'s private key entry should be dropped`,
         )
-        t.ok(
-            oldValue.every((b) => b === 0),
-            `blanked node ${nodeIndex}'s superseded private key buffer should be zeroized`,
+        t.deepEqual(
+            oldValue,
+            preRemovalCopies[key],
+            `blanked node ${nodeIndex}'s key should be intact in the ` +
+            'prior state',
         )
     }
 

@@ -93,6 +93,12 @@ export interface SealState {
      * SealState, so a Map field costs nothing at the wire boundary.
      */
     epochKeys:Map<bigint, Uint8Array>
+    /**
+     * Set by `wipeSealState`. An epoch-key derivation that was in
+     * flight when the wipe ran checks it before caching, so a cancel
+     * mid-derivation cannot leave a live key in a wiped state.
+     */
+    wiped:boolean
 }
 
 async function deriveSchedule (
@@ -139,6 +145,7 @@ async function deriveSchedule (
         nonceBase,
         crypto,
         epochKeys: new Map(),
+        wiped: false,
     }
 }
 
@@ -207,6 +214,13 @@ export async function segmentKey (
         [uint64be(epochIndex)],
         state.crypto.keyLength,
     )
+    // The state may have been wiped while sealKdf was awaited -- a
+    // reader cancelled mid-derivation. This call allocated the key, so
+    // it is ours to zero; caching it would outlive the wipe.
+    if (state.wiped) {
+        key.fill(0)
+        throw new AttachmentError()
+    }
     state.epochKeys.set(epochIndex, key)
     return key
 }
@@ -347,6 +361,7 @@ export async function openSegment (
  * commitment is not secret and survives for error reporting.
  */
 export function wipeSealState (state:SealState):void {
+    state.wiped = true
     state.payloadKey.fill(0)
     state.snapKey.fill(0)
     state.nonceBase?.fill(0)

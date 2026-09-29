@@ -1,3 +1,4 @@
+import { emptyUnappliedProposals } from './unapplied-proposals.js'
 import type { AuthenticatedContentCommit } from './authenticated-content.js'
 import type {
     ClientState,
@@ -21,7 +22,9 @@ import type {
     IncomingMessageAction,
     IncomingMessageCallback
 } from './incoming-message-action.js'
-import { acceptAll } from './incoming-message-action.js'
+import {
+    defaultIncomingMessageCallback,
+} from './incoming-message-action.js'
 import { initializeEpoch } from './key-schedule.js'
 import type { MlsPrivateMessage, MlsPublicMessage } from './message.js'
 import { unprotectPrivateMessage } from './message-protection.js'
@@ -40,7 +43,7 @@ import type { PublicMessage } from './public-message.js'
 import type { RatchetTree } from './ratchet-tree.js'
 import { findBlankLeafNodeIndex, addLeafNode } from './ratchet-tree.js'
 import { createSecretTree } from './secret-tree.js'
-import type { Sender } from './sender.js'
+import type { Sender, SenderTypeName } from './sender.js'
 import { getSenderLeafNodeIndex } from './sender.js'
 import { treeHashRoot } from './tree-hash.js'
 import type {
@@ -60,13 +63,38 @@ import { addToMap } from './util/add-to-map.js'
 import { constantTimeEqual } from './util/constant-time-compare.js'
 import type { WireformatName } from './wireformat.js'
 
+/**
+ * The sender MLS authenticated for a processed message. `leafIndex` is the
+ * sender's leaf in the ratchet tree: for a `member` it is the signing leaf,
+ * for a `new_member_commit` it is the leaf the joiner was placed in. It is
+ * absent for sender types that have no leaf.
+ */
+export interface AuthenticatedSender {
+    senderType:SenderTypeName
+    leafIndex?:number
+}
+
 export type ProcessMessageResult =
   | {
       kind:'newState'
       newState:ClientState
       actionTaken:IncomingMessageAction
+      /** Set when the message was a commit that was accepted. */
+      committer?:AuthenticatedSender
   }
-  | { kind:'applicationMessage'; message:Uint8Array; newState:ClientState }
+  | {
+      kind:'applicationMessage'
+      message:Uint8Array
+      newState:ClientState
+      sender:AuthenticatedSender
+      authenticatedData:Uint8Array
+  }
+
+function memberSender (sender:Sender):AuthenticatedSender {
+    return sender.senderType === 'member' ?
+        { senderType: 'member', leafIndex: sender.leafIndex } :
+        { senderType: sender.senderType }
+}
 
 /**
  * A commit that removes this client leaves its state frozen at the epoch
@@ -92,12 +120,20 @@ export async function processPrivateMessage (
     pm:PrivateMessage,
     pskSearch:PskIndex,
     cs:CiphersuiteImpl,
-    onMessage:IncomingMessageCallback = acceptAll,
+    onMessage:IncomingMessageCallback = defaultIncomingMessageCallback,
 ):Promise<ProcessMessageResult> {
     throwIfRemovedFromGroup(state)
 
     if (!constantTimeEqual(pm.groupId, state.groupContext.groupId)) {
         throw new ValidationError('Cannot process message, groupId does not match')
+    }
+
+    // a future epoch has no keys yet; refuse it before touching the
+    // ratchet rather than letting it decrypt under the current epoch
+    if (pm.epoch > state.groupContext.epoch) {
+        throw new ValidationError(
+            'Cannot process message, epoch is in the future'
+        )
     }
 
     if (pm.epoch < state.groupContext.epoch) {
@@ -135,7 +171,13 @@ export async function processPrivateMessage (
                 throw new InternalError('Decrypted content type does not match the message envelope')
             }
 
-            return { kind: 'applicationMessage', message: result.content.content.applicationData, newState }
+            return {
+                kind: 'applicationMessage',
+                message: result.content.content.applicationData,
+                newState,
+                sender: memberSender(result.content.content.sender),
+                authenticatedData: result.content.content.authenticatedData,
+            }
         } else {
             throw new ValidationError('Cannot process message, epoch too old')
         }
@@ -154,9 +196,15 @@ export async function processPrivateMessage (
     const updatedState = { ...state, secretTree: result.tree }
 
     if (result.content.content.contentType === 'application') {
-        return { kind: 'applicationMessage', message: result.content.content.applicationData, newState: updatedState }
+        return {
+            kind: 'applicationMessage',
+            message: result.content.content.applicationData,
+            newState: updatedState,
+            sender: memberSender(result.content.content.sender),
+            authenticatedData: result.content.content.authenticatedData,
+        }
     } else if (result.content.content.contentType === 'commit') {
-        const { newState, actionTaken } = await processCommit(
+        const { newState, actionTaken, committer } = await processCommit(
             updatedState,
             result.content as AuthenticatedContentCommit,
             'mls_private_message',
@@ -168,6 +216,7 @@ export async function processPrivateMessage (
             kind: 'newState',
             newState,
             actionTaken,
+            ...(committer === undefined ? {} : { committer }),
         }
     } else {
         const action = onMessage({
@@ -175,6 +224,7 @@ export async function processPrivateMessage (
             proposal: {
                 proposal: result.content.content.proposal,
                 senderLeafIndex: getSenderLeafNodeIndex(result.content.content.sender),
+                senderType: result.content.content.sender.senderType,
             },
         })
         if (action === 'reject') {
@@ -186,7 +236,12 @@ export async function processPrivateMessage (
         } else {
             return {
                 kind: 'newState',
-                newState: await processProposal(updatedState, result.content, result.content.content.proposal, cs.hash),
+                newState: await processProposal(
+                    updatedState,
+                    result.content,
+                    result.content.content.proposal,
+                    cs,
+                ),
                 actionTaken: action,
             }
         }
@@ -196,6 +251,8 @@ export async function processPrivateMessage (
 export interface NewStateWithActionTaken {
     newState:ClientState
     actionTaken:IncomingMessageAction
+    /** Set when the message was a commit that was accepted. */
+    committer?:AuthenticatedSender
 }
 
 export async function processPublicMessage (
@@ -203,7 +260,7 @@ export async function processPublicMessage (
     pm:PublicMessage,
     pskSearch:PskIndex,
     cs:CiphersuiteImpl,
-    onMessage:IncomingMessageCallback = acceptAll,
+    onMessage:IncomingMessageCallback = defaultIncomingMessageCallback,
 ):Promise<NewStateWithActionTaken> {
     throwIfRemovedFromGroup(state)
 
@@ -232,7 +289,11 @@ export async function processPublicMessage (
 
         const action = onMessage({
             kind: 'proposal',
-            proposal: { proposal: content.content.proposal, senderLeafIndex: getSenderLeafNodeIndex(content.content.sender) },
+            proposal: {
+                proposal: content.content.proposal,
+                senderLeafIndex: getSenderLeafNodeIndex(content.content.sender),
+                senderType: content.content.sender.senderType,
+            },
         })
         if (action === 'reject') {
             return {
@@ -241,7 +302,12 @@ export async function processPublicMessage (
             }
         } else {
             return {
-                newState: await processProposal(state, content, content.content.proposal, cs.hash),
+                newState: await processProposal(
+                    state,
+                    content,
+                    content.content.proposal,
+                    cs,
+                ),
                 actionTaken: action,
             }
         }
@@ -280,6 +346,14 @@ async function processCommit (
         return { newState: state, actionTaken: action }
     }
 
+    const committer:AuthenticatedSender =
+        result.additionalResult.kind === 'externalCommit' ?
+            {
+                senderType: 'new_member_commit',
+                leafIndex: result.additionalResult.newMemberLeafIndex,
+            } :
+            memberSender(content.content.sender)
+
     const groupContextWithExtensions =
         result.additionalResult.kind === 'memberCommit' && result.additionalResult.hasGroupContextExtensionsProposal
             ? { ...state.groupContext, extensions: result.additionalResult.extensions }
@@ -300,6 +374,9 @@ async function processCommit (
                 result.tree,
                 state.clientConfig.authService,
                 cs.signature,
+                result.additionalResult.kind === 'externalCommit' ?
+                    result.additionalResult.priorCredential :
+                    undefined,
             ),
         )
     }
@@ -310,14 +387,15 @@ async function processCommit (
         return {
             newState: {
                 ...state,
-                unappliedProposals: {},
+                unappliedProposals: emptyUnappliedProposals(),
                 groupActiveState: { kind: 'removedFromGroup' },
             },
             actionTaken: action,
+            committer,
         }
     }
 
-    const [pkp, commitSecret, tree] = await applyTreeUpdate(
+    const [pathKeys, commitSecret, tree] = await applyTreeUpdate(
         content.content.commit.path,
         content.content.sender,
         result.tree,
@@ -359,7 +437,21 @@ async function processCommit (
 
     if (!confirmationTagValid) throw new CryptoVerificationError('Could not verify confirmation tag')
 
-    const secretTree = await createSecretTree(leafWidth(tree.length), epochSecrets.keySchedule.encryptionSecret, cs.kdf)
+    // built only now that the tag has verified: nothing derived from an
+    // unauthenticated commit reaches the private path before this point
+    const pkp = pruneBlankedNodes(
+        pathKeys === undefined ?
+            state.privatePath :
+            mergePrivateKeyPaths(state.privatePath, pathKeys),
+        tree,
+    )
+
+    const secretTree = await createSecretTree(
+        leafWidth(tree.length),
+        epochSecrets.encryptionSecret,
+        cs.kdf,
+    )
+    epochSecrets.encryptionSecret.fill(0)
 
     const suspendedPendingReinit = result.additionalResult.kind === 'reinit' ? result.additionalResult.reinit : undefined
 
@@ -379,10 +471,11 @@ async function processCommit (
             keySchedule: epochSecrets.keySchedule,
             confirmationTag: content.auth.confirmationTag,
             historicalReceiverData: addHistoricalReceiverData(state),
-            unappliedProposals: {},
+            unappliedProposals: emptyUnappliedProposals(),
             groupActiveState,
         },
         actionTaken: action,
+        committer,
     }
 }
 
@@ -395,12 +488,14 @@ async function applyTreeUpdate (
     groupContext:GroupContext,
     excludeNodes:NodeIndex[],
     kdf:Kdf,
-):Promise<[PrivateKeyPath, Uint8Array, RatchetTree]> {
-    if (path === undefined) return [pruneBlankedNodes(state.privatePath, tree), new Uint8Array(kdf.size), tree] as const
+):Promise<[PrivateKeyPath | undefined, Uint8Array, RatchetTree]> {
+    if (path === undefined) {
+        return [undefined, new Uint8Array(kdf.size), tree] as const
+    }
     if (sender.senderType === 'member') {
         const updatedTree = await applyUpdatePath(tree, toLeafIndex(sender.leafIndex), path, cs.hash)
 
-        const [pkp, commitSecret] = await updatePrivateKeyPath(
+        const [pathKeys, commitSecret] = await updatePrivateKeyPath(
             updatedTree,
             state,
             toLeafIndex(sender.leafIndex),
@@ -409,14 +504,14 @@ async function applyTreeUpdate (
             excludeNodes,
             cs,
         )
-        return [pkp, commitSecret, updatedTree] as const
+        return [pathKeys, commitSecret, updatedTree] as const
     } else {
         const [treeWithLeafNode, leafNodeIndex] = addLeafNode(tree, path.leafNode)
 
         const senderLeafIndex = nodeToLeafIndex(leafNodeIndex)
         const updatedTree = await applyUpdatePath(treeWithLeafNode, senderLeafIndex, path, cs.hash, true)
 
-        const [pkp, commitSecret] = await updatePrivateKeyPath(
+        const [pathKeys, commitSecret] = await updatePrivateKeyPath(
             updatedTree,
             state,
             senderLeafIndex,
@@ -425,7 +520,7 @@ async function applyTreeUpdate (
             excludeNodes,
             cs,
         )
-        return [pkp, commitSecret, updatedTree] as const
+        return [pathKeys, commitSecret, updatedTree] as const
     }
 }
 
@@ -459,27 +554,27 @@ async function updatePrivateKeyPath (
     // the very same Uint8Array as pathSecrets' final entry
     const commitSecret = await deriveSecret(lastSecret, 'path', cs.kdf)
 
-    const newPkp = pruneBlankedNodes(
-        mergePrivateKeyPaths(
-            state.privatePath,
-            // the tree here already carries the committer's advertised keys,
-            // so this is where a path secret that does not derive to them is
-            // caught (RFC 9420 SS12.4.3.1)
-            await toPrivateKeyPath(pathSecrets, state.privatePath.leafIndex, cs, tree),
-        ),
+    // the tree here already carries the committer's advertised keys, so
+    // this is where a path secret that does not derive to them is caught
+    // (RFC 9420 SS12.4.3.1). The caller merges these into its private path
+    // only once the confirmation tag has verified.
+    const pathKeys = await toPrivateKeyPath(
+        pathSecrets,
+        state.privatePath.leafIndex,
+        cs,
         tree,
     )
 
     zeroPathSecrets(pathSecrets)
 
-    return [newPkp, commitSecret] as const
+    return [pathKeys, commitSecret] as const
 }
 
 export async function processMessage (
     message:MlsPrivateMessage | MlsPublicMessage,
     state:ClientState,
     pskIndex:PskIndex,
-    action:IncomingMessageCallback,
+    action:IncomingMessageCallback = defaultIncomingMessageCallback,
     cs:CiphersuiteImpl,
 ):Promise<ProcessMessageResult> {
     if (message.wireformat === 'mls_public_message') {

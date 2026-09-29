@@ -66,6 +66,10 @@ export const decodeCredential:Decoder<Credential> = flatMapDecoder(
                 return decodeCredentialBasic
             case 'x509':
                 return decodeCredentialX509
+            default:
+                // Unknown and GREASE types have no decoder, so the
+                // decode fails rather than calling a non-function.
+                return () => undefined
         }
     },
 )

@@ -114,6 +114,7 @@
     "markdown-toc": "^1.2.0",
     "nanoid": "^5.1.16",
     "newneostandard": "^0.14.1",
+    "nightralph": "^0.0.52",
     "preact": "^10.27.0",
     "route-event": "^8.1.2",
     "simple-hpke": "^0.2.0",

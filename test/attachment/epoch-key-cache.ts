@@ -7,6 +7,7 @@ import {
     wipeSealState,
 } from '../../src/attachment/schedule.js'
 import type { SealCrypto } from '../../src/attachment/crypto.js'
+import { AttachmentError } from '../../src/attachment/error.js'
 import {
     fromHex,
     toHex,
@@ -163,7 +164,7 @@ test(
 test(
     'epoch key cache: wipeSealState zeroizes and drops the cache',
     async t => {
-        const { state, count } = await stateFor(2)
+        const { state } = await stateFor(2)
 
         await segmentKey(state, 0n)
         await segmentKey(state, 4n)
@@ -185,10 +186,16 @@ test(
         )
         t.equal(state.epochKeys.size, 0, 'the cache is emptied')
 
-        // An emptied cache must re-derive rather than hand back a
-        // zeroed buffer.
-        const before = count()
-        await segmentKey(state, 0n)
-        t.equal(count() - before, 1, 'a wiped cache re-derives')
+        // An emptied cache must not hand back a zeroed buffer, and a
+        // wiped state must not cache a fresh key either: the lookup
+        // refuses instead (audit 2026-09 M5).
+        let refused = false
+        try {
+            await segmentKey(state, 0n)
+        } catch (err) {
+            refused = err instanceof AttachmentError
+        }
+        t.ok(refused, 'a wiped state refuses to hand out a key')
+        t.equal(state.epochKeys.size, 0, 'nothing is re-cached')
     },
 )

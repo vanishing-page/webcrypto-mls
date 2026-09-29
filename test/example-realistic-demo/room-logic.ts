@@ -6,17 +6,39 @@ import {
     assembleRoster,
     classifyStanding,
     mayWriteLog,
+    mayWriteKind,
     isValidRoomId,
     isReservedRoomId,
     countApplicationsAtOrBelow,
     classifyJoinRequest,
+    classifyMlsWrite,
+    MLS_WRITE_INTERVAL_MS,
+    MAX_LOG_ROWS,
+    MAX_LOG_BYTES,
     RESERVED_ROOM_IDS,
     MAX_PENDING_REQUESTS,
     MAX_KEY_PACKAGE_LENGTH,
     JOIN_REQUEST_INTERVAL_MS,
     securityHeaders,
+    mayCreateRoom,
+    verifyIdentityProof,
+    roomInfoDecision,
+    UPGRADE_LIMIT,
+    UPGRADE_PERIOD_SECONDS,
+    mayReplaceSocket,
+    replayPage,
+    REPLAY_PAGE_BUDGET,
 } from '../../example-realistic-demo/room-logic.js'
+import {
+    reconnectDelay
+} from '../../example-realistic-demo/client/delivery-cursor.js'
 import type { LogEntry } from '../../example-realistic-demo/protocol.js'
+import {
+    identityProofMessage
+} from '../../example-realistic-demo/protocol.js'
+import {
+    bytesToBase64url
+} from '../../src/util/byte-array.js'
 
 // nextSeq tests
 test('nextSeq - empty room starts at 1', (t) => {
@@ -701,3 +723,335 @@ test('securityHeaders - a non-http origin falls back to the secure socket',
         )
         t.deepEqual(d['connect-src'], ["'self'"])
     })
+
+// mayCreateRoom tests
+test('mayCreateRoom - allows an id with no room and no tombstone', (t) => {
+    t.equal(mayCreateRoom('absent'), true)
+})
+
+test('mayCreateRoom - refuses a live room', (t) => {
+    t.equal(mayCreateRoom('live'), false)
+})
+
+test('mayCreateRoom - refuses a tombstoned id', (t) => {
+    t.equal(mayCreateRoom('tombstoned'), false)
+})
+
+// mayWriteKind tests (security-audit-2026-09.md H6). Only the creator
+// commits in this demo, so a commit from anyone else is a replay or a
+// forgery and never reaches the log.
+test('mayWriteKind - the creator may write a commit', (t) => {
+    t.equal(mayWriteKind('commit', true), true)
+})
+
+test('mayWriteKind - an admitted non-creator may not commit', (t) => {
+    t.equal(mayWriteKind('commit', false), false)
+})
+
+test('mayWriteKind - the same non-creator may still chat', (t) => {
+    t.equal(mayWriteKind('application', false), true)
+})
+
+// H4 -- a socket proves the identity it claims
+
+async function proofKey ():Promise<{ identity:string, key:CryptoKey }> {
+    const pair = await globalThis.crypto.subtle.generateKey(
+        { name: 'Ed25519' },
+        true,
+        ['sign', 'verify']
+    ) as CryptoKeyPair
+    const raw = await globalThis.crypto.subtle.exportKey(
+        'raw',
+        pair.publicKey
+    )
+    return {
+        identity: bytesToBase64url(new Uint8Array(raw)),
+        key: pair.privateKey
+    }
+}
+
+async function sign (
+    key:CryptoKey,
+    roomId:string,
+    challenge:string
+):Promise<string> {
+    const sig = await globalThis.crypto.subtle.sign(
+        { name: 'Ed25519' },
+        key,
+        identityProofMessage(roomId, challenge)
+    )
+    return bytesToBase64url(new Uint8Array(sig))
+}
+
+test('verifyIdentityProof - the identity\'s own key passes', async t => {
+    const { identity, key } = await proofKey()
+    const proof = await sign(key, 'aB3xK9pQ2m', 'chal-1')
+    t.equal(
+        await verifyIdentityProof(identity, 'chal-1', 'aB3xK9pQ2m', proof),
+        true
+    )
+})
+
+test('verifyIdentityProof - another challenge fails', async t => {
+    const { identity, key } = await proofKey()
+    const proof = await sign(key, 'aB3xK9pQ2m', 'chal-1')
+    t.equal(
+        await verifyIdentityProof(identity, 'chal-2', 'aB3xK9pQ2m', proof),
+        false
+    )
+})
+
+test('verifyIdentityProof - another room id fails', async t => {
+    const { identity, key } = await proofKey()
+    const proof = await sign(key, 'aB3xK9pQ2m', 'chal-1')
+    t.equal(
+        await verifyIdentityProof(identity, 'chal-1', 'zZ9yY8xX7w', proof),
+        false
+    )
+})
+
+test('verifyIdentityProof - another key fails', async t => {
+    const alice = await proofKey()
+    const mallory = await proofKey()
+    const proof = await sign(mallory.key, 'aB3xK9pQ2m', 'chal-1')
+    t.equal(
+        await verifyIdentityProof(
+            alice.identity,
+            'chal-1',
+            'aB3xK9pQ2m',
+            proof
+        ),
+        false
+    )
+})
+
+test('verifyIdentityProof - a non-key identity is false, not a throw',
+    async t => {
+        const { key } = await proofKey()
+        const proof = await sign(key, 'aB3xK9pQ2m', 'chal-1')
+        for (const identity of ['', 'AAAA', 'not base64 !!', 'x'.repeat(90)]) {
+            let result:unknown
+            try {
+                result = await verifyIdentityProof(
+                    identity,
+                    'chal-1',
+                    'aB3xK9pQ2m',
+                    proof
+                )
+            } catch (err) {
+                result = err
+            }
+            t.equal(result, false, `identity ${JSON.stringify(identity)}`)
+        }
+    })
+
+test('identityProofMessage - label, room and challenge cannot slide',
+    t => {
+        const a = identityProofMessage('ab', 'c')
+        const b = identityProofMessage('a', 'bc')
+        t.notDeepEqual(a, b, 'the boundary between the two is fixed')
+    })
+
+test('mayReplaceSocket - an unproven socket replaces nobody', t => {
+    for (const identity of ['creator', 'member', 'stranger']) {
+        t.equal(
+            mayReplaceSocket(identity, { identity, proven: false }),
+            false,
+            `unproven claim on ${identity}`
+        )
+    }
+})
+
+test('mayReplaceSocket - a proven socket replaces its own identity',
+    t => {
+        for (const identity of ['creator', 'member', 'stranger']) {
+            t.equal(
+                mayReplaceSocket(identity, { identity, proven: true }),
+                true,
+                `proven ${identity}`
+            )
+        }
+        t.equal(
+            mayReplaceSocket('member', { identity: 'other', proven: true }),
+            false,
+            'a proof of one identity replaces no other'
+        )
+    })
+
+test('roomInfoDecision - an id the registry does not list has no room',
+    t => {
+        t.equal(roomInfoDecision(null), 'no-room')
+    })
+
+test('roomInfoDecision - an id the registry lists as expired has no room',
+    t => {
+        t.equal(roomInfoDecision('expired'), 'no-room')
+    })
+
+test('roomInfoDecision - only a live id asks the room for its times',
+    t => {
+        t.equal(roomInfoDecision('live'), 'ask-room')
+        t.notEqual(roomInfoDecision(null), roomInfoDecision('live'),
+            'an unlisted id and a live one are answered differently')
+    })
+
+test('upgrade limit - honest reconnect backoff stays within it', t => {
+    // A client reconnecting from its first failure makes this many
+    // attempts in one rate-limit period. Ten tabs doing so at once from
+    // one address must still fit.
+    const periodMs = UPGRADE_PERIOD_SECONDS * 1000
+    let attempts = 0
+    let elapsed = 0
+    while (elapsed <= periodMs) {
+        attempts++
+        elapsed += reconnectDelay(attempts - 1)
+    }
+    t.ok(attempts * 10 <= UPGRADE_LIMIT,
+        `${attempts} attempts x 10 tabs within ${UPGRADE_LIMIT}`)
+    t.ok([10, 60].includes(UPGRADE_PERIOD_SECONDS),
+        'a period the rate-limiting binding accepts')
+})
+
+function pageEntry (seq:number, payloadLength:number):LogEntry {
+    return {
+        seq,
+        sender: 'alice',
+        kind: 'application',
+        payload: 'x'.repeat(payloadLength)
+    }
+}
+
+function pageSize (entries:LogEntry[]):number {
+    return JSON.stringify(entries).length
+}
+
+test('replayPage - everything after the cursor fits', t => {
+    const log = [3, 1, 4, 2].map(seq => pageEntry(seq, 10))
+    const page = replayPage(log, 1, 10_000)
+    t.deepEqual(page.entries.map(e => e.seq), [2, 3, 4],
+        'every entry after the cursor, in seq order')
+    t.equal(page.more, false, 'none remain')
+})
+
+test('replayPage - an empty remainder is a final empty page', t => {
+    const page = replayPage([pageEntry(1, 10)], 1, 10_000)
+    t.deepEqual(page.entries, [])
+    t.equal(page.more, false)
+})
+
+test('replayPage - returns the longest prefix that fits', t => {
+    const log = [1, 2, 3, 4, 5].map(seq => pageEntry(seq, 100))
+    // Room for exactly three entries as a JSON array, not four.
+    const budget = pageSize(log.slice(0, 3))
+    const page = replayPage(log, 0, budget)
+    t.deepEqual(page.entries.map(e => e.seq), [1, 2, 3])
+    t.equal(page.more, true, 'more remain')
+    t.ok(pageSize(page.entries) <= budget, 'the page fits the budget')
+
+    const tight = replayPage(log, 0, budget - 1)
+    t.deepEqual(tight.entries.map(e => e.seq), [1, 2],
+        'one character less holds one entry fewer')
+})
+
+test('replayPage - an oversized entry still goes, alone', t => {
+    const log = [pageEntry(1, 5000), pageEntry(2, 10)]
+    const page = replayPage(log, 0, 100)
+    t.deepEqual(page.entries.map(e => e.seq), [1],
+        'one entry larger than the budget')
+    t.equal(page.more, true)
+
+    const last = replayPage([pageEntry(7, 5000)], 6, 100)
+    t.deepEqual(last.entries.map(e => e.seq), [7])
+    t.equal(last.more, false)
+})
+
+test('replayPage - a cursor walk yields the log exactly once', t => {
+    const sizes = [10, 900, 40, 2000, 5, 5, 5, 300, 1200, 60]
+    const log = sizes.map((n, i) => pageEntry(i + 1, n))
+    for (const start of [0, 3, 9, 10]) {
+        const seen:number[] = []
+        let cursor = start
+        let pages = 0
+        for (;;) {
+            const page = replayPage(log, cursor, 1000)
+            pages++
+            if (pages > log.length + 1) break
+            seen.push(...page.entries.map(e => e.seq))
+            if (!page.more) break
+            t.ok(page.entries.length > 0, 'no empty page while more')
+            cursor = page.entries[page.entries.length - 1]?.seq ?? cursor
+        }
+        const expected = log.filter(e => e.seq > start).map(e => e.seq)
+        t.deepEqual(seen, expected, `walk from ${start}, no gap or repeat`)
+    }
+})
+
+test('replayPage - the default budget leaves room in a frame', t => {
+    // A Cloudflare WebSocket frame is at most 1 MiB. The envelope
+    // around the entries is small, but not nothing.
+    t.ok(REPLAY_PAGE_BUDGET <= 1024 * 1024 - 1024,
+        'the budget sits under the frame limit')
+})
+
+// classifyMlsWrite tests
+//
+// The log is the room's storage, and any admitted member can write to
+// it, so its growth is bounded per socket (the interval) and per room
+// (rows and bytes).
+
+function mlsWrite (over:Partial<Parameters<typeof classifyMlsWrite>[0]>) {
+    return classifyMlsWrite({
+        payloadLength: 500,
+        logRows: 0,
+        logBytes: 0,
+        lastMlsAt: null,
+        now: 100_000,
+        ...over
+    })
+}
+
+test('classifyMlsWrite - a first write is allowed', (t) => {
+    t.equal(mlsWrite({}), 'ok')
+})
+
+test('classifyMlsWrite - a write inside the interval is refused', (t) => {
+    t.equal(mlsWrite({
+        lastMlsAt: 100_000 - MLS_WRITE_INTERVAL_MS + 1
+    }), 'rate-limited')
+    t.equal(mlsWrite({ lastMlsAt: 100_000 }), 'rate-limited')
+})
+
+test('classifyMlsWrite - a write at the interval is allowed', (t) => {
+    t.equal(mlsWrite({
+        lastMlsAt: 100_000 - MLS_WRITE_INTERVAL_MS
+    }), 'ok')
+})
+
+test('classifyMlsWrite - a previous write in the future is ignored', (t) => {
+    t.equal(mlsWrite({ lastMlsAt: 100_000 + 5_000 }), 'ok')
+})
+
+test('classifyMlsWrite - a log at its row cap is refused', (t) => {
+    t.equal(mlsWrite({ logRows: MAX_LOG_ROWS }), 'log-full')
+    t.equal(mlsWrite({ logRows: MAX_LOG_ROWS - 1 }), 'ok')
+})
+
+test('classifyMlsWrite - the byte cap is inclusive', (t) => {
+    t.equal(mlsWrite({
+        payloadLength: 500,
+        logBytes: MAX_LOG_BYTES - 500
+    }), 'ok', 'landing exactly on the cap is allowed')
+    t.equal(mlsWrite({
+        payloadLength: 500,
+        logBytes: MAX_LOG_BYTES - 499
+    }), 'log-too-large', 'one past the cap is refused')
+})
+
+test('classifyMlsWrite - the socket throttle is named first', (t) => {
+    t.equal(mlsWrite({
+        lastMlsAt: 100_000,
+        logRows: MAX_LOG_ROWS,
+        logBytes: MAX_LOG_BYTES
+    }), 'rate-limited')
+})
+

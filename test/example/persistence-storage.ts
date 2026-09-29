@@ -7,6 +7,8 @@ import {
     isRestorableSession,
     restoredSessionUser,
     sessionRecord,
+    staleStoresOnUpgrade,
+    PERSISTENCE_DB_VERSION,
     type PersistedMember,
     type SessionInput
 } from '../../example-shared/persistence-storage.js'
@@ -406,4 +408,13 @@ test('restoredSessionUser returns a user with no state for a joiner', (t) => {
         'a waiting joiner is restored without a group')
     t.equal(user.keyPackage, KEY_PACKAGE,
         'but keeps the key package its request was made with')
+})
+
+test('staleStoresOnUpgrade discards state saved in an older shape', (t) => {
+    t.deepEqual(staleStoresOnUpgrade(0), [],
+        'a new database has nothing to discard')
+    t.equal(staleStoresOnUpgrade(1).length, 2,
+        'a version 1 database discards both stores')
+    t.deepEqual(staleStoresOnUpgrade(PERSISTENCE_DB_VERSION), [],
+        'a current database discards nothing')
 })

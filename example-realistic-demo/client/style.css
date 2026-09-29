@@ -989,6 +989,15 @@ substrate-input.room-url input {
         overflow-wrap: anywhere;
     }
 
+    /* The room credited this message to somebody other than the member
+       MLS authenticated. Named as a flag, not an error: the message is
+       real, only the room's label on it is wrong. */
+    & .mismatch-mark {
+        color: var(--color-flag);
+        font-weight: 400;
+        text-transform: none;
+    }
+
     /* Yours. Marked by an accent rule down the edge of the row and a
        wash behind it -- not by a bubble on the other side of the panel.
        Alignment is the messenger's way of saying this and it would cost

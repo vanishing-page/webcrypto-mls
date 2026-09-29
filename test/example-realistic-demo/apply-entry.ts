@@ -327,7 +327,7 @@ test('applyEntry - somebody else\'s message is read and recorded', async t => {
     )
     t.deepEqual(
         h.state.decrypted.value,
-        { 4: 'hello bob' },
+        { 4: { text: 'hello bob', sender: identityOf(alice.keyPackage!) } },
         'and the plaintext is filed against the seq the room gave it'
     )
 
@@ -432,7 +432,10 @@ test('applyEntry - this client\'s own message comes from what it sent',
 
         t.deepEqual(
             h.state.decrypted.value,
-            { 7: 'first', 9: 'second' },
+            {
+                7: { text: 'first', sender: mine },
+                9: { text: 'second', sender: mine }
+            },
             'each recorded plaintext lands against its own echo'
         )
         t.deepEqual(
@@ -469,7 +472,12 @@ test('applyEntry - a send the room never logged does not misname the next',
 
         t.deepEqual(
             h.state.decrypted.value,
-            { 5: 'this one landed' },
+            {
+                5: {
+                    text: 'this one landed',
+                    sender: identityOf(alice.keyPackage!)
+                }
+            },
             'the plaintext filed is the one whose ciphertext came back'
         )
         t.deepEqual(
@@ -549,3 +557,100 @@ test('applyEntry - an entry arriving before the group is dropped', async t => {
     t.equal(h.state.group.value, null, 'there is still no group')
     t.equal(h.state.removed.value, false, 'and nobody was removed')
 })
+
+// H5 -- the sender recorded is the one MLS authenticated
+
+/**
+ * Alice, Bob and Carol at leaves 0, 1 and 2, each holding a state at the
+ * same epoch. Bob's is in a harness, since he is the one reading.
+ */
+async function trio () {
+    const alice = await createUser('alice', cs)
+    const bob = await createUser('bob', cs)
+    const carol = await createUser('carol', cs)
+
+    const withBob = await commitAdd(
+        await createOwnGroup(alice, cs),
+        bob.keyPackage!,
+        cs
+    )
+    const withCarol = await commitAdd(withBob.newState, carol.keyPackage!, cs)
+
+    const h = harness(bob, await joinFromWelcome(withBob.welcome, bob, cs))
+    await h.apply(
+        entry(identityOf(alice.keyPackage!), 'commit', withCarol.commit)
+    )
+    const carolGroup = await joinFromWelcome(withCarol.welcome, carol, cs)
+
+    return { alice, bob, carol, aliceGroup: withCarol.newState, carolGroup, h }
+}
+
+test('applyEntry - a message is credited to the leaf that sent it',
+    async t => {
+        const { alice, carol, carolGroup, h } = await trio()
+
+        t.equal(
+            leafIndexOf(carolGroup.ratchetTree, identityOf(carol.keyPackage!)),
+            2,
+            'Carol is at leaf 2'
+        )
+
+        const said = await encryptMessage(carolGroup, 'it was me', cs)
+
+        // The room claims Alice said it.
+        await h.apply(
+            entry(identityOf(alice.keyPackage!), 'application', said.payload, 5)
+        )
+
+        t.equal(
+            h.state.decrypted.value[5]?.sender,
+            identityOf(carol.keyPackage!),
+            'the identity recorded is leaf 2\'s, not the room\'s claim'
+        )
+        t.equal(
+            h.state.decrypted.value[5]?.text,
+            'it was me',
+            'beside the plaintext'
+        )
+    })
+
+test('applyEntry - a reused leaf does not rename an earlier message',
+    async t => {
+        const { alice, carol, aliceGroup, carolGroup, h } = await trio()
+        const dave = await createUser('dave', cs)
+        const aliceId = identityOf(alice.keyPackage!)
+        const carolId = identityOf(carol.keyPackage!)
+
+        // Two messages from Carol at leaf 2: one Bob reads straight away,
+        // and one that reaches him only after the leaf changes hands.
+        const first = await encryptMessage(carolGroup, 'first', cs)
+        const late = await encryptMessage(first.newState, 'late', cs)
+        await h.apply(entry(carolId, 'application', first.payload, 5))
+
+        const gone = await commitRemove(aliceGroup, 2, cs)
+        const daveIn = await commitAdd(gone.newState, dave.keyPackage!, cs)
+        await h.apply(entry(aliceId, 'commit', gone.commit, 6))
+        await h.apply(entry(aliceId, 'commit', daveIn.commit, 7))
+
+        t.equal(
+            leafIndexOf(
+                h.state.group.value!.ratchetTree,
+                identityOf(dave.keyPackage!)
+            ),
+            2,
+            'Dave now holds leaf 2'
+        )
+
+        await h.apply(entry(carolId, 'application', late.payload, 8))
+
+        t.equal(
+            h.state.decrypted.value[5]?.sender,
+            carolId,
+            'what Carol said before still reads as hers'
+        )
+        t.equal(
+            h.state.decrypted.value[8]?.sender,
+            carolId,
+            'and so does what she said at leaf 2 that arrived after Dave'
+        )
+    })

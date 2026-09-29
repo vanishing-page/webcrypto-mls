@@ -96,16 +96,29 @@ The one part of that work that reaches the rest of the library is
 sibling of the RFC 9420 Table 4 secrets that every `KeySchedule`
 consumer now sees.
 
+## Ignored secret files
+
+The secret-file patterns in `.gitignore` (the env-file glob with its
+`.env.example` negation, `.dev.vars*`, the key-material globs) were
+once lost in a squash merge; verify them with `git check-ignore`.
+`git ls-files -ci --exclude-standard` is not empty today: `PROMPT.md`,
+`ralph_claude.sh` and one `.superpowers/` report are tracked despite
+older patterns. Compare against that list, not an empty one, when
+checking that a new pattern matches no tracked file.
+
 ## Dependencies
 
 `package-lock.json` is committed and CI installs with `npm ci`, so a
 dependency change is only real once the lockfile is regenerated and
 committed alongside `package.json`. Use `npm install` locally (it updates
 both) or `npm install --package-lock-only` to refresh the lockfile alone;
-never hand-edit it. `npm audit` reports 0 vulnerabilities as the tree
-stands, and every dependency is a dev dependency except the runtime set
-(`@hpke/*`, `@noble/*`), so an audit finding is almost always in the
-tooling chain and fixable with plain `npm audit fix`.
+never hand-edit it. Every dependency is a dev dependency except the
+runtime set (`@hpke/*`, `@noble/*`), and `npm audit --omit=dev` reports
+0 vulnerabilities. Plain `npm audit` does not: it reports `toml`, pulled
+in by `markdown-toc` (the `npm run toc` tool) through `gray-matter`,
+which `npm audit fix` leaves in place because `markdown-toc` pins
+it. Other tooling findings are usually fixable with plain
+`npm audit fix`; check the result still installs under `npm ci`.
 
 The one workflow that still runs `npm install` is
 `.github/workflows/auto-dependabot.yml`, deliberately: its job is to
@@ -274,6 +287,24 @@ a function cannot tell, the ownership is passed in explicitly (see the
 `ownsSecret` parameter in `src/secret-tree.ts`). A secret that is merely
 being dropped from a record goes to the garbage collector untouched.
 
+The epoch's `encryptionSecret` is not on `KeySchedule`. The derivation
+(`initializeEpoch`, `deriveKeySchedule`, `deriveEpochKeys`) returns it
+beside the schedule, and each caller passes it to `createSecretTree`
+and zeroes it in the same call; nothing may store it in state, since it
+regenerates every generation of the epoch.
+`test/validation/encryption-secret-retention.ts` feeds every
+KDF-sized buffer in a state to `createSecretTree` to catch a
+regression, so a new way of entering an epoch belongs in that test.
+The private key path is the case that bit twice. `mergePrivateKeyPaths`
+and `pruneBlankedNodes` take `state.privatePath` as input, so they drop
+superseded HPKE keys without wiping them, and both commit paths build
+the merged path last: after the confirmation tag on receive, after the
+Welcome on send. A test that a retained state survives has to make the
+next commit need a key the first one superseded, or it passes either
+way; `test/validation/prior-state-reuse.ts` builds a four-leaf group
+where alice's commits reach charlie only through node 5, the key any
+commit from leaf 3 rotates.
+
 Every AEAD key/nonce pair in `src/message-protection.ts` and
 `src/private-message.ts` is derived inside the function that uses it, so
 each is wiped in a `finally` around the AEAD call. The `finally` is the
@@ -287,6 +318,19 @@ slice, or a limit of 0 silently means "retain forever". Both trimmers have
 one now: `removeOldGenerations` in `src/secret-tree.ts` and
 `removeOldHistoricalReceiverData` in `src/client-state.ts`.
 
+Any record keyed by a peer-chosen string (a proposal reference, an
+external PSK id) is read through `Object.hasOwn`: `toString` is valid
+base64, so a bare index finds an inherited function. Read
+`unappliedProposals` with `findUnappliedProposal`
+(`src/unapplied-proposals.ts`). The records keep an ordinary prototype
+on purpose: tests `deepEqual` them against `{}`, which compares
+prototypes, so a null-prototype record fails them.
+The pending set is bounded by `ClientConfig.maxPendingProposals`,
+checked by `checkPendingCapacity` in both places a proposal enters it
+(`processProposal` and `createProposal`); a new entry point needs the
+same call. Applications reach the set through `listPendingProposals`
+and `discardPendingProposal`, not the record itself.
+
 Credential-type support in `validateLeafNodeCommon`
 (`src/client-state.ts`) is a pairwise rule from RFC 9420 7.3, and both
 halves have to hold: every member's `capabilities.credentials` must list
@@ -295,6 +339,22 @@ the new leaf's `credential.credentialType`, and the new leaf's
 already in the tree. Adding a credential type to the library means
 widening `defaultCapabilities` too, or the first leaf to use it is
 rejected by its own peers.
+
+Proposal checks in `applyTreeMutations` (`src/client-state.ts`) run
+against the running tree -- the tree as the earlier proposals in the same
+commit have already changed it -- not the pre-commit `ratchetTree`. A
+check against the pre-commit tree never compares two proposals in one
+commit, so they can share a key or jointly break the credential rule and
+leave a tree `joinGroup` refuses. `validateLeafNodeUpdateOrCommit` is
+also called by `validateRatchetTree` on leaves already in the tree, so a
+check that compares a leaf with the one it replaces (an Update must
+rotate its key) belongs in the Update loop, not in that function.
+Every leaf replacement shows the `AuthenticationService` the credential
+it replaces as `priorCredential`. `validateLeafNodeUpdateOrCommit` reads
+it from the tree by default, which is wrong for an external resync: its
+Remove has already blanked the leaf, so the removed credential travels on
+the `externalCommit` result and is passed in explicitly. A new path that
+removes a leaf before validating its replacement has to do the same.
 
 `validateExternalSenders` (`src/client-state.ts`) has three callers, and a
 new way of entering a group needs a fourth: `createGroup` checks the
@@ -305,6 +365,30 @@ proposal reaches it through `validateProposals`. Skipping it anywhere
 lets a client accept an external signer its own `authService` would
 refuse.
 
+A branch Welcome (`joinGroupFromBranch`) is accepted only when every
+leaf of the new group matches a leaf of the old one, compared by
+`KeyPackageEqualityConfig.compareLeafNodes` or, absent that, by
+signature key. So a test that branches must build each member's new
+KeyPackage with its old signature key -- `sameSignerKeyPackage` in
+`test/helpers/same-signer-key-package.ts` -- since `generateKeyPackage`
+mints a fresh one and the member would read as a stranger.
+A proposal is validated twice: once alone, on arrival, by
+`validateProposalOnReceipt` (`src/client-state.ts`, called from
+`processProposal` and from `createProposal` before it signs), and again
+with the rest of the commit in `applyProposals`. A receipt check may only
+refuse what no commit in this epoch could make valid. An Add of a current
+member is the example: the same commit may remove them, so receipt checks
+the KeyPackage against the tree without the matching leaf. A test that
+needs a peer to deliver an invalid proposal cannot use `createProposal`,
+which refuses it; sign the message with `protectProposalPublic` or
+`protectExternalProposalPublic` instead (see
+`test/validation/proposal-validation.ts`).
+A third pass runs at commit time: `filterPendingProposals`
+(`src/create-commit.ts`) drops pending proposals per RFC 9420 12.2 by
+re-running the receipt check against the tree the kept Removes leave,
+so a new receipt check is also a new commit-time filter. By-value
+`extraProposals` bypass the filter on purpose and still throw.
+
 Frontend state is `@preact/signals`. Sequential writes go inside
 `batch()`, and component-local state is `useSignal`, never `useState`.
 
@@ -314,12 +398,49 @@ screen reader announces the two as one word. The space goes inside the
 marker's own text. Margin and padding cannot stand in for it -- they are
 box model, and the accessible text run does not see them.
 
+The two Ed25519 providers (WebCrypto and noble) must accept exactly the
+same signatures, or a group mixing them forks. Noble's EdDSA verify is
+called with `zip215: false` and both providers refuse small-order keys
+via `src/crypto/small-order.ts`; a new signature provider or algorithm
+needs the same treatment and a case in `test/crypto/signature-interop.ts`.
+Leaf validation checks the key before the signature, so a small-order key
+fails as a `ValidationError` rather than a `CryptoVerificationError`.
+The incoming-message callback's default is not `acceptAll`: it is
+`defaultIncomingMessageCallback`, which rejects a `new_member_proposal`.
+A test that relies on a self-signed Add (`proposeAddExternal`) being
+accepted has to pass `acceptAll` explicitly. `ProposalWithSender`
+carries `senderType`, so anything that builds one -- including a test
+calling `addUnappliedProposal` directly -- has to supply it.
+
 The error type is part of the contract. `InternalError` means "this
 library has a bug"; anything an attacker or a peer can trigger by sending
 a message is a `ValidationError`. `extendRatchetTree` in
 `src/ratchet-tree.ts` is the shape to watch for: a low-level invariant
 guard that is reachable from a remote message needs the caller to reject
 the input before the guard fires, not to let an `InternalError` escape.
+Two shapes of the same leak recur. A decoder that switches on an open
+enum (`openEnumNumberToKey` passes unknown values through as numeric
+strings) needs a `default` arm that returns a failing decoder, or
+`flatMapDecoder` calls `undefined`. And a crypto dependency's own
+exception has to be mapped at the provider boundary: `@hpke/core`'s
+`OpenError` becomes `CryptoVerificationError` in `makeGenericHpke`,
+and WebCrypto's `DataError` is pre-empted by a length check. Match the
+dependency's class with `instanceof`, not by `name`, which a consumer's
+minifier can rename. `test/validation/peer-input-errors.ts` is where a
+new case of this belongs.
+
+`ProcessMessageResult` is where a consumer learns who sent a message:
+`sender` on an application message, `committer` on an accepted commit
+(`AuthenticatedSender` in `src/process-messages.ts`). A new result
+branch that carries peer content should carry its sender too, and
+demo code should attribute by these fields rather than by transport
+metadata.
+A test that forges a Welcome and then calls `joinGroup` must pass a
+copy of `initPrivateKey` (`.slice()`): `joinGroup` zeroizes that buffer
+in place, so decrypting the GroupSecrets in the test afterwards (or
+joining twice) silently uses a zero key. See
+`test/validation/welcome-path-secret-required.ts` for the
+decrypt-edit-re-encrypt shape.
 
 TypeScript lines stay within 80 columns. Markdown and comments use `--`
 and `->`, never an em dash or an arrow character.
@@ -332,3 +453,19 @@ mostly bullets with examples under them, and this renders wrong on
 GitHub while looking fine in a plain-text diff. `npm run toc` rewrites
 the table of contents in place; run it after adding or renaming a
 heading and commit what it produces.
+
+<!-- nightralph:start -->
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout. See `docs/agents/domain.md`.
+<!-- nightralph:end -->

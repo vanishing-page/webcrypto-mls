@@ -215,11 +215,8 @@ test('multi-epoch: a spliced segment 1024 is rejected', async t => {
     } finally {
         reader.releaseLock()
     }
-    // The reader verifies an epoch run before it opens the first
-    // block of that epoch, so a rejection at segment 1024 leaves
-    // exactly the first epoch emitted and no spliced plaintext.
-    t.equal(
-        emitted, (MULTI_EPOCH_SEGMENTS - 1) * SEGMENT_MAX,
-        'the stream emitted epoch 0 and stopped at segment 1024',
-    )
+    // The reader verifies every epoch's run against its head as the
+    // header streams in, ahead of block 0, so the splice is rejected
+    // before any plaintext at all is emitted.
+    t.equal(emitted, 0, 'the stream emitted no plaintext')
 })

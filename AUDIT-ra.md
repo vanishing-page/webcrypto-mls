@@ -342,7 +342,7 @@ The story ids are `specs/prd.json` ids, which the commit messages carry.
 | 1.1 | US-001 | `rangesFor` emits the padding gap and the range path checks it with `isZeroRegion`; parity.ts sweeps all three paths over the same offsets. |
 | 1.2 | US-002 | End-of-stream loops until `done` and tests `value.length`. Trailing bytes and truncation still throw. |
 | 1.3 | US-003 | `getReader()` moved inside the guarded region, so a locked stream wipes and throws `AttachmentError`. |
-| 1.4 | US-004 | `range.ts` uses `reader.ts`'s two-latch shape; a cancel at any point in `start()` leaves the state zero. |
+| 1.4 | US-004 | `range.ts` uses `reader.ts`'s two-latch shape; a cancel at any point in `start()` leaves the state zero. Until audit 2026-09 M5 this did not cover a cancel during epoch-key derivation, which cached a live key into the wiped state; `segmentKey` now checks `SealState.wiped` (`test/attachment/cancel-epoch-key.ts`). |
 | 1.5 | US-005 | The commitment-mismatch branch calls `wipeSealState` before throwing. The error is unchanged. |
 | 1.6 | US-006 | Both gate scripts run in a `checks` CI job via `npm run test:checks`. |
 | 1.7 | US-013 | `safeExportSecret` wipes each node after its child is derived; `attachmentCek` wipes `componentSecret` in a `finally`. |
@@ -350,16 +350,16 @@ The story ids are `specs/prd.json` ids, which the commit messages carry.
 | 1.9 | US-015 | `close` is required. Breaking change, in CHANGELOG.md. |
 | 1.10 | US-018, US-035 | The lifetime caveat is on all three `...ForGroup` JSDocs and in the README's "A reference dies at the next commit". |
 | 1.11 | US-018, US-035 | `decryptAttachmentStream` and its wrapper document consumer-driven wiping; the README says "Finish the stream or cancel it". |
-| 1.12 | US-016 | `sealObject`, `openObject` and `encryptAttachment` check `cek.length` against `CEK_LENGTH`. |
+| 1.12 | US-016 | `sealObject`, `openObject` and `encryptAttachment` check `cek.length` against `CEK_LENGTH`. `decryptAttachmentStream` and `openAttachmentRange` did not, and failed only at the commitment gate, until the 2026-09 audit fix added the same check to both. |
 | 1.13 | US-017 | `validateAttachmentRef` checks `snapshot.length` explicitly, and `constantTimeEqual`'s length check has its own test. |
 | 1.14 | US-019 | Running byte count replaces the per-`read()` `buffer.reduce`; block assembly is linear in chunk count. |
-| 1.15 | US-020 | The expanded epoch key is cached on `SealState` and wiped by `wipeSealState`. Proved by counting derivations, not by timing. |
+| 1.15 | US-020 | The expanded epoch key is cached on `SealState` and wiped by `wipeSealState`. Proved by counting derivations, not by timing. Until audit 2026-09 M5 this did not cover a cancel during epoch-key derivation, which cached a live key into the wiped state; `segmentKey` now checks `SealState.wiped` (`test/attachment/cancel-epoch-key.ts`). |
 | 1.16 | US-030 | The demo awaits its stream loop, so the CEK wipe runs after the last chunk and a mid-stream error clears `playing`. |
 | 1.17 | US-031 | Sequential signal writes are batched, enforced by `scripts/check-signal-batching.mjs`. |
 | 1.18 | US-032 | The demo uses `encryptAttachmentForGroup` and the other `...ForGroup` wrappers against a real group. |
 | 1.Sound, for the record | NO ACTION: the section records properties that hold, not defects. They are covered by the existing suite and unchanged by this branch. | |
 | 2.1 | US-010, US-011, US-012 | A cached 1025-segment fixture round-trips through object, stream and range, and a tampered epoch head and leaf past epoch 0 are rejected on each path. |
-| 2.2 | US-004 | Covered in `test/attachment/cek-wipe.ts` by gating a `kdf.expand` so the cancel lands inside `start()`. |
+| 2.2 | US-004 | Covered in `test/attachment/cek-wipe.ts` by gating a `kdf.expand` so the cancel lands inside `start()`. Until audit 2026-09 M5 this did not cover a cancel during epoch-key derivation, which cached a live key into the wiped state; `segmentKey` now checks `SealState.wiped` (`test/attachment/cancel-epoch-key.ts`). |
 | 2.3 | US-005 | `cek-wipe.ts` asserts `payloadKey`, `snapKey` and `nonceBase` are zero after a commitment mismatch, not just the CEK. |
 | 2.4 | US-021 | `MAX_SEGMENTS` is rejected by a value that reaches it rather than tripping `isSafeInteger` first. |
 | 2.5 | US-022 | Wrong CEK and wrong objectId are covered at `openObject`, `decryptAttachmentStream` and the range entry point. |

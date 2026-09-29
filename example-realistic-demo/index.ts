@@ -7,17 +7,26 @@ import {
     type PendingRequest,
     type RoomMessage
 } from './protocol.js'
+import { bytesToBase64url } from '../src/util/byte-array.js'
 import {
     assembleRoster,
     classifyJoinRequest,
+    classifyMlsWrite,
     classifyStanding,
-    countApplicationsAtOrBelow,
+    verifyIdentityProof,
+    mayReplaceSocket,
+    replayPage,
     entriesAfter,
     entryFromMls,
     isValidRoomId,
+    mayCreateRoom,
     mayWriteLog,
+    mayWriteKind,
     nextSeq,
-    securityHeaders
+    roomInfoDecision,
+    securityHeaders,
+    type RegistryEntry,
+    type RoomState
 } from './room-logic.js'
 
 const ROOM_LIFETIME_MS = 3 * 24 * 60 * 60 * 1000
@@ -62,6 +71,9 @@ type PendingRow = {
     requested_at:number
 }
 
+// The path every room lives under; `route` and `Room.fetch` both read it.
+const ROOM_PREFIX = '/api/room/'
+
 /**
  * What a socket carries across a hibernation. A `type` alias like the row
  * shapes above, for consistency rather than necessity -- this one is not
@@ -74,7 +86,14 @@ type PendingRow = {
  * every control message.
  */
 type SocketState = {
+    /**
+     * Always a proven identity. `attach` is only reached after
+     * `requireProof`, and `readAttachment` reads a socket as unattached
+     * unless `proven` is set, so no handler can see a claimed identity
+     * that was never signed for.
+     */
     identity:string
+    proven:true
     isCreator:boolean
 
     /**
@@ -88,6 +107,29 @@ type SocketState = {
      * flooder resetting it by going quiet for a moment.
      */
     lastJoinRequestAt:number|null
+
+    /**
+     * When this socket last had an `mls` write accepted, or null. Same
+     * shape and same reasoning as `lastJoinRequestAt`: socket-scoped,
+     * carried by `attach` across every rewrite.
+     */
+    lastMlsAt:number|null
+
+    /**
+     * The random challenge this socket was issued when it was accepted,
+     * and the room id it was accepted for, which a `hello` or `create`
+     * proves an identity over. See `verifyIdentityProof` in
+     * `room-logic.ts`. Like the throttle, it is socket-scoped and has to
+     * survive every `attach` rewrite: a socket is challenged once, so
+     * losing it would leave nothing to prove against on the next
+     * `hello`.
+     */
+    handshake:Handshake|null
+}
+
+type Handshake = {
+    challenge:string
+    roomId:string
 }
 
 export class Room extends DurableObject<Env> {
@@ -112,9 +154,10 @@ export class Room extends DurableObject<Env> {
      * `no such table: meta` instead of returning null, so an expired room
      * answered 500 and a `hello` to it got no answer at all.
      *
-     * Recreating the empty schema is what makes an expired room and an id
-     * that never existed the same state rather than merely the same
-     * answer: both are a present schema holding no rows.
+     * An expired room and an id that never existed then give the same
+     * answer to every read of group data, because both hold no group
+     * rows. They differ only in the `tombstone` row the alarm writes,
+     * which is what stops `create` from reusing an expired id.
      */
     private ensureSchema ():void {
         const sql = this.ctx.storage.sql
@@ -169,13 +212,31 @@ export class Room extends DurableObject<Env> {
                 PRIMARY KEY (identity, status)
             )
         `).toArray()
+        // The id this object was named by, written at `create` so the
+        // alarm can tell the registry which id expired: a Durable Object
+        // is not told its own name. Emptied by the alarm like group data.
+        sql.exec(`
+            CREATE TABLE IF NOT EXISTS name (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                room_id TEXT NOT NULL
+            )
+        `).toArray()
+        // The record that this id held a room which expired. It carries
+        // no group data, only the time, and one row at most.
+        sql.exec(`
+            CREATE TABLE IF NOT EXISTS tombstone (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                expired_at INTEGER NOT NULL
+            )
+        `).toArray()
     }
 
     /**
      * The existence probe, called as RPC from the fetch handler. Returns
-     * null when the room has no metadata, which is the same answer an
-     * expired room gives -- after the alarm deletes everything, nothing
-     * distinguishes expired from never-existed.
+     * null when the room has no metadata. An expired room answers null
+     * too: the alarm deletes the metadata and leaves only a tombstone,
+     * which this probe does not reveal, so the client shows the same
+     * gone view for both. The tombstone matters only to `create`.
      */
     roomInfo ():{ createdAt:number; expiresAt:number }|null {
         const meta = this.readMeta()
@@ -193,12 +254,30 @@ export class Room extends DurableObject<Env> {
             return new Response('expected websocket', { status: 426 })
         }
 
+        // `route` has already validated this id and named this object
+        // by it; the object has no other way to learn its own name.
+        const path = new URL(req.url).pathname
+        const roomId = path.slice(ROOM_PREFIX.length, -'/ws'.length)
+        if (!isValidRoomId(roomId)) {
+            return new Response('bad room id', { status: 400 })
+        }
+
         const pair = new WebSocketPair()
 
         // Accepted untagged: the identity is not known until `hello`,
         // and tags cannot be added after accept. Identity is attached in
         // `hello` instead, via serializeAttachment.
         this.ctx.acceptWebSocket(pair[1])
+
+        // Challenged before it has said anything. Until `hello` the
+        // attachment holds the challenge and nothing else, so
+        // `readAttachment` still reads the socket as unattached.
+        const challenge = bytesToBase64url(
+            crypto.getRandomValues(new Uint8Array(32))
+        )
+        const handshake:Handshake = { challenge, roomId }
+        pair[1].serializeAttachment({ handshake })
+        this.send(pair[1], { type: 'challenge', challenge })
 
         return new Response(null, { status: 101, webSocket: pair[0] })
     }
@@ -269,7 +348,13 @@ export class Room extends DurableObject<Env> {
     /**
      * The room's whole life ends here. Alarms retry on failure, so this
      * must be safe to run twice: deleting an already-empty room is a
-     * no-op, and closing an already-closed socket is caught.
+     * no-op, closing an already-closed socket is caught, and the
+     * tombstone is a single-row upsert, so a second run still leaves
+     * exactly one tombstone and no group data.
+     *
+     * The id does not become free again. A tombstone stays behind so
+     * `create` refuses the id, or anyone who knew it could claim it and
+     * old invitation links would reconnect into their room.
      */
     async alarm ():Promise<void> {
         // Close first. After deleteAll the room cannot answer anything
@@ -282,6 +367,10 @@ export class Room extends DurableObject<Env> {
                 // Already closed. Nothing to do.
             }
         }
+
+        const named = this.ctx.storage.sql
+            .exec<{ room_id:string }>('SELECT room_id FROM name WHERE id = 1')
+            .toArray()[0]
 
         await this.ctx.storage.deleteAll()
 
@@ -296,6 +385,18 @@ export class Room extends DurableObject<Env> {
         // put the empty schema back, or every read from here on throws
         // `no such table` instead of reporting an absent room.
         this.ensureSchema()
+
+        this.ctx.storage.sql.exec(
+            `INSERT OR REPLACE INTO tombstone (id, expired_at)
+             VALUES (1, ?)`,
+            Date.now()
+        ).toArray()
+
+        // Last, so a failure here retries the whole alarm, and every step
+        // above is idempotent. A room created before the registry existed
+        // has no name row and was never listed, so there is nothing to
+        // mark.
+        if (named) await registry(this.env).markExpired(named.room_id)
     }
 
     // ---- message handling ----
@@ -306,10 +407,11 @@ export class Room extends DurableObject<Env> {
     ):Promise<void> {
         switch (msg.type) {
             case 'create':
-                return this.onCreate(ws, msg.identity)
+                return this.onCreate(ws, msg.identity, msg.proof)
             case 'hello':
                 return this.onHello(
-                    ws, msg.identity, msg.cursor, msg.creatorToken
+                    ws, msg.identity, msg.cursor, msg.creatorToken,
+                    msg.proof
                 )
             case 'mls':
                 return this.onMls(ws, msg.kind, msg.payload)
@@ -325,6 +427,8 @@ export class Room extends DurableObject<Env> {
                 return this.onRemoved(ws, msg.identity)
             case 'welcome':
                 return this.onWelcome(ws, msg.to, msg.payload)
+            case 'replay':
+                return this.onReplay(ws, msg.cursor)
             default:
                 // Unreachable for anything isClientMessage accepts. Kept
                 // so a message type added to the contract without a
@@ -338,15 +442,45 @@ export class Room extends DurableObject<Env> {
 
     private async onCreate (
         ws:WebSocket,
-        identity:string
+        identity:string,
+        proof?:string
     ):Promise<void> {
-        if (this.readMeta()) {
+        if (!mayCreateRoom(this.roomState())) {
+            return this.send(ws, { type: 'error', reason: 'room-exists' })
+        }
+        if (!await this.requireProof(ws, identity, proof)) return
+
+        // The proof is checked across an await, and a second `create`
+        // can land in that gap.
+        if (!mayCreateRoom(this.roomState())) {
+            return this.send(ws, { type: 'error', reason: 'room-exists' })
+        }
+
+        const roomId = this.readHandshake(ws)?.roomId
+        if (!roomId) {
+            return this.send(ws, { type: 'error', reason: 'bad-message' })
+        }
+
+        // Listed before the room exists, and awaited before `created` is
+        // sent, so an invitee's GET can never miss a room its creator has
+        // already been told about. The reverse order could leave a live
+        // room the GET route answers 404 for.
+        await registry(this.env).markLive(roomId)
+
+        // The registry call awaited, and a second `create` can land in
+        // that gap too.
+        if (!mayCreateRoom(this.roomState())) {
             return this.send(ws, { type: 'error', reason: 'room-exists' })
         }
 
         const now = Date.now()
         const expiresAt = now + ROOM_LIFETIME_MS
         const token = crypto.randomUUID()
+
+        this.ctx.storage.sql.exec(
+            'INSERT OR REPLACE INTO name (id, room_id) VALUES (1, ?)',
+            roomId
+        ).toArray()
 
         this.ctx.storage.sql.exec(
             `INSERT INTO meta
@@ -376,12 +510,18 @@ export class Room extends DurableObject<Env> {
         this.broadcastRoster()
     }
 
-    private onHello (
+    private async onHello (
         ws:WebSocket,
         identity:string,
         cursor:number,
-        creatorToken?:string
-    ):void {
+        creatorToken?:string,
+        proof?:string
+    ):Promise<void> {
+        if (!this.requireRoom(ws)) return
+        if (!await this.requireProof(ws, identity, proof)) return
+
+        // Read after the proof, which awaits: the room can expire in
+        // that gap.
         const meta = this.readMeta()
         if (!meta) {
             return this.send(ws, { type: 'no-room' })
@@ -397,7 +537,7 @@ export class Room extends DurableObject<Env> {
             identity === meta.creator_identity
         )
 
-        this.replaceExistingSocket(ws, identity, isCreator)
+        this.replaceExistingSocket(ws, identity)
         this.attach(ws, identity, isCreator)
 
         this.send(ws, {
@@ -412,10 +552,9 @@ export class Room extends DurableObject<Env> {
         // Welcome that makes any of it processable.
         this.deliverMailbox(identity)
 
-        const missed = this.entriesSince(cursor)
-        if (missed.length > 0) {
-            this.send(ws, { type: 'log', entries: missed })
-        }
+        // The first page only. The client asks for each next one with
+        // `replay`, so no single frame outgrows the WebSocket limit.
+        this.sendReplayPage(ws, cursor, false)
 
         this.broadcastRoster()
         if (isCreator) this.sendPendingToCreator()
@@ -436,6 +575,9 @@ export class Room extends DurableObject<Env> {
 
         if (!this.requireRoom(ws)) return
         if (!this.requireMember(ws, state)) return
+        if (!this.requireKind(ws, state, kind)) return
+        const now = Date.now()
+        if (!this.requireLogRoom(ws, state, payload.length, now)) return
 
         const seq = nextSeq(this.highWater())
         // kind and payload cross untouched. The room never decodes an
@@ -448,6 +590,9 @@ export class Room extends DurableObject<Env> {
             entry.seq, entry.sender, entry.kind, entry.payload
         ).toArray()
 
+        // Only an accepted write starts the next throttle window.
+        this.attach(ws, state.identity, state.isCreator, { lastMlsAt: now })
+
         // Broadcast to everyone, the sender included. The sender is the
         // one member that cannot decrypt this entry -- MLS cannot open a
         // message it produced -- but it is also the only way the sender
@@ -459,7 +604,10 @@ export class Room extends DurableObject<Env> {
         // reconnect asks for has always included the asker's own
         // entries, so this makes live delivery and replay the same shape
         // instead of two.
+        // Proven sockets only. A socket that has not said who it is gets
+        // the challenge and nothing else.
         for (const peer of this.ctx.getWebSockets()) {
+            if (!this.readAttachment(peer)) continue
             this.send(peer, { type: 'entry', entry })
         }
     }
@@ -470,8 +618,9 @@ export class Room extends DurableObject<Env> {
      * rather than queueing a duplicate for the creator to wade through.
      *
      * This is the only write a complete stranger can cause -- the room
-     * asks nothing but that it exist, deliberately, because the join flow
-     * is open -- so it is also the only handler with limits of its own.
+     * asks only that it exist and that the requester proved, at `hello`,
+     * the identity it is asking for, because the join flow is open -- so
+     * it is also the only handler with limits of its own.
      * `classifyJoinRequest` holds them; a refusal writes nothing at all,
      * not even the throttle, so a refused request cannot itself be the
      * storage growth the limits exist to stop.
@@ -483,13 +632,20 @@ export class Room extends DurableObject<Env> {
     ):void {
         if (!this.requireRoom(ws)) return
 
+        // The identity is a separate field from the one `hello` proved,
+        // so the two have to agree, or any socket could queue a request
+        // under a key it does not hold.
+        const state = this.readAttachment(ws)
+        if (state?.identity !== identity) {
+            return this.send(ws, { type: 'error', reason: 'bad-proof' })
+        }
+
         const now = Date.now()
         const verdict = classifyJoinRequest({
             keyPackageLength: keyPackage.length,
             pendingCount: this.pendingCount(),
             alreadyPending: this.isPending(identity),
-            lastRequestAt: this.readAttachment(ws)?.lastJoinRequestAt ??
-                null,
+            lastRequestAt: state.lastJoinRequestAt,
             now
         })
 
@@ -504,16 +660,16 @@ export class Room extends DurableObject<Env> {
             identity, keyPackage, now
         ).toArray()
 
-        // Attached so a Welcome can find this socket later. Always
-        // non-creator: this can only lower a socket's privilege, never
-        // raise it, since the creator flag is set solely by the token
-        // comparison in `hello`.
+        // Re-attached only to record the throttle; the identity and the
+        // creator flag are the ones `hello` already settled.
         //
         // `now` is what starts this socket's next throttle window. It is
         // recorded on the accepted request only: a refused one leaves the
         // window where it was, so a socket cannot push its own next
         // chance further out by asking again.
-        this.attach(ws, identity, false, now)
+        this.attach(ws, identity, state.isCreator, {
+            lastJoinRequestAt: now
+        })
         this.sendPendingToCreator()
     }
 
@@ -630,19 +786,17 @@ export class Room extends DurableObject<Env> {
         if (!this.requireCreator(ws)) return
 
         const cursor = this.highWater()
-        // LogRow, not LogEntry: sql.exec<T> constrains T to
-        // Record<string, SqlStorageValue>, which an interface does not
-        // satisfy. See the type alias added in Phase 4.
-        const rows = this.ctx.storage.sql
-            .exec<LogRow>('SELECT seq, sender, kind, payload FROM log')
+        // A COUNT rather than every row: `countApplicationsAtOrBelow` in
+        // `room-logic.ts` is the tested statement of this rule, and the
+        // query must say the same thing.
+        const counted = this.ctx.storage.sql
+            .exec<{ n:number }>(
+                `SELECT COUNT(*) AS n FROM log
+                 WHERE kind = 'application' AND seq <= ?`,
+                cursor
+            )
             .toArray()
-        const all = rows.map(row => ({
-            seq: row.seq,
-            sender: row.sender,
-            kind: row.kind as LogEntry['kind'],
-            payload: row.payload
-        }))
-        const priorCount = countApplicationsAtOrBelow(all, cursor)
+        const priorCount = counted[0]?.n ?? 0
 
         this.ctx.storage.sql.exec(
             `INSERT OR REPLACE INTO mailbox
@@ -656,6 +810,42 @@ export class Room extends DurableObject<Env> {
         this.deliverMailbox(to)
     }
 
+    /**
+     * The next replay page, for a socket that already said `hello`. An
+     * attached socket is a proven one -- `onHello` attaches only after
+     * `requireProof` -- and a proven socket was already sent the first
+     * page, so asking for the rest tells it nothing new.
+     */
+    private onReplay (ws:WebSocket, cursor:number):void {
+        if (!this.requireRoom(ws)) return
+        if (!this.readAttachment(ws)?.identity) {
+            return this.send(ws, {
+                type: 'error',
+                reason: 'bad-message'
+            })
+        }
+        this.sendReplayPage(ws, cursor, true)
+    }
+
+    /**
+     * One `log` page after `cursor`, chosen by `replayPage`. The page
+     * after `hello` is skipped when empty; one answering `replay` is
+     * sent even so, as the answer the client asked for.
+     */
+    private sendReplayPage (
+        ws:WebSocket,
+        cursor:number,
+        evenIfEmpty:boolean
+    ):void {
+        const page = replayPage(this.entriesSince(cursor), cursor)
+        if (page.entries.length === 0 && !evenIfEmpty) return
+        this.send(ws, {
+            type: 'log',
+            entries: page.entries,
+            more: page.more
+        })
+    }
+
     // ---- storage helpers ----
 
     private readMeta ():MetaRow|null {
@@ -663,6 +853,14 @@ export class Room extends DurableObject<Env> {
             .exec<MetaRow>('SELECT * FROM meta WHERE id = 1')
             .toArray()
         return rows[0] ?? null
+    }
+
+    private roomState ():RoomState {
+        if (this.readMeta()) return 'live'
+        const tomb = this.ctx.storage.sql
+            .exec('SELECT id FROM tombstone WHERE id = 1')
+            .toArray()
+        return tomb.length > 0 ? 'tombstoned' : 'absent'
     }
 
     private highWater ():number {
@@ -790,25 +988,32 @@ export class Room extends DurableObject<Env> {
     // ---- socket helpers ----
 
     /**
-     * `lastJoinRequestAt` is carried over from the existing attachment
-     * unless this call sets it. Every other field is rewritten from
-     * scratch on each attach, and doing the same to the throttle would
-     * hand a flooder a reset: send `hello`, be attached afresh, ask
-     * again. It is socket-scoped, so it survives the identity changing.
+     * The throttles (`lastJoinRequestAt`, `lastMlsAt`) are carried over
+     * from the existing attachment unless this call sets them. Every
+     * other field is rewritten from scratch on each attach, and doing
+     * the same to a throttle would hand a flooder a reset: send `hello`,
+     * be attached afresh, ask again. Throttles are socket-scoped, so
+     * they survive the identity changing.
      */
     private attach (
         ws:WebSocket,
         identity:string,
         isCreator:boolean,
-        lastJoinRequestAt?:number
+        throttles:{
+            lastJoinRequestAt?:number
+            lastMlsAt?:number
+        } = {}
     ):void {
         const prior = this.readAttachment(ws)
         const state:SocketState = {
             identity,
+            proven: true,
             isCreator,
-            lastJoinRequestAt: lastJoinRequestAt ??
+            lastJoinRequestAt: throttles.lastJoinRequestAt ??
                 prior?.lastJoinRequestAt ??
-                null
+                null,
+            lastMlsAt: throttles.lastMlsAt ?? prior?.lastMlsAt ?? null,
+            handshake: this.readHandshake(ws)
         }
         ws.serializeAttachment(state)
     }
@@ -824,9 +1029,14 @@ export class Room extends DurableObject<Env> {
         if (!value || typeof value !== 'object') return null
         const state = value as Partial<SocketState>
         if (typeof state.identity !== 'string') return null
+        // Same reasoning as `isCreator` below: an attachment that does
+        // not say it was proven reads as unattached.
+        if (state.proven !== true) return null
         const last = state.lastJoinRequestAt
+        const lastMls = state.lastMlsAt
         return {
             identity: state.identity,
+            proven: true,
             isCreator: state.isCreator === true,
             // Same reasoning as `isCreator`: an attachment written before
             // the field existed reads as "never asked" rather than
@@ -834,8 +1044,56 @@ export class Room extends DurableObject<Env> {
             lastJoinRequestAt: typeof last === 'number' &&
                 Number.isFinite(last) ?
                 last :
-                null
+                null,
+            lastMlsAt: typeof lastMls === 'number' &&
+                Number.isFinite(lastMls) ?
+                lastMls :
+                null,
+            handshake: this.readHandshake(ws)
         }
+    }
+
+    /**
+     * The challenge this socket was issued, read from the raw attachment
+     * rather than through `readAttachment`: before `hello` there is no
+     * identity, and the challenge is exactly what `hello` needs.
+     */
+    private readHandshake (ws:WebSocket):Handshake|null {
+        const value = ws.deserializeAttachment()
+        if (!value || typeof value !== 'object') return null
+        const { handshake } = value as { handshake?:Partial<Handshake> }
+        if (
+            !handshake ||
+            typeof handshake.challenge !== 'string' ||
+            typeof handshake.roomId !== 'string'
+        ) return null
+        return { challenge: handshake.challenge, roomId: handshake.roomId }
+    }
+
+    /**
+     * Whether this socket proved `identity`, answering `bad-proof` if
+     * it did not. Asked after `requireRoom`, for the reason given at
+     * `requireMember`. A missing proof is a failed one: the room link
+     * alone must reveal nothing and let nobody act as anyone.
+     */
+    private async requireProof (
+        ws:WebSocket,
+        identity:string,
+        proof?:string
+    ):Promise<boolean> {
+        const handshake = this.readHandshake(ws)
+        const holds = (
+            proof !== undefined &&
+            handshake !== null
+        ) && await verifyIdentityProof(
+            identity,
+            handshake.challenge,
+            handshake.roomId,
+            proof
+        )
+        if (holds) return true
+        this.send(ws, { type: 'error', reason: 'bad-proof' })
+        return false
     }
 
     /**
@@ -848,8 +1106,8 @@ export class Room extends DurableObject<Env> {
      * moment. A write accepted in that moment lands in a room with no
      * meta and no alarm: rows that nothing will ever expire, in a room
      * that reports itself gone. Refusing keeps the invariant the alarm
-     * exists to establish -- an expired room and one that never existed
-     * are the same state, a present schema holding no rows.
+     * exists to establish -- an expired room holds no group data, only
+     * its tombstone.
      */
     private requireRoom (ws:WebSocket):boolean {
         if (this.readMeta()) return true
@@ -881,6 +1139,35 @@ export class Room extends DurableObject<Env> {
      * a member whose room had simply ended -- true, but the wrong thing
      * to tell them.
      */
+    /**
+     * Applies `classifyMlsWrite`. The room totals are a count and a sum
+     * over the log itself, so they cannot drift from what is stored. A
+     * refusal sends the verdict and writes nothing.
+     */
+    private requireLogRoom (
+        ws:WebSocket,
+        state:SocketState,
+        payloadLength:number,
+        now:number
+    ):boolean {
+        const row = this.ctx.storage.sql.exec<{
+            rows:number
+            bytes:number|null
+        }>(
+            'SELECT COUNT(*) AS rows, SUM(LENGTH(payload)) AS bytes FROM log'
+        ).one()
+        const verdict = classifyMlsWrite({
+            payloadLength,
+            logRows: row.rows,
+            logBytes: row.bytes ?? 0,
+            lastMlsAt: state.lastMlsAt,
+            now
+        })
+        if (verdict === 'ok') return true
+        this.send(ws, { type: 'error', reason: verdict })
+        return false
+    }
+
     private requireMember (ws:WebSocket, state:SocketState):boolean {
         const may = mayWriteLog(
             state.identity,
@@ -894,6 +1181,22 @@ export class Room extends DurableObject<Env> {
     }
 
     /**
+     * Whether this member may write this kind of entry, answering
+     * `commit-not-creator` if not. Asked after `requireMember`, so a
+     * stranger hears that they are not a member rather than something
+     * about commits. A refusal writes nothing and reaches no peer.
+     */
+    private requireKind (
+        ws:WebSocket,
+        state:SocketState,
+        kind:LogEntry['kind']
+    ):boolean {
+        if (mayWriteKind(kind, state.isCreator)) return true
+        this.send(ws, { type: 'error', reason: 'commit-not-creator' })
+        return false
+    }
+
+    /**
      * A second socket for one identity replaces the first. Reconnects
      * are common -- a laptop lid, a tunnel -- and leaving the stale
      * socket open would double every broadcast and make the roster lie.
@@ -901,24 +1204,27 @@ export class Room extends DurableObject<Env> {
      * This is a scan rather than a tag lookup because tags can only be
      * set at accept time, before `hello` has said who this is.
      *
-     * `incomingIsCreator` is what stops the rule being abusable. An
-     * identity is a public signature key, so before the token existed
-     * anyone could evict the creator's live socket simply by saying hello
-     * as them -- not an escalation, but a way to keep the one person who
-     * can approve requests permanently disconnected. A socket that has
-     * not proved the token therefore cannot displace one that has. The
-     * creator's own reconnect carries the token, so it still replaces.
+     * An identity is a public signature key everyone in the room has
+     * seen, so a bare claim to one would let anyone evict any member --
+     * keep the creator from approving, or a joiner from receiving their
+     * Welcome. `mayReplaceSocket` therefore lets only a socket that
+     * proved the same identity replace it. This is called after
+     * `requireProof`, so the incoming socket is proven; the rule is asked
+     * anyway so that stays a stated condition rather than a call order.
      */
     private replaceExistingSocket (
         incoming:WebSocket,
-        identity:string,
-        incomingIsCreator:boolean
+        identity:string
     ):void {
         for (const peer of this.ctx.getWebSockets()) {
             if (peer === incoming) continue
             const state = this.readAttachment(peer)
-            if (state?.identity !== identity) continue
-            if (state.isCreator && !incomingIsCreator) continue
+            if (!state) continue
+            const may = mayReplaceSocket(
+                state.identity,
+                { identity, proven: true }
+            )
+            if (!may) continue
             try {
                 peer.close(1000, 'replaced by a newer connection')
             } catch (_err) {
@@ -982,10 +1288,71 @@ export class Room extends DurableObject<Env> {
         const live = assembleRoster(known, liveTags)
         const msg:RoomMessage = { type: 'roster', live }
 
+        // Sent, like it is counted, only to proven sockets.
         for (const peer of this.ctx.getWebSockets()) {
             if (peer === excluding) continue
+            if (!this.readAttachment(peer)) continue
             this.send(peer, msg)
         }
+    }
+}
+
+/**
+ * The one registry object, named by a fixed string.
+ */
+function registry (env:Env):DurableObjectStub<RoomRegistry> {
+    return env.REGISTRY.getByName('rooms')
+}
+
+/**
+ * Which room ids are live and which have expired, so the GET route can
+ * answer an unknown id without naming a room object. A single Durable
+ * Object rather than KV, because KV may serve a cached miss for up to a
+ * minute and an invitee opening a fresh link would be told the room is
+ * gone. See "The room registry" in AGENTS.md.
+ *
+ * The registry is not the authority on whether an id may be created --
+ * the room's own tombstone is. It only lets the Worker avoid
+ * instantiating objects.
+ */
+export class RoomRegistry extends DurableObject<Env> {
+    constructor (ctx:DurableObjectState, env:Env) {
+        super(ctx, env)
+        ctx.storage.sql.exec(`
+            CREATE TABLE IF NOT EXISTS rooms (
+                room_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL
+            )
+        `).toArray()
+    }
+
+    markLive (roomId:string):void {
+        this.write(roomId, 'live')
+    }
+
+    markExpired (roomId:string):void {
+        this.write(roomId, 'expired')
+    }
+
+    lookup (roomId:string):RegistryEntry {
+        const row = this.ctx.storage.sql
+            .exec<{ status:string }>(
+                'SELECT status FROM rooms WHERE room_id = ?',
+                roomId
+            )
+            .toArray()[0]
+        if (row?.status === 'live' || row?.status === 'expired') {
+            return row.status
+        }
+        return null
+    }
+
+    private write (roomId:string, status:'live'|'expired'):void {
+        this.ctx.storage.sql.exec(
+            `INSERT OR REPLACE INTO rooms (room_id, status)
+             VALUES (?, ?)`,
+            roomId, status
+        ).toArray()
     }
 }
 
@@ -1038,8 +1405,6 @@ async function route (req:Request, env:Env, url:URL):Promise<Response> {
         return Response.json({ ok: true })
     }
 
-    const ROOM_PREFIX = '/api/room/'
-
     if (!url.pathname.startsWith(ROOM_PREFIX)) {
         return new Response('not found', { status: 404 })
     }
@@ -1062,22 +1427,34 @@ async function route (req:Request, env:Env, url:URL):Promise<Response> {
         return new Response('bad room id', { status: 400 })
     }
 
-    const room = env.ROOM.getByName(roomId)
-
     if (wantsSocket) {
+        // Limited before the room is named, so a refused upgrade costs
+        // no object. The Worker cannot tell a `create` from a `hello`
+        // here, so every upgrade counts; see UPGRADE_LIMIT.
+        const key = req.headers.get('CF-Connecting-IP') ?? 'unknown'
+        const { success } = await env.UPGRADE_LIMITER.limit({ key })
+        if (!success) {
+            return new Response('too many requests', { status: 429 })
+        }
+
         // RFC 6455 makes the token case-insensitive.
         const upgrade = req.headers.get('Upgrade') ?? ''
         if (upgrade.toLowerCase() !== 'websocket') {
             return new Response('expected websocket', { status: 426 })
         }
-        return room.fetch(req)
+        return env.ROOM.getByName(roomId).fetch(req)
     }
 
     if (req.method !== 'GET') {
         return new Response('method not allowed', { status: 405 })
     }
 
-    const info = await room.roomInfo()
+    const listed = await registry(env).lookup(roomId)
+    if (roomInfoDecision(listed) === 'no-room') {
+        return new Response('no such room', { status: 404 })
+    }
+
+    const info = await env.ROOM.getByName(roomId).roomInfo()
 
     if (!info) {
         return new Response('no such room', { status: 404 })

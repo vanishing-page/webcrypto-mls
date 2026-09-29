@@ -18,6 +18,7 @@ import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
 import { testClientConfig } from '../helpers/client-config.js'
+import { sameSignerKeyPackage } from '../helpers/same-signer-key-package.js'
 
 for (const cs of testCiphersuites()) {
     test('Resumption ' + cs, async (t) => {
@@ -102,19 +103,21 @@ async function resumption (t:any, cipherSuite:CiphersuiteName) {
         testClientConfig
     )
 
-    const bobNewKeyPackage = await generateKeyPackage(
+    // a branch holds only members of the old group, so each member
+    // keeps its signature key (RFC 9420 SS11.3)
+    const bobNewKeyPackage = await sameSignerKeyPackage(
         bobCredential,
-        defaultCapabilities(),
-        defaultLifetime(),
-        [],
+        bob.publicPackage.leafNode.signaturePublicKey,
+        bob.privatePackage.signaturePrivateKey,
         impl
     )
 
-    const aliceNewKeyPackage = await generateKeyPackage(
+    // a branch holds only members of the old group, so each member
+    // keeps its signature key (RFC 9420 SS11.3)
+    const aliceNewKeyPackage = await sameSignerKeyPackage(
         aliceCredential,
-        defaultCapabilities(),
-        defaultLifetime(),
-        [],
+        alice.publicPackage.leafNode.signaturePublicKey,
+        alice.privatePackage.signaturePrivateKey,
         impl
     )
 

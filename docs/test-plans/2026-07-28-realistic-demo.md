@@ -474,7 +474,18 @@ resurrects the room. `GET /api/room/<id>` still answers 404 and a
 each time, which is what keeps `readMeta()` from throwing
 `no such table: meta` instead of returning null.
 
-### 3.5 An expired room and one that never existed are indistinguishable
+### 3.5 An expired id cannot be created again
+
+Against the id expired in 3.3 and alarmed twice more in 3.4, send
+`create` on a fresh socket.
+
+Expected: an `error` with reason `room-exists`, and no `created`.
+`GET /api/room/<id>` still answers 404. The alarm's runs leave one
+tombstone row between them and no group data: the room's storage holds
+a single `tombstone` row and every other table is empty. Then send
+`create` for an id that was never used, and expect `created`.
+
+### 3.6 An expired room and one that never existed are indistinguishable
 
 Send `hello` for the expired id, and `hello` for an id that was never
 created.
@@ -483,7 +494,7 @@ Expected: both answer `no-room`, with no difference in the reply. A
 client cannot tell "expired" from "never existed", which is deliberate:
 the room does not leak that an id was once real.
 
-### 3.6 The gone view says both cases
+### 3.7 The gone view says both cases
 
 In a browser, open the expired room's URL, and separately an id that
 never existed.
@@ -493,7 +504,7 @@ exist or has expired -- both possibilities, since the page has no way to
 tell them apart -- and offers a control to start a new room. Taking that
 control creates a room and navigates to it.
 
-### 3.7 Remove the temporary harness
+### 3.8 Remove the temporary harness
 
 Restore `ROOM_LIFETIME_MS` to `3 * 24 * 60 * 60 * 1000` and delete the
 `debugAlarm()` method and its route.
@@ -578,8 +589,8 @@ Fill this in per run. A blank cell is not a pass.
 | 2.1 to 2.6 | AC7.1 to AC7.5 | |
 | 2.7 | AC6.5 across a reload | |
 | 2.8 | AC7.6 | |
-| 3.1 to 3.6 | AC8.1 to AC8.4 | |
-| 3.7 | the harness is out of the tree again | |
+| 3.1 to 3.7 | AC8.1 to AC8.5 | |
+| 3.8 | the harness is out of the tree again | |
 | Part 4 | AC10.6 and the copy on the page | |
 | Part 5 | AC1.2 deployed, owner-approved only | |
 

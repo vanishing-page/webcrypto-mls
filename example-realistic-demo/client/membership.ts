@@ -71,3 +71,28 @@ export function leafIndexOf (
         .find(member => member.identity === identity)
     return found ? found.leafIndex : null
 }
+
+/**
+ * The identity at leaf 0: the member who created the group, and in this
+ * demo the only one who ever commits. Read from this client's own tree,
+ * never from the room. Leaf 0 is never vacated, because only the
+ * creator removes members.
+ */
+export function creatorOf (tree:RatchetTree):string|null {
+    const first = membersFromTree(tree)[0]
+    return first && first.leafIndex === 0 ? first.identity : null
+}
+
+/**
+ * The identity at one leaf, or null for a blank or absent leaf. This is
+ * how an authenticated sender's leaf index becomes someone, so it must
+ * be asked of the tree the message was processed under.
+ */
+export function identityAtLeaf (
+    tree:RatchetTree,
+    leafIndex:number
+):string|null {
+    const found = membersFromTree(tree)
+        .find(member => member.leafIndex === leafIndex)
+    return found ? found.identity : null
+}

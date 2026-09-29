@@ -91,7 +91,13 @@ export async function encode (
         const bytes = typeof p === 'string' ? ascii(p) : p
         framed.push(await frame(bytes, kdf))
     }
-    return concatAll(framed)
+    const out = concatAll(framed)
+    // Each framed part was allocated here by frame() (always through
+    // concatAll, never the caller's input), and one of them may be a
+    // copy of the CEK or payload key. Untestable as such: these
+    // buffers never reach the injected crypto, so no seam sees them.
+    for (const f of framed) f.fill(0)
+    return out
 }
 
 /**
@@ -109,13 +115,23 @@ export async function sealKdf (
     info:Uint8Array[],
     length:number,
 ):Promise<Uint8Array> {
+    // The extract input holds a framed copy of every ikm, and the PRK
+    // is key material in its own right. Both are allocated by this
+    // call, so both are wiped here; the caller's ikm and the returned
+    // output are left alone.
     const extractInput = await encode(kdf, protocolId, label, ...ikm)
-    const salt = ascii(protocolId)
-    const prk = await kdf.extract(paddedSalt(kdf, salt), extractInput)
-    const expandInfo = await encode(
-        kdf, protocolId, label, ...info, uint16be(length),
-    )
-    return kdf.expand(prk, expandInfo, length)
+    let prk:Uint8Array|null = null
+    try {
+        const salt = ascii(protocolId)
+        prk = await kdf.extract(paddedSalt(kdf, salt), extractInput)
+        const expandInfo = await encode(
+            kdf, protocolId, label, ...info, uint16be(length),
+        )
+        return await kdf.expand(prk, expandInfo, length)
+    } finally {
+        extractInput.fill(0)
+        prk?.fill(0)
+    }
 }
 
 export function constantTimeEqual (

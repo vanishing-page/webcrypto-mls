@@ -38,7 +38,17 @@ export interface ClientConfig {
      * only committing them is gated.
      */
     supportedCustomProposalTypes:number[]
+
+    /**
+     * The most proposals held pending at once. A proposal that arrives (or
+     * is created) while this many are pending is refused with a
+     * `ValidationError`; nothing pending is evicted. 0 accepts none.
+     * Default `defaultMaxPendingProposals`.
+     */
+    maxPendingProposals:number
 }
+
+export const defaultMaxPendingProposals = 256
 
 export const defaultClientConfig = {
     keyRetentionConfig: defaultKeyRetentionConfig,
@@ -47,4 +57,5 @@ export const defaultClientConfig = {
     paddingConfig: defaultPaddingConfig,
     authService: failClosedAuthenticationService,
     supportedCustomProposalTypes: [],
+    maxPendingProposals: defaultMaxPendingProposals,
 }

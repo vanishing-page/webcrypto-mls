@@ -12,21 +12,40 @@ import type { LogEntry } from '../protocol.js'
  * secrecy as a bug.
  */
 
+/**
+ * A message this client could read, and who MLS says sent it. `sender`
+ * is the identity of the leaf that signed the message, resolved when it
+ * was decrypted rather than when it is shown: a removed member's leaf
+ * can be reused, so the same leaf index later names somebody else.
+ */
+export interface Decrypted {
+    text:string
+    sender:string
+}
+
 export interface TimelineText {
     kind:'text'
     seq:number
 
     /**
-     * The wire identity that sent it, carried through beside the name
-     * rather than instead of it. The view marks this client's own
-     * messages by this and never by `from`: two members may choose the
-     * same display name, and a name resolved out of the tree is not a
-     * key. `from` stays the only thing rendered.
+     * The authenticated identity that sent it, carried through beside
+     * the name rather than instead of it. The view marks this client's
+     * own messages by this and never by `from`: two members may choose
+     * the same display name, and a name resolved out of the tree is not
+     * a key. `from` stays the only thing rendered.
      */
     sender:string
 
     from:string
     text:string
+
+    /**
+     * The room wrote a different sender beside the ciphertext than the
+     * one MLS authenticated. The room's claim is only a routing hint,
+     * so the message is still credited to `sender`; this says the room
+     * got it wrong, which is worth showing.
+     */
+    mismatch:boolean
 }
 
 export interface TimelinePlaceholder {
@@ -43,12 +62,12 @@ export interface TimelineInput {
     /** Application entries only, in seq order. */
     entries:LogEntry[]
 
-    /** seq -> plaintext, for entries this client could decrypt. */
-    decrypted:Record<number, string>
+    /** seq -> plaintext and sender, for entries this client could read. */
+    decrypted:Record<number, Decrypted>
 
     /**
-     * Wire identity -> display name, which is what `entry.sender`
-     * carries. Keyed by identity rather than by seq because a name is a
+     * Identity -> display name, for the authenticated senders in
+     * `decrypted`. Keyed by identity rather than by seq because a name is a
      * fact about the sender, and the same sender says more than one
      * thing.
      */
@@ -101,9 +120,9 @@ export function buildTimeline (input:TimelineInput):TimelineItem[] {
         if (entry.kind !== 'application') continue
         if (entry.seq <= input.joinCursor) continue
 
-        const text = input.decrypted[entry.seq]
+        const said = input.decrypted[entry.seq]
 
-        if (text === undefined) {
+        if (said === undefined) {
             // Consecutive misses collapse into one item rather than a
             // wall of identical rows.
             if (run) {
@@ -125,9 +144,10 @@ export function buildTimeline (input:TimelineInput):TimelineItem[] {
         items.push({
             kind: 'text',
             seq: entry.seq,
-            sender: entry.sender,
-            from: input.names[entry.sender] ?? 'unknown',
-            text
+            sender: said.sender,
+            from: input.names[said.sender] ?? 'unknown',
+            text: said.text,
+            mismatch: said.sender !== entry.sender
         })
     }
 

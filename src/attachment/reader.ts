@@ -19,7 +19,7 @@ import {
     SEGMENT_MAX, ATTACHMENT_EPOCH_LENGTH,
     type SealParams,
 } from './schedule.js'
-import { attachmentCek } from './keys.js'
+import { attachmentCek, assertCekLength } from './keys.js'
 import type { KeySchedule } from '../key-schedule.js'
 import type { CiphersuiteImpl } from '../crypto/ciphersuite.js'
 
@@ -80,21 +80,18 @@ export function parsePrefix (
 }
 
 /**
- * Commitment gate + root check: startOpen with the parsed salt and
- * stored commitment, recompute epochTreeRoot over the complete
- * epoch heads, constant-time compare against ref.snapshot AND
- * require the stored snapshot field to match. Returns the SealState.
+ * Commitment gate alone: startOpen with the salt and stored commitment
+ * from the fixed-size prefix, `bytes[0, 32 + nh)`. Needs nothing past
+ * that prefix, which is what lets the sequential reader reject a wrong
+ * commitment before buffering the rest of the header.
  */
-export async function verifyRoot (
+export function openCommitment (
     cek:Uint8Array,
     objectId:Uint8Array,
-    prefix:HeaderPrefix,
-    refSnapshot:Uint8Array,
+    salt:Uint8Array,
+    storedCommitment:Uint8Array,
     crypto:SealCrypto,
 ):Promise<SealState> {
-    const { l } = prefix
-
-    // Build SealParams from constants
     const params:SealParams = {
         protocolId: PROTOCOL_RO,
         aeadId: crypto.aeadId,
@@ -103,33 +100,49 @@ export async function verifyRoot (
         snapId: SNAP_EPOCH_TREE,
         nonceMode: NONCE_DERIVED,
         epochLength: ATTACHMENT_EPOCH_LENGTH,
-        salt: prefix.salt,
+        salt,
     }
+    return startOpen(cek, params, objectId, storedCommitment, crypto)
+}
 
-    // startOpen gates on commitment
-    const state = await startOpen(
-        cek, params, objectId, prefix.storedCommitment, crypto,
-    )
-
-    // Recompute epoch tree root over the complete epoch heads
+/**
+ * Root check on a state that has already passed the commitment gate:
+ * recompute epochTreeRoot over the complete epoch heads, constant-time
+ * compare against `refSnapshot` AND require the stored snapshot field
+ * to match. Wipes `state` on a mismatch.
+ */
+export async function checkRoot (
+    state:SealState,
+    prefix:HeaderPrefix,
+    refSnapshot:Uint8Array,
+):Promise<void> {
     const root = await epochTreeRoot(
         state,
-        BigInt(l.nSeg),
+        BigInt(prefix.l.nSeg),
         prefix.epochHeads,
     )
 
-    // Constant-time compare against refSnapshot
-    if (!constantTimeEqual(root, refSnapshot)) {
+    if (!constantTimeEqual(root, refSnapshot) ||
+        !constantTimeEqual(root, prefix.storedSnapshot)) {
         wipeSealState(state)
         throw new AttachmentError()
     }
+}
 
-    // Also verify against storedSnapshot for consistency
-    if (!constantTimeEqual(root, prefix.storedSnapshot)) {
-        wipeSealState(state)
-        throw new AttachmentError()
-    }
-
+/**
+ * Commitment gate + root check. Returns the SealState.
+ */
+export async function verifyRoot (
+    cek:Uint8Array,
+    objectId:Uint8Array,
+    prefix:HeaderPrefix,
+    refSnapshot:Uint8Array,
+    crypto:SealCrypto,
+):Promise<SealState> {
+    const state = await openCommitment(
+        cek, objectId, prefix.salt, prefix.storedCommitment, crypto,
+    )
+    await checkRoot(state, prefix, refSnapshot)
     return state
 }
 
@@ -163,7 +176,7 @@ export async function verifyEpochRun (
     const metaLen = layoutParams.nh + 16
     const runStart = first * metaLen
     const runEnd = runStart + (count * metaLen)
-    const epochRun = metadata.slice(runStart, runEnd)
+    const epochRun = metadata.subarray(runStart, runEnd)
 
     // Recompute epoch head
     const head = await epochHead(state, epochRun)
@@ -279,8 +292,11 @@ export async function verifyHeader (
 
 /**
  * Streaming sequential reader. Validates the attachment reference,
- * buffers the header, verifies commitment and root, then streams
- * plaintext as blocks arrive.
+ * verifies the commitment on the fixed-size prefix (salt and stored
+ * commitment), verifies the root once the epoch heads have arrived,
+ * verifies each epoch's metadata run against its head as it arrives,
+ * then streams plaintext as blocks arrive. The metadata region is
+ * held once, for the life of the stream.
  *
  * Implements zeroization via wipeSealState on close/error/cancel.
  *
@@ -305,6 +321,7 @@ export function decryptAttachmentStream (
     // ciphersuite is in hand here, so the snapshot length is pinned to
     // this KDF's output size rather than to the set of all of them.
     validateAttachmentRef(ref, crypto.kdf.size)
+    assertCekLength(cek)
 
     // Validate ref plaintextLength before entering stream
     if (ref.plaintextLength <= 0n ||
@@ -325,33 +342,36 @@ export function decryptAttachmentStream (
     const l = layout(layoutParams)
 
     let ctx:HeaderContext|null = null
+    // Set once the commitment gate passes, before the rest of the
+    // header is read; `ctx` follows only after the root check.
+    let state:SealState|null = null
     let stateWiped = false
     let cekWiped = false
     let reader:ReadableStreamDefaultReader<Uint8Array>|null = null
 
     const doWipe = () => {
         // Two independent latches, not one. cancel() can fire while
-        // start() is still awaiting verifyHeader, when ctx is null and
-        // there is no state to wipe yet. stateWiped therefore does not
+        // start() is still awaiting the commitment gate, when state is
+        // null and there is nothing to wipe yet. stateWiped therefore does not
         // latch on such a call, so the later doWipe -- from the gap
-        // loop's catch, once verifyHeader has returned and ctx is set
+        // loop's catch, once the gate has returned and state is set
         // -- still performs the wipe. A single latch shared with the
         // CEK would be set by that first call and swallow the second,
         // leaving payloadKey, snapKey and nonceBase live in memory.
         // That is a real leak, not a theoretical one; it is pinned by
         // the two-flag regression test in test/attachment/cek-wipe.ts,
         // which fails if these are collapsed into one flag.
-        if (!stateWiped && ctx) {
+        if (!stateWiped && state) {
             stateWiped = true
-            wipeSealState(ctx.state)
+            wipeSealState(state)
         }
         // The CEK wipe has no precondition, so it can fire while
         // deriveSchedule is still reading the key across its four
         // awaits (commit, payload_key, acc_key, nonce_base). A cancel
         // landing between them leaves a SealState whose commitment
         // came from the real key and whose other fields came from
-        // zeros; verifyRoot's constantTimeEqual then fails and the
-        // stream errors, and verifyHeader wipes that state itself.
+        // zeros; checkRoot's constantTimeEqual then fails and the
+        // stream errors, and checkRoot wipes that state itself.
         // Benign: the stream is being cancelled, and keys derived
         // from zeros make it error rather than return wrong data.
         if (!cekWiped) {
@@ -402,8 +422,33 @@ export function decryptAttachmentStream (
             buffer[bufferHead] = first.subarray(take)
         }
     }
+    // Read from the source until `n` bytes are queued, then consume
+    // them into `dst` at `at`. Writing into the caller's buffer rather
+    // than a fresh one is what keeps the metadata region to one copy.
+    const takeInto = async (
+        dst:Uint8Array,
+        at:number,
+        n:number,
+    ):Promise<void> => {
+        // An explicit break for the same reason as the loop in pull:
+        // the lint rule cannot see that pushChunk moves bufferedBytes.
+        for (;;) {
+            if (bufferedBytes >= n) break
+            const result = await reader!.read()
+            if (result.done) throw new AttachmentError()
+            pushChunk(result.value)
+        }
+        let off = 0
+        while (off < n) {
+            const first = peekChunk()!
+            const take = Math.min(first.length, n - off)
+            dst.set(first.subarray(0, take), at + off)
+            off += take
+            consumeFront(take)
+        }
+    }
+
     let blockIndex = 0
-    let lastEpochVerified = -1
     let headerDone = false
 
     return new ReadableStream({
@@ -418,66 +463,51 @@ export function decryptAttachmentStream (
                 // path as any other start() failure fixes both.
                 reader = ciphertext.getReader()
 
-                // Buffer incoming chunks until header is available
-                const totalBytes:Uint8Array[] = []
-                let bytesRead = 0
+                const nh = crypto.kdf.size
+                const prefixSize = 32 + nh
 
-                while (bytesRead < l.headerSize) {
-                    const result = await reader.read()
-                    if (result.done) {
-                        throw new AttachmentError()
-                    }
-                    if (result.value) {
-                        totalBytes.push(result.value)
-                        bytesRead += result.value.length
-                    }
-                }
-
-                // Reconstruct header from buffered chunks
-                const headerTotal = new Uint8Array(l.headerSize)
-                let offset = 0
-                let byteIdx = 0
-                let chunkIdx = 0
-
-                while (offset < l.headerSize) {
-                    const chunk = totalBytes[chunkIdx]
-                    const take = Math.min(
-                        chunk.length - byteIdx,
-                        l.headerSize - offset,
-                    )
-                    headerTotal.set(
-                        chunk.slice(byteIdx, byteIdx + take),
-                        offset,
-                    )
-                    offset += take
-                    byteIdx += take
-
-                    if (byteIdx >= chunk.length) {
-                        chunkIdx++
-                        byteIdx = 0
-                    }
-                }
-
-                // Verify header
-                ctx = await verifyHeader(
-                    cek, ref.objectId, headerTotal,
-                    {
-                        snapshot: ref.snapshot,
-                        plaintextLength,
-                    },
+                // The commitment gate needs only the salt and the
+                // stored commitment, so it runs on the fixed-size
+                // prefix before the rest of the header is buffered. A
+                // wrong commitment then costs 32 + nh bytes and one
+                // chunk, not the whole header (~100 MiB at the
+                // design's largest object).
+                const headsEnd = l.epochHeadsOffset + (l.nEp * nh)
+                const head = new Uint8Array(headsEnd)
+                await takeInto(head, 0, prefixSize)
+                state = await openCommitment(
+                    cek, ref.objectId,
+                    head.subarray(0, 32), head.subarray(32, prefixSize),
                     crypto,
                 )
 
-                // Collect remaining bytes from buffered chunks after header
-                let inChunkIdx = chunkIdx
-                let inByteIdx = byteIdx
+                // The root covers the stored snapshot and the epoch
+                // heads, which sit ahead of the metadata, so it is
+                // checked before any metadata is buffered.
+                await takeInto(head, prefixSize, headsEnd - prefixSize)
+                const prefix = parsePrefix(head, plaintextLength, nh)
+                await checkRoot(state, prefix, ref.snapshot)
 
-                while (inChunkIdx < totalBytes.length) {
-                    const chunk = totalBytes[inChunkIdx]
-                    pushChunk(chunk.slice(inByteIdx))
-                    inByteIdx = 0
-                    inChunkIdx++
+                // Each epoch's metadata run is verified against its
+                // head as soon as it has arrived, so a tampered run is
+                // rejected at its own epoch rather than after the
+                // whole header. The runs are read straight into the
+                // one metadata buffer that openBlock later reads from.
+                // That buffer is still the whole region: every leaf
+                // sits ahead of block 0, so the layout forces the
+                // reader to hold all of them by then.
+                const metadata = new Uint8Array(l.metaLen * l.nSeg)
+                const header:HeaderContext = { state, prefix, metadata }
+                const perEpoch = 2 ** layoutParams.epochLength
+                for (let e = 0; e < l.nEp; e++) {
+                    const first = e * perEpoch
+                    const count = Math.min(perEpoch, l.nSeg - first)
+                    await takeInto(
+                        metadata, first * l.metaLen, count * l.metaLen,
+                    )
+                    await verifyEpochRun(header, e)
                 }
+                ctx = header
 
                 // Skip padding between header and first block
                 let toSkip = l.firstBlockOffset - l.headerSize
@@ -551,14 +581,6 @@ export function decryptAttachmentStream (
 
                 const blockLen = segmentLength(l, layoutParams,
                     blockIndex)
-
-                // On first segment of epoch, verify epoch run
-                const epoch = Math.floor(blockIndex /
-                    (2 ** layoutParams.epochLength))
-                if (epoch !== lastEpochVerified) {
-                    await verifyEpochRun(ctx, epoch)
-                    lastEpochVerified = epoch
-                }
 
                 // Buffer until block is available
                 // Written as an explicit break because

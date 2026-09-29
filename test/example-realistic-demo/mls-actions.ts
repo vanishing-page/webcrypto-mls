@@ -22,10 +22,16 @@ import {
     joinFromWelcome,
     commitAdd,
     commitRemove,
-    processEntry
+    processEntry,
+    proveIdentity
 } from '../../example-realistic-demo/client/mls-actions.js'
+import {
+    verifyIdentityProof
+} from '../../example-realistic-demo/room-logic.js'
 import { membersFromTree, leafIndexOf } from
     '../../example-realistic-demo/client/membership.js'
+import { framingOf } from
+    '../../example-realistic-demo/client/commit-verdict.js'
 import { isMalformedEntry } from
     '../../example-realistic-demo/client/malformed-entry.js'
 import type { DemoUser } from '../../example-shared/demo-user.js'
@@ -35,6 +41,24 @@ let cs:CiphersuiteImpl
 test('the ciphersuite initialises', async (t) => {
     cs = await initCiphersuite()
     t.ok(cs, 'should return a ciphersuite')
+})
+
+// H4 -- what the client signs is what the room verifies
+test('a proof from proveIdentity passes verifyIdentityProof', async (t) => {
+    const alice = await createUser('alice', cs)
+    const identity = identityOf(alice.keyPackage!)
+    const proof = await proveIdentity(alice, cs, 'aB3xK9pQ2m', 'chal-1')
+
+    t.equal(
+        await verifyIdentityProof(identity, 'chal-1', 'aB3xK9pQ2m', proof),
+        true,
+        'the room accepts it for the same identity, challenge and room'
+    )
+    t.equal(
+        await verifyIdentityProof(identity, 'chal-2', 'aB3xK9pQ2m', proof),
+        false,
+        'and not for another challenge'
+    )
 })
 
 test('createUser makes one key package', async (t) => {
@@ -551,5 +575,10 @@ test('processEntry does not mark a real commit that will not process',
                 false,
                 'should not be mistaken for a malformed payload'
             )
+            const framed = framingOf(err)
+            t.equal(framed?.epoch, bobState.groupContext.epoch + 1n,
+                'carries the epoch the commit was framed for')
+            t.deepEqual(framed?.groupId, bobState.groupContext.groupId,
+                'and the group id it was framed for')
         }
     })

@@ -33,6 +33,13 @@ export interface ConnectionDeps {
      */
     joinRequest ():string|null
 
+    /**
+     * Sign the room's challenge for this socket with the leaf signature
+     * key -- `proveIdentity` in `mls-actions.ts`, with the room id bound
+     * in. The room checks it with `verifyIdentityProof`.
+     */
+    prove (challenge:string):Promise<string>
+
     /** Apply one entry to group state. Phases 7 and 8 extend this. */
     applyEntry (entry:LogEntry):Promise<void>
 
@@ -80,19 +87,74 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
         // `welcome-you` re-delivers it.
     }
 
+    // The challenge most recently issued. Signing is async, so a socket
+    // can be replaced while a proof is being made; a proof for a retired
+    // socket's challenge would only be refused by the new one.
+    let challenge:string|null = null
+
+    /**
+     * Everything the client says on a fresh socket, in order, once the
+     * room's challenge has arrived -- so it is re-sent on every
+     * reconnect, because every socket is issued a challenge of its own.
+     */
+    async function introduce (issued:string):Promise<void> {
+        challenge = issued
+        const identity = deps.identity()
+        if (!identity) return
+
+        let proof:string
+        try {
+            proof = await deps.prove(issued)
+        } catch (err) {
+            state.status.value = `Could not prove this identity: ${err}`
+            return
+        }
+        if (challenge !== issued) return
+
+        // `isCreating` stays true until `created` actually arrives, so a
+        // socket that drops mid-creation retries the create rather than
+        // sending `hello` to a room that was never made and getting
+        // `no-room`.
+        if (deps.isCreating()) {
+            delivery.send({ type: 'create', identity, proof })
+            return
+        }
+
+        // Resume from the stored cursor so the room replays only what
+        // was missed.
+        delivery.send({
+            type: 'hello',
+            identity,
+            cursor: state.cursor.value,
+            creatorToken: state.creatorToken.value ?? undefined,
+            proof
+        })
+
+        // The request follows `hello` rather than replacing it: the room
+        // attaches the socket to an identity on `hello`, and a request
+        // from an unattached socket has nobody to answer.
+        //
+        // It is re-published on every socket, which is what makes it
+        // survive a reconnect. The room keys `pending` by identity, so
+        // re-publishing replaces rather than duplicates.
+        const keyPackage = deps.joinRequest()
+
+        if (keyPackage) {
+            delivery.send({ type: 'join-request', identity, keyPackage })
+        }
+    }
+
     const delivery = createDeliveryClient({
         state,
         page: deps.page,
 
         /**
-         * Runs on the first open and on every reconnect. Identity has to
-         * be re-established each time, because a reconnected socket
-         * carries no attachment until it says `hello`.
+         * Runs on the first open and on every reconnect. Nothing is said
+         * here: the room issues each socket a challenge as soon as it is
+         * accepted, and `create` or `hello` has to carry a proof over
+         * it. See `introduce`, which the `challenge` message runs.
          */
         onOpen (_isReconnect:boolean):void {
-            const identity = deps.identity()
-            if (!identity) return
-
             // A stop from a previous connection is cleared here, not on
             // the failure itself. The replay about to arrive re-delivers
             // from the last good cursor, so this is the one moment the
@@ -100,40 +162,9 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
             // fatal entry kills the client permanently.
             delivery.queue.reset()
 
-            // `isCreating` stays true until `created` actually arrives,
-            // so a socket that drops mid-creation retries the create
-            // rather than sending `hello` to a room that was never
-            // made and getting `no-room`.
-            if (deps.isCreating()) {
-                delivery.send({ type: 'create', identity })
-                return
-            }
-
-            // Resume from the stored cursor so the room replays only
-            // what was missed.
-            delivery.send({
-                type: 'hello',
-                identity,
-                cursor: state.cursor.value,
-                creatorToken: state.creatorToken.value ?? undefined
-            })
-
-            // The request follows `hello` rather than replacing it: the
-            // room attaches the socket to an identity on `hello`, and a
-            // request from an unattached socket has nobody to answer.
-            //
-            // It is re-published on every open, which is what makes it
-            // survive a reconnect. The room keys `pending` by identity,
-            // so re-publishing replaces rather than duplicates.
-            const keyPackage = deps.joinRequest()
-
-            if (keyPackage) {
-                delivery.send({
-                    type: 'join-request',
-                    identity,
-                    keyPackage
-                })
-            }
+            // A new socket has not been challenged yet; a proof still
+            // being made for the last one must not be sent on this one.
+            challenge = null
         },
 
         /**
@@ -169,6 +200,13 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
 
         onRoomMessage (msg:RoomMessage):void {
             switch (msg.type) {
+                case 'challenge':
+                    introduce(msg.challenge).catch(err => {
+                        state.status.value =
+                            `Could not introduce this client: ${err}`
+                    })
+                    break
+
                 case 'created':
                     batch(() => {
                         state.creatorToken.value = msg.creatorToken
@@ -199,6 +237,21 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
                     // One push, so the whole batch drains before
                     // anything pushed after it.
                     pushEntries(msg.entries)
+
+                    // The replay comes in pages that fit a frame. Ask
+                    // for the next from the last seq this page carried,
+                    // not from the cursor: the queue may not have
+                    // applied the page yet, and the room answers from
+                    // whatever cursor it is given.
+                    if (msg.more) {
+                        const last = msg.entries[msg.entries.length - 1]
+                        if (last) {
+                            delivery.send({
+                                type: 'replay',
+                                cursor: last.seq
+                            })
+                        }
+                    }
                     break
 
                 case 'entry':

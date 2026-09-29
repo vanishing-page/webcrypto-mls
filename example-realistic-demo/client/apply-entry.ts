@@ -3,6 +3,8 @@ import type { LogEntry } from '../protocol.js'
 import type { RealisticState } from './state.js'
 import type { GroupLock } from './group-lock.js'
 import { processEntry } from './mls-actions.js'
+import { identityAtLeaf } from './membership.js'
+import type { Decrypted } from './timeline.js'
 
 /**
  * One entry from the log, applied to the group. Kept out of the page for
@@ -39,13 +41,13 @@ export function createApplyEntry (
      * into a placeholder -- one left out of `state.entries` would be
      * counted by nobody and silently vanish from the history instead.
      */
-    function record (entry:LogEntry, text:string|null):void {
+    function record (entry:LogEntry, said:Decrypted|null):void {
         batch(() => {
             state.entries.value = [...state.entries.value, entry]
-            if (text === null) return
+            if (said === null) return
             state.decrypted.value = {
                 ...state.decrypted.value,
-                [entry.seq]: text
+                [entry.seq]: said
             }
         })
     }
@@ -75,8 +77,15 @@ export function createApplyEntry (
             return sent.payload === entry.payload
         })
 
+        // Credited to this client because the ciphertext is one it
+        // made, which the room cannot forge -- not because the room
+        // said so.
+        const own = identity()
+
         batch(() => {
-            record(entry, index === -1 ? null : pending[index].text)
+            record(entry, index === -1 || own === null ?
+                null :
+                { text: pending[index].text, sender: own })
             if (index === -1) return
             state.outbound.value = [
                 ...pending.slice(0, index),
@@ -132,6 +141,19 @@ export function createApplyEntry (
             // proposal it staged, which no client in this demo sends.
             if (said.kind !== 'applicationMessage') return
 
+            // Who MLS says sent it, named now against the tree it was
+            // processed under. Resolving the leaf at render time would
+            // read whoever holds that leaf by then, which after a Remove
+            // and an Add is somebody else. A sender with no leaf is not
+            // a member, and a member is the only one who can chat: it
+            // throws, and the entry stays a placeholder.
+            const sender = said.sender.leafIndex === undefined ?
+                null :
+                identityAtLeaf(said.tree, said.sender.leafIndex)
+            if (sender === null) {
+                throw new Error('that message has no member as its sender')
+            }
+
             batch(() => {
                 // The receiving ratchet moved when the message was
                 // opened. Dropping `newState` would leave this client
@@ -140,7 +162,10 @@ export function createApplyEntry (
                 state.group.value = said.newState
                 state.decrypted.value = {
                     ...state.decrypted.value,
-                    [entry.seq]: new TextDecoder().decode(said.message)
+                    [entry.seq]: {
+                        text: new TextDecoder().decode(said.message),
+                        sender
+                    }
                 }
             })
 

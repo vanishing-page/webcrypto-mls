@@ -44,6 +44,7 @@ function assertScheduleWiped (
     t:{ ok:(v:boolean, m:string) => void },
     recorded:Uint8Array[],
     label:string,
+    labels?:string[],
 ):void {
     t.ok(
         recorded.length >= 4,
@@ -55,6 +56,16 @@ function assertScheduleWiped (
         const zeroed = buf !== undefined && buf.every(b => b === 0)
         t.ok(zeroed, `${label}: ${names[i]} is zeroed`)
     }
+    // The epoch keys are told apart by label, not position, so only a
+    // recorder that kept the labels can check them.
+    if (!labels) return
+    const epochKeys = recorded.filter((_, i) =>
+        labels[i]?.includes('epoch_key'))
+    t.ok(epochKeys.length > 0, `${label}: recorded an epoch key`)
+    t.ok(
+        epochKeys.every(k => k.every(b => b === 0)),
+        `${label}: every epoch key is zeroed`,
+    )
 }
 
 /**
@@ -65,7 +76,12 @@ function assertScheduleWiped (
  * paths wipe again from their own catch once the cancelled work
  * resumes, so an assertion taken after the release passes whether or
  * not the cancel wiped anything. Gate a step, cancel while the stream
- * is parked on it, and assert before releasing.
+ * is parked on it, and assert the schedule before releasing.
+ *
+ * Then assert again after the release. The parked step itself is the
+ * other half of the risk: a derivation that resumes into a wiped state
+ * must not leave its output live or decrypt with it (audit 2026-09
+ * M5), and only an assertion taken after it resumes can see that.
  *
  * The gate matches on the label `sealKdf` encodes into the expand
  * info rather than on a call index, because indices shift whenever
@@ -74,9 +90,13 @@ function assertScheduleWiped (
 function gatedRecordingCrypto (base:SealCrypto):{
     crypto:SealCrypto
     recorded:Uint8Array[]
+    labels:string[]
+    decrypts:() => number
     gateOnLabel:(label:string, onReached:() => Promise<void>) => void
 } {
     const recorded:Uint8Array[] = []
+    const labels:string[] = []
+    let decrypts = 0
     let gateLabel:string|null = null
     let gateFn:(() => Promise<void>)|null = null
 
@@ -90,6 +110,13 @@ function gatedRecordingCrypto (base:SealCrypto):{
 
     const crypto:SealCrypto = {
         ...base,
+        aead: {
+            ...base.aead,
+            decrypt: (key, nonce, aad, ct) => {
+                decrypts++
+                return base.aead.decrypt(key, nonce, aad, ct)
+            },
+        },
         kdf: {
             ...base.kdf,
             expand: async (prk:Uint8Array,
@@ -97,6 +124,7 @@ function gatedRecordingCrypto (base:SealCrypto):{
             ):Promise<Uint8Array> => {
                 const out = await base.kdf.expand(prk, info, len)
                 recorded.push(out)
+                labels.push(labelOf(info))
                 if (gateLabel !== null && gateFn &&
                     labelOf(info).includes(gateLabel)) {
                     const fn = gateFn
@@ -109,7 +137,9 @@ function gatedRecordingCrypto (base:SealCrypto):{
         },
     }
 
-    return { crypto, recorded, gateOnLabel }
+    return {
+        crypto, recorded, labels, decrypts: () => decrypts, gateOnLabel,
+    }
 }
 
 /**
@@ -137,6 +167,15 @@ function gateLatch ():{
         },
         release: () => letGo(),
     }
+}
+
+/**
+ * Let a released derivation run on to wherever it goes next. From the
+ * release to the AEAD call is promise continuations only, so one
+ * macrotask turn drains it. A queue flush, not a timing wait.
+ */
+function flushQueue ():Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, 0))
 }
 
 // Helper to drain a ReadableStream to bytes
@@ -1620,7 +1659,7 @@ test(
 
         const {
             crypto: recordingCrypto, recorded: recordedKeys,
-            gateOnLabel,
+            labels, decrypts, gateOnLabel,
         } = gatedRecordingCrypto(base)
 
         const encrypted = await encryptAttachment(
@@ -1628,6 +1667,7 @@ test(
         )
         const cipherBytes = await drainStream(encrypted.readable)
         recordedKeys.length = 0
+        labels.length = 0
 
         const rangeRead = await openAttachmentRange(
             cek,
@@ -1663,9 +1703,17 @@ test(
         // never happened at all; nothing else can run in between.
         const cancelling = reader.cancel().catch(() => undefined)
         assertScheduleWiped(t, recordedKeys, 'range cancel')
+        const decryptsAtCancel = decrypts()
 
         gate.release()
         await Promise.all([cancelling, reading])
+        await flushQueue()
+
+        assertScheduleWiped(
+            t, recordedKeys, 'range cancel, released', labels,
+        )
+        t.equal(decrypts(), decryptsAtCancel,
+            'range cancel: no decryption after the cancel')
     },
 )
 
@@ -1774,7 +1822,7 @@ test(
 
         const {
             crypto: recordingCrypto, recorded: recordedKeys,
-            gateOnLabel,
+            labels, decrypts, gateOnLabel,
         } = gatedRecordingCrypto(base)
 
         const encrypted = await encryptAttachment(
@@ -1782,6 +1830,7 @@ test(
         )
         const cipherBytes = await drainStream(encrypted.readable)
         recordedKeys.length = 0
+        labels.length = 0
 
         const rangeRead = await openAttachmentRange(
             cek,
@@ -1811,9 +1860,17 @@ test(
 
         const cancelling = resultStream.cancel().catch(() => undefined)
         assertScheduleWiped(t, recordedKeys, 'range cancel no read')
+        const decryptsAtCancel = decrypts()
 
         gate.release()
         await cancelling
+        await flushQueue()
+
+        assertScheduleWiped(
+            t, recordedKeys, 'range cancel no read, released', labels,
+        )
+        t.equal(decrypts(), decryptsAtCancel,
+            'range cancel no read: no decryption after the cancel')
     },
 )
 

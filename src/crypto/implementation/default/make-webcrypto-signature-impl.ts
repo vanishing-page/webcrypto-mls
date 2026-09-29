@@ -1,5 +1,6 @@
 import type { Signature } from '../../signature.js'
 import { ValidationError } from '../../../mls-error.js'
+import { isSmallOrderEd25519 } from '../../small-order.js'
 
 // WebCrypto subtle API requires BufferSource for key material,
 // but Uint8Array has variance that requires casting to BufferSource.
@@ -40,6 +41,18 @@ export function makeWebCryptoSignatureImpl ():Signature {
         },
 
         async verify (publicKey, message, signature) {
+            // The key arrives from a peer. WebCrypto would reject a
+            // wrong length with a DOMException DataError, which is
+            // outside the library's error contract.
+            if (publicKey.length !== 32) {
+                throw new ValidationError(
+                    `Ed25519 public key must be exactly 32 bytes, got ${
+                        publicKey.length
+                    }`
+                )
+            }
+            // OpenSSL accepts a small-order key; noble must agree (M4)
+            if (isSmallOrderEd25519(publicKey)) return false
             const key = await subtle.importKey(
                 'raw',
                 publicKey as BufferSource,

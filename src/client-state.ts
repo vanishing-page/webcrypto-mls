@@ -1,7 +1,10 @@
 import type { AuthenticatedContent } from './authenticated-content.js'
 import { makeProposalRef } from './authenticated-content.js'
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
+import { getCiphersuiteFromName } from './crypto/ciphersuite.js'
+import { isSmallOrderSignatureKey } from './crypto/small-order.js'
 import type { Hash } from './crypto/hash.js'
+import type { Hpke } from './crypto/hpke.js'
 import type { SignatureSecretKey } from './crypto/signature.js'
 import type { Extension } from './extension.js'
 import { extensionsEqual, extensionsSupportedByCapabilities } from './extension.js'
@@ -12,7 +15,7 @@ import { ratchetTreeFromExtension, verifyGroupInfoConfirmationTag, verifyGroupIn
 import type { KeyPackage, PrivateKeyPackage } from './key-package.js'
 import { makeKeyPackageRef, verifyKeyPackage } from './key-package.js'
 import type { KeySchedule } from './key-schedule.js'
-import { deriveKeySchedule, initializeKeySchedule } from './key-schedule.js'
+import { deriveEpochKeys, deriveKeySchedule } from './key-schedule.js'
 import type { PreSharedKeyID, PreSharedKeyIdResumption } from './presharedkey.js'
 import { encodePskId } from './presharedkey.js'
 
@@ -61,7 +64,12 @@ import type {
 import type { PrivateKeyPath } from './private-key-path.js'
 import { deriveWelcomePrivateKeyPath } from './private-key-path.js'
 import type { UnappliedProposals, ProposalWithSender } from './unapplied-proposals.js'
-import { addUnappliedProposal } from './unapplied-proposals.js'
+import {
+    addUnappliedProposal,
+    checkPendingCapacity,
+    emptyUnappliedProposals,
+    findUnappliedProposal
+} from './unapplied-proposals.js'
 import type { PskIndex } from './psk-index.js'
 import { accumulatePskSecret } from './psk-index.js'
 import type { SenderTypeName } from './sender.js'
@@ -95,6 +103,7 @@ import type { AuthenticationService } from './authentication-service.js'
 import type { Credential } from './credential.js'
 import type { LifetimeConfig } from './lifetime-config.js'
 import type { KeyPackageEqualityConfig } from './key-package-equality-config.js'
+import { sameMemberLeafNodes } from './key-package-equality-config.js'
 import type { ClientConfig } from './client-config.js'
 import { defaultClientConfig } from './client-config.js'
 import { decodeExternalSenders } from './external-sender.js'
@@ -239,8 +248,18 @@ async function validateProposals (
 
     if (addsContainExistingKeypackage) { return new ValidationError('Commit cannot contain an Add proposal for someone already in the group') }
 
+    // an Add joins the group under the extensions the commit leaves in
+    // place: the proposed ones if a GroupContextExtensions proposal is
+    // present, otherwise the current ones
+    const extensionsAfterCommit = p.group_context_extensions.length > 0 ?
+        flattenExtensions(p.group_context_extensions) :
+        groupContext.extensions
+
     const everyLeafSupportsGroupExtensions = p.add.every(({ proposal }) =>
-        extensionsSupportedByCapabilities(groupContext.extensions, proposal.add.keyPackage.leafNode.capabilities),
+        extensionsSupportedByCapabilities(
+            extensionsAfterCommit,
+            proposal.add.keyPackage.leafNode.capabilities,
+        ),
     )
 
     if (!everyLeafSupportsGroupExtensions) { return new ValidationError("Added leaf node that doesn't support extension in GroupContext") }
@@ -459,7 +478,16 @@ export async function validateLeafNodeUpdateOrCommit (
     tree:RatchetTree,
     authService:AuthenticationService,
     s:Signature,
+    // overrides the credential read from `tree`, for an external resync
+    // whose Remove has already blanked the replaced leaf
+    priorCredential:Credential | undefined = credentialAtLeaf(tree, leafIndex),
 ):Promise<MlsError | undefined> {
+    // Checked before the signature: a small-order key makes a forged
+    // signature verify, so it has to fail as a key (audit M4).
+    if (hasSmallOrderSignatureKey(leafNode, groupContext)) {
+        return new ValidationError('Signature key is of small order')
+    }
+
     const signatureValid = await verifyLeafNodeSignature(leafNode, groupContext.groupId, leafIndex, s)
 
     if (!signatureValid) return new CryptoVerificationError('Could not verify leaf node signature')
@@ -470,10 +498,33 @@ export async function validateLeafNodeUpdateOrCommit (
         tree,
         authService,
         leafIndex,
-        credentialAtLeaf(tree, leafIndex),
+        priorCredential,
     )
 
     if (commonError !== undefined) return commonError
+}
+
+/**
+ * RFC 9420 SS12.1.2: an Update carries a new encryption key. One that keeps
+ * the sender's current key is rejected; `validateLeafNodeUpdateOrCommit`
+ * cannot catch it, because its uniqueness check skips the leaf being
+ * replaced.
+ */
+function validateUpdateRotatesKey (
+    leafNode:LeafNodeUpdate,
+    leafIndex:number,
+    tree:RatchetTree,
+):MlsError | undefined {
+    const current = tree[leafToNodeIndex(toLeafIndex(leafIndex))]
+
+    if (
+        current?.nodeType === 'leaf' &&
+        constantTimeEqual(current.leaf.hpkePublicKey, leafNode.hpkePublicKey)
+    ) {
+        return new ValidationError(
+            'Update must carry a new encryption key',
+        )
+    }
 }
 
 /**
@@ -493,6 +544,14 @@ function credentialAtLeaf (tree:RatchetTree, leafIndex:number):Credential | unde
 
 export function throwIfDefined (err:MlsError | undefined):void {
     if (err !== undefined) throw err
+}
+
+function hasSmallOrderSignatureKey (
+    leafNode:LeafNode,
+    groupContext:GroupContext,
+):boolean {
+    const alg = getCiphersuiteFromName(groupContext.cipherSuite).signature
+    return isSmallOrderSignatureKey(alg, leafNode.signaturePublicKey)
 }
 
 async function validateLeafNodeCommon (
@@ -590,6 +649,12 @@ async function validateLeafNodeKeyPackage (
     leafIndex:number | undefined,
     s:Signature,
 ):Promise<MlsError | undefined> {
+    // Checked before the signature: a small-order key makes a forged
+    // signature verify, so it has to fail as a key (audit M4).
+    if (hasSmallOrderSignatureKey(leafNode, groupContext)) {
+        return new ValidationError('Signature key is of small order')
+    }
+
     const signatureValid = await verifyLeafNodeSignatureKeyPackage(leafNode, s)
     if (!signatureValid) return new CryptoVerificationError('Could not verify leaf node signature')
 
@@ -618,6 +683,7 @@ async function validateKeyPackage (
     config:LifetimeConfig,
     authService:AuthenticationService,
     s:Signature,
+    hpke:Hpke,
 ):Promise<MlsError | undefined> {
     if (kp.cipherSuite !== groupContext.cipherSuite) return new ValidationError('Invalid CipherSuite')
 
@@ -639,6 +705,16 @@ async function validateKeyPackage (
     if (!signatureValid) return new CryptoVerificationError('Invalid keypackage signature')
 
     if (constantTimeEqual(kp.initKey, kp.leafNode.hpkePublicKey)) { return new ValidationError('Cannot have identicial init and encryption keys') }
+
+    // every committer encrypts the Welcome to this key, so one that does
+    // not import makes every commit carrying the Add throw
+    try {
+        await hpke.importPublicKey(kp.initKey)
+    } catch {
+        return new ValidationError(
+            'KeyPackage initKey is not a public key for the ciphersuite',
+        )
+    }
 }
 
 function validateReinit (
@@ -709,7 +785,13 @@ export type ApplyProposalsData =
       extensions:Extension[]
       hasGroupContextExtensionsProposal:boolean
   }
-  | { kind:'externalCommit'; externalInitSecret:Uint8Array; newMemberLeafIndex:LeafIndex }
+  | {
+      kind:'externalCommit'
+      externalInitSecret:Uint8Array
+      newMemberLeafIndex:LeafIndex
+      // the credential of the leaf a resync Remove replaces, if any
+      priorCredential?:Credential
+  }
   | { kind:'reinit'; reinit:Reinit }
 
 export interface ApplyProposalsResult {
@@ -733,9 +815,18 @@ export async function applyProposals (
     senderType:SenderTypeName = committerLeafIndex !== undefined ? 'member' : 'new_member_commit',
 ):Promise<ApplyProposalsResult> {
     const allProposals = proposals.reduce((acc, cur) => {
-        if (cur.proposalOrRefType === 'proposal') { return [...acc, { proposal: cur.proposal, senderLeafIndex: committerLeafIndex }] }
+        if (cur.proposalOrRefType === 'proposal') {
+            return [...acc, {
+                proposal: cur.proposal,
+                senderLeafIndex: committerLeafIndex,
+                senderType,
+            }]
+        }
 
-        const p = state.unappliedProposals[bytesToBase64(cur.reference)]
+        const p = findUnappliedProposal(
+            cur.reference,
+            state.unappliedProposals
+        )
         if (p === undefined) throw new ValidationError('Could not find proposal with supplied reference')
         return [...acc, p]
     }, [] as ProposalWithSender[])
@@ -804,7 +895,7 @@ export async function applyProposals (
             sentByClient,
             state.clientConfig.authService,
             state.clientConfig.lifetimeConfig,
-            cs.signature,
+            cs,
         )
 
         const [updatedPskSecret, pskIds] = await accumulatePskSecret(
@@ -860,6 +951,7 @@ export async function applyProposals (
         throwIfDefined(validateNoDuplicatePskIds(grouped.psk))
 
         const externalRemove = grouped.remove.at(0)
+        let priorCredential:Credential | undefined
 
         if (externalRemove !== undefined) {
             throwIfDefined(validateRemove(externalRemove.proposal.remove, state.ratchetTree))
@@ -873,6 +965,8 @@ export async function applyProposals (
             ) {
                 throw new ValidationError('External commit Remove must target the joiner\'s own prior leaf (resync)')
             }
+
+            priorCredential = removedNode.leaf.credential
         }
 
         const treeAfterRemove = grouped.remove.reduce((acc, { proposal }) => {
@@ -907,6 +1001,7 @@ export async function applyProposals (
                 kind: 'externalCommit',
                 externalInitSecret,
                 newMemberLeafIndex: nodeToLeafIndex(findBlankLeafNodeIndexOrExtend(treeAfterRemove)),
+                priorCredential,
             },
             selfRemoved: false,
             allProposals,
@@ -918,7 +1013,12 @@ export function makePskIndex (state:ClientState | undefined, externalPsks:Record
     return {
         findPsk (preSharedKeyId) {
             if (preSharedKeyId.psktype === 'external') {
-                return externalPsks[bytesToBase64(preSharedKeyId.pskId)]
+                // Own-property lookup: a pskId that spells an
+                // Object.prototype member is an ordinary unknown id.
+                const id = bytesToBase64(preSharedKeyId.pskId)
+                return Object.hasOwn(externalPsks, id) ?
+                    externalPsks[id] :
+                    undefined
             }
 
             if (state !== undefined && constantTimeEqual(preSharedKeyId.pskGroupId, state.groupContext.groupId)) {
@@ -969,6 +1069,30 @@ async function deriveUpdatedPrivateKeyPath (
         privateKeyPath,
         cs,
     )
+}
+
+/**
+ * RFC 9420 SS11.3: every member of a branched group is a member of the
+ * group it branched from.
+ */
+function branchMembersMatch (
+    newTree:RatchetTree,
+    oldTree:RatchetTree,
+    equality:KeyPackageEqualityConfig,
+):ValidationError | undefined {
+    const oldLeaves = oldTree.flatMap((n) =>
+        n?.nodeType === 'leaf' ? [n.leaf] : [])
+    for (const node of newTree) {
+        if (node?.nodeType !== 'leaf') continue
+        const known = oldLeaves.some((old) =>
+            sameMemberLeafNodes(equality, node.leaf, old))
+        if (!known) {
+            return new ValidationError(
+                'Branch Welcome contains a member not in the old group',
+            )
+        }
+    }
+    return undefined
 }
 
 /**
@@ -1027,13 +1151,36 @@ export async function joinGroup (
 
             if (!extensionsEqual(resumingFromState.groupActiveState.reinit.extensions, gi.groupContext.extensions)) { throw new ValidationError('Extensions mismatch') }
         }
+
+        // RFC 9420 SS11.3: a branch keeps the old group's version and
+        // suite, and carries exactly one resumption PSK
+        if (resumptionPsk.usage === 'branch') {
+            const old = resumingFromState.groupContext
+            if (gi.groupContext.version !== old.version) {
+                throw new ValidationError('Version mismatch')
+            }
+            if (gi.groupContext.cipherSuite !== old.cipherSuite) {
+                throw new ValidationError('Ciphersuite mismatch')
+            }
+            if (resumptionPsksRequiringPriorState.length !== 1) {
+                throw new ValidationError(
+                    'A branch Welcome must carry exactly one resumption PSK',
+                )
+            }
+        }
     }
 
     const allExtensionsSupported = extensionsSupportedByCapabilities(
         gi.groupContext.extensions,
         keyPackage.leafNode.capabilities,
     )
-    if (!allExtensionsSupported) throw new UsageError('client does not support every extension in the GroupContext')
+    // the committer admitted a KeyPackage that cannot support the group:
+    // a peer-caused condition, so a ValidationError and not a UsageError
+    if (!allExtensionsSupported) {
+        throw new ValidationError(
+            'client does not support every extension in the GroupContext',
+        )
+    }
 
     throwIfDefined(
         await validateExternalSenders(
@@ -1087,6 +1234,17 @@ export async function joinGroup (
         ),
     )
 
+    const branchPsk = resumptionPsksRequiringPriorState.find(
+        (id) => id.usage === 'branch',
+    )
+    if (branchPsk !== undefined && resumingFromState !== undefined) {
+        throwIfDefined(branchMembersMatch(
+            tree,
+            resumingFromState.ratchetTree,
+            clientConfig.keyPackageEqualityConfig,
+        ))
+    }
+
     const newLeaf = findLeafIndex(tree, keyPackage.leafNode)
 
     if (newLeaf === undefined) throw new ValidationError('Could not find own leaf when processing welcome')
@@ -1099,6 +1257,16 @@ export async function joinGroup (
     const committerLeafIndex = toLeafIndex(gi.signer)
     const ancestorNodeIndex = firstCommonAncestor(tree, newLeaf, committerLeafIndex)
 
+    // RFC 9420 SS12.4.3.1: a joiner whose common ancestor with the
+    // signer is non-blank and does not list it as unmerged cannot follow
+    // the next path commit without a path_secret.
+    const ancestor = tree[ancestorNodeIndex]
+    if (groupSecrets.pathSecret === undefined &&
+        ancestor?.nodeType === 'parent' &&
+        !ancestor.parent.unmergedLeaves.includes(newLeaf)) {
+        throw new ValidationError('Welcome is missing a required path_secret')
+    }
+
     const updatedPkp = await deriveUpdatedPrivateKeyPath(
         tree,
         committerLeafIndex,
@@ -1108,13 +1276,16 @@ export async function joinGroup (
         cs,
     )
 
-    const keySchedule = await deriveKeySchedule(groupSecrets.joinerSecret, pskSecret, gi.groupContext, cs.kdf)
+    const { keySchedule, encryptionSecret } = await deriveKeySchedule(
+        groupSecrets.joinerSecret, pskSecret, gi.groupContext, cs.kdf)
 
     const confirmationTagVerified = await verifyGroupInfoConfirmationTag(gi, groupSecrets.joinerSecret, pskSecret, cs)
 
     if (!confirmationTagVerified) throw new CryptoVerificationError('Could not verify confirmation tag')
 
-    const secretTree = await createSecretTree(leafWidth(tree.length), keySchedule.encryptionSecret, cs.kdf)
+    const secretTree = await createSecretTree(
+        leafWidth(tree.length), encryptionSecret, cs.kdf)
+    encryptionSecret.fill(0)
 
     privateKeys.initPrivateKey.fill(0)
 
@@ -1124,7 +1295,7 @@ export async function joinGroup (
         privatePath: updatedPkp,
         signaturePrivateKey: privateKeys.signaturePrivateKey,
         confirmationTag: gi.confirmationTag,
-        unappliedProposals: {},
+        unappliedProposals: emptyUnappliedProposals(),
         keySchedule,
         secretTree,
         historicalReceiverData: new Map(),
@@ -1164,11 +1335,13 @@ export async function createGroup (
 
     const epochSecret = cs.rng.randomBytes(cs.kdf.size)
 
-    const keySchedule = await initializeKeySchedule(epochSecret, cs.kdf)
+    const { keySchedule, encryptionSecret } = await deriveEpochKeys(
+        epochSecret, cs.kdf)
 
     const confirmationTag = await createConfirmationTag(keySchedule.confirmationKey, confirmedTranscriptHash, cs.hash)
 
-    const secretTree = await createSecretTree(1, keySchedule.encryptionSecret, cs.kdf)
+    const secretTree = await createSecretTree(1, encryptionSecret, cs.kdf)
+    encryptionSecret.fill(0)
 
     return {
         ratchetTree,
@@ -1176,7 +1349,7 @@ export async function createGroup (
         secretTree,
         privatePath,
         signaturePrivateKey: privateKeyPackage.signaturePrivateKey,
-        unappliedProposals: {},
+        unappliedProposals: emptyUnappliedProposals(),
         historicalReceiverData: new Map(),
         groupContext,
         confirmationTag,
@@ -1214,15 +1387,38 @@ async function applyTreeMutations (
     sentByClient:boolean,
     authService:AuthenticationService,
     lifetimeConfig:LifetimeConfig,
-    s:Signature,
+    cs:CiphersuiteImpl,
 ):Promise<[RatchetTree, [LeafIndex, KeyPackage][]]> {
     const treeAfterUpdate = await grouped.update.reduce(async (acc, { senderLeafIndex, proposal }) => {
         if (senderLeafIndex === undefined) throw new InternalError('No sender index found for update proposal')
 
+        // validate against the tree as it stands after the preceding
+        // Updates, as the Adds below are: otherwise two Updates in the same
+        // commit are never compared to each other, and can share an
+        // encryption key or break the pairwise credential rule
+        const tree = await acc
         throwIfDefined(
-            await validateLeafNodeUpdateOrCommit(proposal.update.leafNode, senderLeafIndex, gc, ratchetTree, authService, s),
+            validateUpdateRotatesKey(
+                proposal.update.leafNode,
+                senderLeafIndex,
+                ratchetTree,
+            ),
         )
-        return updateLeafNode(await acc, proposal.update.leafNode, toLeafIndex(senderLeafIndex))
+        throwIfDefined(
+            await validateLeafNodeUpdateOrCommit(
+                proposal.update.leafNode,
+                senderLeafIndex,
+                gc,
+                tree,
+                authService,
+                cs.signature,
+            ),
+        )
+        return updateLeafNode(
+            tree,
+            proposal.update.leafNode,
+            toLeafIndex(senderLeafIndex),
+        )
     }, Promise.resolve(ratchetTree))
 
     const treeAfterRemove = grouped.remove.reduce((acc, { proposal }) => {
@@ -1247,7 +1443,8 @@ async function applyTreeMutations (
                     sentByClient,
                     lifetimeConfig,
                     authService,
-                    s,
+                    cs.signature,
+                    cs.hpke,
                 ),
             )
 
@@ -1263,20 +1460,133 @@ async function applyTreeMutations (
     return [treeAfterAdd, addedLeafNodes]
 }
 
+/**
+ * Rejects a proposal that can never be valid in the current epoch, before
+ * it is stored. A stored proposal is bundled by reference into the next
+ * commit, so one that `applyProposals` would refuse wedges the group: no
+ * one can commit, and no one can send application data while it is
+ * pending. The checks here are the ones that depend only on the proposal
+ * and the current epoch; the ones that depend on what else a commit
+ * carries stay in `applyProposals`.
+ */
+export async function validateProposalOnReceipt (
+    state:ClientState,
+    proposal:Proposal,
+    senderLeafIndex:number | undefined,
+    sentByClient:boolean,
+    cs:CiphersuiteImpl,
+):Promise<MlsError | undefined> {
+    const { authService, lifetimeConfig, keyPackageEqualityConfig } =
+        state.clientConfig
+
+    switch (proposal.proposalType) {
+        case 'remove':
+            return validateRemove(proposal.remove, state.ratchetTree)
+        case 'add': {
+            const kp = proposal.add.keyPackage
+            // An Add of a current member is valid when the same commit
+            // removes them (see `validateProposals`), so it is checked
+            // against the tree without them rather than refused here.
+            const tree = withoutLeavesMatching(
+                state.ratchetTree,
+                (leaf) =>
+                    keyPackageEqualityConfig.compareKeyPackageToLeafNode(
+                        kp,
+                        leaf,
+                    ),
+            )
+            return asValidationError(await validateKeyPackage(
+                kp,
+                state.groupContext,
+                tree,
+                sentByClient,
+                lifetimeConfig,
+                authService,
+                cs.signature,
+                cs.hpke,
+            ))
+        }
+        case 'update':
+            if (senderLeafIndex === undefined) {
+                return new ValidationError(
+                    'update proposal can only be sent by a member',
+                )
+            }
+            return validateUpdateRotatesKey(
+                proposal.update.leafNode,
+                senderLeafIndex,
+                state.ratchetTree,
+            ) ?? asValidationError(await validateLeafNodeUpdateOrCommit(
+                proposal.update.leafNode,
+                senderLeafIndex,
+                state.groupContext,
+                state.ratchetTree,
+                authService,
+                cs.signature,
+            ))
+        case 'external_init':
+            // only ever valid by value, inside a new_member_commit
+            return new ValidationError(
+                'external_init is only valid by value in an external commit',
+            )
+    }
+}
+
+/**
+ * The message carrying the proposal has already authenticated; a failed
+ * signature *inside* the proposal (a KeyPackage's, a leaf's) makes the
+ * proposal invalid content, which the error contract reports as a
+ * `ValidationError`.
+ */
+function asValidationError (
+    err:MlsError | undefined,
+):MlsError | undefined {
+    if (err instanceof CryptoVerificationError) {
+        return new ValidationError(err.message)
+    }
+    return err
+}
+
+function withoutLeavesMatching (
+    tree:RatchetTree,
+    matches:(leaf:LeafNode) => boolean,
+):RatchetTree {
+    return tree.reduce<RatchetTree>((acc, node, nodeIndex) => {
+        if (node?.nodeType !== 'leaf' || !matches(node.leaf)) return acc
+        return removeLeafNode(acc, nodeToLeafIndex(toNodeIndex(nodeIndex)))
+    }, tree)
+}
+
 export async function processProposal (
     state:ClientState,
     content:AuthenticatedContent,
     proposal:Proposal,
-    h:Hash,
+    cs:CiphersuiteImpl,
 ):Promise<ClientState> {
-    const ref = await makeProposalRef(content, h)
+    const senderLeafIndex = getSenderLeafNodeIndex(content.content.sender)
+
+    throwIfDefined(checkPendingCapacity(
+        state.unappliedProposals,
+        state.clientConfig.maxPendingProposals,
+    ))
+
+    throwIfDefined(await validateProposalOnReceipt(
+        state,
+        proposal,
+        senderLeafIndex,
+        false,
+        cs,
+    ))
+
+    const ref = await makeProposalRef(content, cs.hash)
     return {
         ...state,
         unappliedProposals: addUnappliedProposal(
             ref,
             state.unappliedProposals,
             proposal,
-            getSenderLeafNodeIndex(content.content.sender),
+            senderLeafIndex,
+            content.content.sender.senderType,
         ),
     }
 }

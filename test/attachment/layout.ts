@@ -669,3 +669,25 @@ test(
         )
     },
 )
+
+test('rangesFor rejects non-finite offsets and lengths', async t => {
+    const params:LayoutParams = {
+        plaintextLength: 1000,
+        segmentMax: 65536,
+        epochLength: 10,
+        nh: 32,
+    }
+    for (const bad of [NaN, Infinity, -Infinity]) {
+        for (const [offset, length] of [[bad, 10], [0, bad]]) {
+            try {
+                rangesFor(params, offset, length)
+                t.fail(`rangesFor accepted (${offset}, ${length})`)
+            } catch (err) {
+                t.ok(
+                    err instanceof AttachmentError,
+                    `rangesFor rejects (${offset}, ${length})`,
+                )
+            }
+        }
+    }
+})

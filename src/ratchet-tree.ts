@@ -140,6 +140,11 @@ function unmergedLeavesInRange (tree:RatchetTree):boolean {
 export const decodeRatchetTree:Decoder<RatchetTree> = mapDecoderOption(
     decodeVarLenType(decodeOptional(decodeNode)),
     (nodes) => {
+        // RFC 9420 12.4.3.3: the last node must be non-blank. This is
+        // wire input, so an empty list or a trailing blank is a decode
+        // failure here rather than the InternalError extendRatchetTree
+        // raises for a caller bug.
+        if (nodes[nodes.length - 1] === undefined) return undefined
         const tree = extendRatchetTree(nodes)
         return unmergedLeavesInRange(tree) ? tree : undefined
     },

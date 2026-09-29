@@ -36,11 +36,13 @@ the package sheet would restyle pages that asked for no change.
 ## The two stores are one database schema
 
 `createMemberStore` and `createSessionStore` are separate stores in the
-same IndexedDB schema, created by one `onupgradeneeded` at version 1, so
-a page gets whichever it asks for without an upgrade. Do not bump the
-version to add a store: the existing demo databases are already at
-version 1 and would be forced through an upgrade to gain something they
-never read.
+same IndexedDB schema, created by one `onupgradeneeded`, so a page gets
+whichever it asks for without an upgrade. `PERSISTENCE_DB_VERSION` is
+bumped only when the library changes the shape of `ClientState`: the
+upgrade then clears every store `staleStoresOnUpgrade` names, so an old
+session is discarded rather than loaded into a library that would
+misread it. A change to a `ClientState` type in `src/` therefore needs
+a bump here too. Do not bump it just to add a store.
 
 Each store is bound to a named database and every page owns its own
 name. `loadAllMembers` returns every record and the caller deletes what

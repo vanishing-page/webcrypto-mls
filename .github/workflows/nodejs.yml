@@ -2,6 +2,10 @@ name: Node CI
 
 on: [push]
 
+# Every job only reads the repository.
+permissions:
+  contents: read
+
 env:
   NODE_VERSION: 22.x
 

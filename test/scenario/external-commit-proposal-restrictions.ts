@@ -90,6 +90,7 @@ async function externalCommitRejectsProposalByReference (cipherSuite:Ciphersuite
             aliceGroup.unappliedProposals,
             externalInitProposal,
             undefined,
+            'new_member_commit',
         ),
     }
 

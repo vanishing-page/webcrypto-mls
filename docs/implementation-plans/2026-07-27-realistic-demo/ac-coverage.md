@@ -99,6 +99,7 @@ Four kinds of evidence, and they are not equal:
 | AC8.1 an alarm three days out, and the room reports its expiry | Probe 17; Node `Explainer shows the expiry only once the room has given one` |
 | AC8.2 the alarm handler deletes, clears, closes, and is safe twice | No standing check: see gaps below |
 | AC8.3 `hello` with no metadata is `no-room`, identically either way | Probe 22 for the never-existed half; the expired half is the same code path and is covered by that check plus the recorded expiry run, see gaps |
+| AC8.5 an expired id stays dead: the alarm leaves a tombstone and `create` refuses it | Node `mayCreateRoom - allows an id with no room and no tombstone`, `mayCreateRoom - refuses a live room`, `mayCreateRoom - refuses a tombstoned id`; the alarm writing the tombstone has no standing check, see AC8.2 below and test plan step 3.5 |
 | AC8.4 the gone view says both cases and offers a new room | Node `Gone says both cases at once, having no way to tell them apart`, `Gone offers a way to start a new room`; browser `an id with no room behind it renders the gone view` and the two after it |
 
 ## AC9: Ordering integrity
@@ -108,6 +109,7 @@ Four kinds of evidence, and they are not equal:
 | AC9.1 monotonic `seq`, and a replay returns only entries after the cursor | Probe 5, 7; Node `nextSeq`, five tests, and `entriesAfter`, six |
 | AC9.2 a second socket for an identity replaces the first | Probe 8 |
 | AC9.3 a live `entry` during a `log` batch is applied after it | Node `entry-queue - a mid-drain push is applied after the batch`, `- a push during a drain starts no second drain`, `connection - a live entry after a batch keeps the order` |
+| audit-2026-09 H6 a replayed or foreign commit cannot halt a client | Node `commit verdict`, five tests over the input table; `delivery-client - a replayed commit is skipped past`; `mayWriteKind`, three tests; probe 28 |
 
 ## AC10: Cross-cutting behaviors
 
@@ -139,6 +141,48 @@ Four kinds of evidence, and they are not equal:
 | room-you-section.AC3.3 refusal reaches state.status | Node `a refused copy of the key is reported to the person`; a real clipboard refusal is not reachable by any harness, see AC2.3 pattern |
 | room-you-section.AC4.1 disclosure states the routing claim only | Node `Room says what the room routes on, beside the keys` for the paragraph still rendering; Recorded for the wording, Part 4 step 2 of the test plan. No test asserts the words, by house rule |
 | room-you-section.AC4.2 name-disclosure inside `.you` | Node `the You block says a name is not hidden from the server` |
+
+## audit-2026-09 H4: A socket proves the identity it claims
+
+| Criterion | Evidence |
+| --- | --- |
+| H4 the room verifies an offered identity proof, and binds the challenge it issued | Probe check 27; Node `verifyIdentityProof - ...` (room-logic), `a proof from proveIdentity passes verifyIdentityProof` (mls-actions), `connection - a creating client sends create, not hello` and `connection - a joiner follows hello with a join-request` (connection), `isClientMessage - a proof over its bound is refused` (protocol) |
+| H4 a `hello` with no proof, or a proof by another key, is sent no `room-state`, `log`, roster, entry or `welcome-you`, and does not count as live; a proven `hello` still gets all three | Probe checks 29 and 18 |
+| H4 a pending Welcome survives an unproven claim to its recipient and reaches the proven socket | Probe check 31 |
+| H4 a live socket is replaced only by one that proved the same identity | Probe checks 30, 18 and 8; Node `mayReplaceSocket - ...` (room-logic) |
+| H4 a join request is taken only for the identity the socket proved | Probe check 32 |
+| H4 a `create` with no valid proof creates no room | Probe check 33 |
+
+## audit-2026-09 M8: Room creation is bounded
+
+| Criterion | Evidence |
+| --- | --- |
+| M8 the GET decision answers no-room for an unlisted or expired id | Node `roomInfoDecision - an id the registry does not list has no room`, `roomInfoDecision - an id the registry lists as expired has no room` (room-logic) |
+| M8 the GET decision asks the room only for a live id | Node `roomInfoDecision - only a live id asks the room for its times` (room-logic) |
+| M8 an unused id is 404, a live room is 200 with its times | Probe checks 1 and 4 |
+| M8 upgrades past the per-address limit are 429, within it open | Probe check 35; Node `upgrade limit - honest reconnect backoff stays within it` (room-logic) |
+| M8 a room fetched right after creation is 200 | Probe check 34 |
+
+## audit-2026-09 M8: Log writes are volume-limited
+
+| Criterion | Evidence |
+| --- | --- |
+| M8 a write inside one socket's interval is rate-limited, one at it is allowed | Node `classifyMlsWrite - a write inside the interval is refused`, `classifyMlsWrite - a write at the interval is allowed` (room-logic) |
+| M8 a write to a log at its row cap is refused | Node `classifyMlsWrite - a log at its row cap is refused` (room-logic) |
+| M8 a write past the byte cap is refused, one landing on it allowed | Node `classifyMlsWrite - the byte cap is inclusive` (room-logic) |
+| M8 a previous write in the future does not refuse | Node `classifyMlsWrite - a previous write in the future is ignored` (room-logic) |
+| M8 the Worker consults the rule: a throttled write reaches no peer, a later one is broadcast | Probe check 36 |
+
+## audit-2026-09 M8: Replay arrives in pages
+
+| Criterion | Evidence |
+| --- | --- |
+| M8 a page is every entry after the cursor, in order, when they fit | Node `replayPage - everything after the cursor fits` (room-logic) |
+| M8 a page that does not fit is the longest prefix, flagged `more` | Node `replayPage - returns the longest prefix that fits` (room-logic) |
+| M8 an oversized entry goes alone; no empty page while any remain | Node `replayPage - an oversized entry still goes, alone` (room-logic) |
+| M8 a cursor walk yields each entry once, with no gap | Node `replayPage - a cursor walk yields the log exactly once` (room-logic) |
+| M8 the client asks for the next page only after a `more` page | Node `connection - a log page with more asks for the next page`, `connection - a final log page asks for nothing` (connection) |
+| M8 a log larger than one page reaches a reconnecting client whole | Probe check 37 |
 
 ## Criteria without full coverage
 
@@ -178,6 +222,11 @@ socket that is already attached (probe 22), which is the state the
 handler leaves behind. The uncovered part is the handler's own four
 steps and its second run. This is the strongest candidate for the human
 test plan in US-024.
+
+The same gap covers the tombstone the handler writes (AC8.5). The rule
+that a tombstoned id refuses `create` is pure and tested in Node; that
+`alarm()` writes the tombstone, and that a second run still leaves
+exactly one, is test plan step 3.5.
 
 **AC10.6, the third disclosure.** The criterion names three things the
 page must state, and the page now states two. Commit `e222c20` ("better

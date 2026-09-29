@@ -15,17 +15,17 @@ export interface PrivateKeyPath {
 }
 /**
  * Merges PrivateKeyPaths, BEWARE, if there is a conflict, this function will prioritize the second `b` parameter.
- * Any entry in `a` that is superseded by an entry in `b` at the same node index is zeroized before being
- * dropped, since the old private key is no longer reachable and must not linger in memory.
+ *
+ * An entry in `a` superseded by `b` is dropped, not zeroized: `a` is
+ * normally the caller's `state.privatePath`, which the caller still holds
+ * and may process another commit from (a rejected commit, a lost commit
+ * race, a retry). The superseded key goes to the garbage collector.
  */
 export function mergePrivateKeyPaths (a:PrivateKeyPath, b:PrivateKeyPath):PrivateKeyPath {
     const privateKeys:Record<number, Uint8Array> = { ...a.privateKeys }
 
     for (const [key, newValue] of Object.entries(b.privateKeys)) {
-        const nodeIndex = Number(key)
-        const oldValue = privateKeys[nodeIndex]
-        if (oldValue !== undefined && oldValue !== newValue) oldValue.fill(0)
-        privateKeys[nodeIndex] = newValue
+        privateKeys[Number(key)] = newValue
     }
 
     return { ...a, privateKeys }
@@ -74,20 +74,17 @@ export function updateLeafKey (path:PrivateKeyPath, newKey:Uint8Array):PrivateKe
 }
 
 /**
- * Drops and zeroizes any private key entries for node indices that are blank (undefined) in
+ * Drops any private key entries for node indices that are blank (undefined) in
  * `tree`, i.e. nodes a commit removed or otherwise blanked. Keeps stale HPKE private keys from
- * accumulating across epochs.
+ * accumulating across epochs. The dropped keys are not zeroized, for the
+ * same ownership reason as `mergePrivateKeyPaths`.
  */
 export function pruneBlankedNodes (path:PrivateKeyPath, tree:RatchetTree):PrivateKeyPath {
     const privateKeys:Record<number, Uint8Array> = {}
 
     for (const [key, value] of Object.entries(path.privateKeys)) {
         const nodeIndex = Number(key)
-        if (tree[nodeIndex] === undefined) {
-            value.fill(0)
-        } else {
-            privateKeys[nodeIndex] = value
-        }
+        if (tree[nodeIndex] !== undefined) privateKeys[nodeIndex] = value
     }
 
     return { ...path, privateKeys }

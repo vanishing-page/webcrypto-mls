@@ -17,11 +17,14 @@ import {
     type CiphersuiteImpl,
     type ClientState,
     type KeyPackage,
-    type ProcessMessageResult
+    type ProcessMessageResult,
+    type RatchetTree
 } from '../../src/index.js'
 import { base64ToBytes } from '../../src/util/byte-array.js'
 import type { DemoUser } from '../../example-shared/demo-user.js'
+import { EntryProcessingError } from './commit-verdict.js'
 import { MalformedEntryError } from './malformed-entry.js'
+import { identityProofMessage } from '../protocol.js'
 import { demoClientConfig } from '../../example-shared/demo-client-config.js'
 
 /**
@@ -66,6 +69,28 @@ export async function createUser (
         keyPackage: publicPackage,
         privateKeys: privatePackage
     }
+}
+
+/**
+ * Proves to the room that this client holds the key its identity names:
+ * a signature, with the leaf signature key, over the room's challenge
+ * for this socket and the room id. The room checks it with
+ * `verifyIdentityProof`, against the identity itself.
+ */
+export async function proveIdentity (
+    user:DemoUser,
+    cs:CiphersuiteImpl,
+    roomId:string,
+    challenge:string
+):Promise<string> {
+    const key = user.privateKeys?.signaturePrivateKey
+    if (!key) throw new Error('no signature key to prove an identity with')
+
+    const signature = await cs.signature.sign(
+        key,
+        identityProofMessage(roomId, challenge)
+    )
+    return bytesToBase64url(signature)
 }
 
 /**
@@ -297,14 +322,23 @@ export async function commitRemove (
  * outcome off `newState.groupActiveState`.
  *
  * Those two refusals throw `MalformedEntryError` and everything past
- * the decode throws whatever it throws. The queue reads the difference
- * and it is the whole of security-audit.md H2: see `malformed-entry.ts`.
+ * the decode throws `EntryProcessingError`, carrying the message's
+ * framed epoch and group id. The queue reads the difference and it is
+ * the whole of security-audit.md H2: see `malformed-entry.ts`, and
+ * `commit-verdict.ts` for what the framing decides.
+ *
+ * `tree` is the ratchet tree the message was processed under, which is
+ * what a sender's leaf index has to be read against. For a message from
+ * an earlier epoch that is the tree kept for that epoch, not the current
+ * one: a leaf blanked and filled since then names somebody else now.
  */
+export type ProcessedEntry = ProcessMessageResult & { tree:RatchetTree }
+
 export async function processEntry (
     state:ClientState,
     payload:string,
     cs:CiphersuiteImpl
-):Promise<ProcessMessageResult> {
+):Promise<ProcessedEntry> {
     // The try covers the decode and nothing else. `base64ToBytes` throws
     // on a string that is not base64 in the browser -- `atob` does --
     // while node's Buffer quietly drops the bad characters, so an
@@ -329,11 +363,34 @@ export async function processEntry (
         throw new MalformedEntryError(`entry carries a ${msg.wireformat}`)
     }
 
-    return processMessage(
-        msg,
-        state,
-        makePskIndex(state, {}),
-        acceptAll,
-        cs
-    )
+    // Read before processing: a message's group id and epoch are
+    // cleartext in both wire formats, and they are what `onError` needs
+    // to tell a replayed commit from a real desync. This catch is a
+    // separate error on purpose -- it never becomes a malformed entry.
+    const framing = msg.wireformat === 'mls_public_message' ?
+        msg.publicMessage.content :
+        msg.privateMessage
+    const tree = framing.epoch < state.groupContext.epoch ?
+        state.historicalReceiverData.get(framing.epoch)?.ratchetTree :
+        state.ratchetTree
+
+    let result:ProcessMessageResult
+    try {
+        result = await processMessage(
+            msg,
+            state,
+            makePskIndex(state, {}),
+            acceptAll,
+            cs
+        )
+    } catch (err) {
+        throw new EntryProcessingError(
+            { epoch: framing.epoch, groupId: framing.groupId },
+            err
+        )
+    }
+
+    // A past epoch the library could open always has its receiver data,
+    // since that is where the keys came from.
+    return { ...result, tree: tree ?? state.ratchetTree }
 }

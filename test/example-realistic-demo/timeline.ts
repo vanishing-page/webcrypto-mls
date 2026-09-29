@@ -1,6 +1,7 @@
 import { test } from '@substrate-system/tapzero'
 import {
     buildTimeline,
+    type Decrypted,
     type TimelineInput,
     type TimelineItem,
     type TimelinePlaceholder,
@@ -27,14 +28,33 @@ function entry (
     return { seq, sender, kind, payload: `payload-${seq}` }
 }
 
-function input (over:Partial<TimelineInput> = {}):TimelineInput {
+/**
+ * Most tests here are about placeholders, not attribution, so they give
+ * plaintexts alone and each is credited to the sender its entry names --
+ * the case where the room and MLS agree. The attribution tests pass
+ * `authenticated` instead, which is used verbatim.
+ */
+interface InputOver extends Partial<Omit<TimelineInput, 'decrypted'>> {
+    decrypted?:Record<number, string>
+    authenticated?:Record<number, Decrypted>
+}
+
+function input (over:InputOver = {}):TimelineInput {
+    const { decrypted = {}, authenticated, ...rest } = over
+    const entries = rest.entries ?? []
+    const credited:Record<number, Decrypted> = {}
+    for (const [seq, text] of Object.entries(decrypted)) {
+        const found = entries.find(e => e.seq === Number(seq))
+        credited[Number(seq)] = { text, sender: found?.sender ?? ALICE }
+    }
+
     return {
-        entries: [],
-        decrypted: {},
+        entries,
         names: NAMES,
         joinCursor: 0,
         priorCount: 0,
-        ...over
+        ...rest,
+        decrypted: authenticated ?? credited
     }
 }
 
@@ -47,6 +67,8 @@ interface AnyItem {
     kind?:TimelineItem['kind']
     seq?:number
     from?:string
+    sender?:string
+    mismatch?:boolean
     text?:string
     count?:number
     reason?:TimelinePlaceholder['reason']
@@ -369,15 +391,42 @@ test('buildTimeline - a decryptable commit is still not a message', t => {
 })
 
 test('buildTimeline - the input is not mutated', t => {
-    const entries = [entry(1), entry(2)]
-    const decrypted = { 1: 'a' }
-    const before = JSON.stringify({ entries, decrypted })
+    const given = input({
+        entries: [entry(1), entry(2)],
+        decrypted: { 1: 'a' }
+    })
+    const before = JSON.stringify(given)
 
-    buildTimeline(input({ entries, decrypted }))
+    buildTimeline(given)
 
     t.equal(
-        JSON.stringify({ entries, decrypted }),
+        JSON.stringify(given),
         before,
         'the fold reads its input and writes none of it'
     )
+})
+
+// H5 -- a message is credited to the member MLS authenticated
+
+test('buildTimeline - credits the authenticated sender, not the room\'s',
+    t => {
+        const items = buildTimeline(input({
+            // The room says Alice wrote it; MLS says Bob did.
+            entries: [entry(1, ALICE)],
+            authenticated: { 1: { text: 'words', sender: BOB } }
+        }))
+
+        t.equal(at(items, 0).from, 'Bob', 'named as the member who sent it')
+        t.equal(at(items, 0).sender, BOB, 'with that member\'s identity')
+        t.equal(at(items, 0).mismatch, true, 'and flagged')
+    })
+
+test('buildTimeline - no flag when the room and MLS agree', t => {
+    const items = buildTimeline(input({
+        entries: [entry(1, BOB)],
+        authenticated: { 1: { text: 'words', sender: BOB } }
+    }))
+
+    t.equal(at(items, 0).from, 'Bob', 'named as the sender')
+    t.equal(at(items, 0).mismatch, false, 'and not flagged')
 })

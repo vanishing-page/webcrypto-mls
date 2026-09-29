@@ -90,7 +90,12 @@ async function testKeySchedule (
         // Verify that group context matches the provided group_context value
         t.deepEqual(encodeGroupContext(gc), hexToBytes(epoch.group_context), 'group context should match expected')
 
-        const { keySchedule, joinerSecret, welcomeSecret } = await initializeEpoch(
+        const {
+            keySchedule,
+            encryptionSecret,
+            joinerSecret,
+            welcomeSecret,
+        } = await initializeEpoch(
             initSecret,
             hexToBytes(epoch.commit_secret),
             gc,
@@ -102,7 +107,12 @@ async function testKeySchedule (
         t.deepEqual(welcomeSecret, hexToBytes(epoch.welcome_secret), 'welcome secret should match expected')
         t.deepEqual(keySchedule.initSecret, hexToBytes(epoch.init_secret), 'init secret should match expected')
         t.deepEqual(keySchedule.senderDataSecret, hexToBytes(epoch.sender_data_secret), 'sender data secret should match expected')
-        t.deepEqual(keySchedule.encryptionSecret, hexToBytes(epoch.encryption_secret), 'encryption secret should match expected')
+        // compared at the derivation seam: KeySchedule no longer holds it
+        t.deepEqual(
+            encryptionSecret,
+            hexToBytes(epoch.encryption_secret),
+            'encryption secret should match expected'
+        )
         t.deepEqual(keySchedule.exporterSecret, hexToBytes(epoch.exporter_secret), 'exporter secret should match expected')
         t.deepEqual(keySchedule.externalSecret, hexToBytes(epoch.external_secret), 'external secret should match expected')
         t.deepEqual(keySchedule.confirmationKey, hexToBytes(epoch.confirmation_key), 'confirmation key should match expected')

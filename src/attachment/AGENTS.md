@@ -74,7 +74,10 @@ pin one half of it.
 ## A caller-supplied CEK is checked for length, once
 
 `assertCekLength` lives in `keys.ts` next to `CEK_LENGTH`, and
-`sealObject` and `openObject` call it before anything else.
+`sealObject` and `openObject` call it before anything else, as do
+the two streaming entry points, `decryptAttachmentStream` (which
+throws synchronously, since it returns its stream synchronously) and
+`openAttachmentRange`. A new entry point that takes a CEK needs it too.
 `encryptAttachment` inherits the check through `sealObject` and has no
 guard of its own -- a second copy would be dead code no mutation test
 could reach.
@@ -86,7 +89,9 @@ absence of a throw. On open, a wrong-length CEK would be rejected
 anyway, by the commitment, several derivations later -- so a test that
 only asserts `AttachmentError` there passes with the guard deleted.
 `test/attachment/cek-length.ts` wraps the KDF in a call counter and
-asserts zero derivations, which is what actually pins the guard.
+asserts zero derivations, which is what actually pins the guard; the
+stream entry point is pinned the same way with a source that counts
+its pulls.
 
 ## The one dependency outside this directory
 
@@ -232,6 +237,15 @@ be set by that call -- otherwise the later `doWipe`, once `ctx`
 exists, is swallowed and `payloadKey`, `snapKey` and `nonceBase` stay
 live.
 
+The KDF's own scratch buffers are wiped too, so wiping the CEK no
+longer leaves copies behind in `kdf.ts`. `sealKdf` zeroes its extract
+input and PRK in a `finally`, and `encode` zeroes the parts `frame()`
+built once they are concatenated. Neither touches the caller's `ikm`
+or the returned output. A test that inspects KDF buffers after a read
+must snapshot them when they are handed over: the live extract input
+is zero by the time the call returns (see the L10 tests in
+`test/attachment/cek-wipe.ts`).
+
 ### The epoch key cache
 
 `segmentKey` derives from the payload key and the epoch index alone, so
@@ -252,6 +266,17 @@ Two consequences worth keeping in mind:
   clears the map. Clearing alone would hand live epoch keys to the
   garbage collector, so both halves matter; both are pinned by
   `test/attachment/epoch-key-cache.ts`.
+- **A wiped state stays wiped.** `wipeSealState` sets
+  `SealState.wiped`, and `segmentKey` checks it after the `sealKdf`
+  await: a cancel can land while a derivation is in flight, and caching
+  its result would put a live key back into a wiped state. On a wiped
+  state `segmentKey` zeroes the key it just derived and throws, so the
+  reader's `pull` and the range path's `start()` stop before any AEAD
+  call. That throw lands on a stream already cancelled, so the caller
+  never sees it as tampering. Any new `await` before a write to
+  `SealState` needs the same check. Tests that gate a derivation must
+  assert after releasing the gate too, or they never see the resumed
+  step; `test/attachment/cancel-epoch-key.ts` is the pattern.
 
 Nothing in `src/` serializes a `SealState` -- there is no
 `JSON.stringify`, `structuredClone` or `postMessage` of one anywhere --
@@ -270,6 +295,17 @@ stops the read from decrypting a window nobody will consume. Erroring
 an already-cancelled stream is a spec no-op, so the throw does not
 surface. Both halves are pinned by the 'range null-ctx cancel' test in
 `test/attachment/cek-wipe.ts`.
+
+The range path's drains are bounded by the source, not by trust in
+it. `drainStream` in `range.ts` (unrelated to the test helper of the
+same name) takes its range's length and cancels and throws as soon as
+it has received more, so an oversized or endless body costs at most
+one chunk past the range. A failure or a consumer cancel runs
+`cancelSources`, which cancels the reader mid-drain and every later
+stream. `test/attachment/range-drain.ts` pins both with
+`highWaterMark: 0` counting sources, so `pulled` is exactly what the
+drain asked for; a source that must stay open parks its `pull` on its
+own cancel promise rather than on a timer.
 
 `startOpen` wipes too. It has to derive the whole schedule before it
 can recompute the commitment, so by the time the gate rejects an
@@ -298,7 +334,25 @@ escaped as-is with the owned CEK still live. Anything that can fail in
 `start()` belongs inside the try; the catch is what converts a failure
 into `AttachmentError` and wipes.
 
-Two gaps remain:
+The reader gates on the fixed-size prefix, not the whole header.
+`start()` takes the first 32 + nh bytes (salt and stored commitment),
+calls `openCommitment`, then takes the stored snapshot and epoch heads
+for `parsePrefix` and `checkRoot`, and only then reads the metadata,
+one epoch's run at a time, each checked by `verifyEpochRun` before the
+next is read. `verifyRoot` is those two halves
+composed, kept for `range.ts`, which has the whole header in hand
+anyway. The byte bound -- rejection after the prefix plus one chunk,
+source cancelled -- is pinned by the L11 tests in
+`test/attachment/commitment-gate.ts` with a counting source; they pin
+the ordering, not the compare. Because the state now exists before
+`ctx` does, `doWipe` latches on a separate `state` variable rather
+than on `ctx.state`.
+
+Three gaps remain. The 2026-09 audit noted that the epoch-key
+derivation racing a cancel (M5) and the KDF's unwiped scratch buffers
+(L10) were missing from this list; both are closed now (see "A wiped
+state stays wiped" above and the KDF paragraph under "CEK zeroization:
+residual gaps"), so they are not listed.
 
 1. **Reader stream constructed, never read, never cancelled:** A
    `decryptAttachmentStream` whose stream is never touched leaks its
@@ -327,6 +381,18 @@ Two gaps remain:
    Verified rather than assumed: `wipeCek` is
    `opts?.ownedCek?.fill(0)`, so with no `ownedCek` it sets its latch
    and returns having zeroed nothing.
+
+3. **The sequential reader holds the whole metadata region:** every
+   segment's leaf and tag sit in the header ahead of block 0, and
+   `openBlock` needs a segment's stored leaf and tag when its block
+   arrives, so by block 0 the reader must hold all of them -- O(nSeg),
+   about 48 bytes per 64 KiB segment at nh=32, for the life of the
+   stream. What is bounded is the number of copies: `start()` reads
+   each run straight into one `metadata` buffer through `takeInto`, so
+   the region is held once rather than in the chunk queue, a
+   reassembled header and a slice of it. Bounding it to one epoch
+   would need a layout that interleaves metadata with the blocks,
+   which is a wire format change.
 
 ## Exporter-tree zeroization
 
@@ -493,11 +559,13 @@ grounds that the other covers it.
 anything. The loop at `object.ts` inside `openObject` recomputes all
 leaves and stores all heads before the call to `openSegment`.
 
-The streaming reader verifies the root against the stored heads upfront
-in `verifyRoot`, then verifies each epoch's leaf run lazily via
-`verifyEpochRun` as the stream reaches that epoch. A consumer who
-cancels partway through never verifies the leaf runs of epochs it never
-read.
+The range path verifies the root against the stored heads upfront in
+`verifyRoot`, then verifies only the leaf runs of the epochs its window
+touches, via `verifyEpochRun`. The sequential reader is no longer lazy:
+it has to buffer every run before block 0 anyway (see "The sequential
+reader holds the whole metadata region" below), so it verifies each
+run as it arrives in `start()`. The argument below is what makes the
+range path's laziness safe, and it would make a lazy reader safe too.
 
 This is correct, and the reasoning is important to record because it
 looks alarming.
