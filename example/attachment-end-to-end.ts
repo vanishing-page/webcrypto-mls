@@ -194,7 +194,10 @@ export async function sendAttachment (
     globalThis.crypto.getRandomValues(objectId)
 
     const encrypted = await encryptAttachmentForGroup(
-        state.keySchedule, objectId, plaintext, cs
+        state.keySchedule,
+        objectId,
+        plaintext,
+        cs
     )
     await store.put(objectId, encrypted.readable)
 
@@ -202,6 +205,8 @@ export async function sendAttachment (
         state,
         new TextEncoder().encode(caption),
         cs,
+        // add a reference to the encrypted blob
+        // the group is able to decrypt the blob
         refToAuthData(encrypted.reference)
     )
 
@@ -241,7 +246,10 @@ export async function receiveAttachment (
     const privateMessage = decodePrivateMessage(wire)
 
     const result = await processPrivateMessage(
-        state, privateMessage, makePskIndex(state, {}), cs
+        state,
+        privateMessage,
+        makePskIndex(state, {}),
+        cs
     )
     if (result.kind !== 'applicationMessage') {
         throw new Error('expected an application message')
