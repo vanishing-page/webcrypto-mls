@@ -2,8 +2,32 @@ import { test } from '@substrate-system/tapzero'
 import {
     isPersistencePath,
     isMultiDevicePath,
-    isAttachmentsPath
+    isAttachmentsPath,
+    selectDemoPage
 } from '../../example/routing.js'
+
+test('selectDemoPage composes the main attachments route', (t) => {
+    t.deepEqual(selectDemoPage('/attachments', '/'), {
+        kind: 'main', showAttachments: true
+    }, 'attachments selects the main page with attachments')
+    t.deepEqual(selectDemoPage('/?from=home', '/'), {
+        kind: 'main', showAttachments: false
+    }, 'root selects the main page without attachments')
+})
+
+test('selectDemoPage preserves named routes and the base path', (t) => {
+    const base = '/webcrypto-mls/'
+    t.deepEqual(selectDemoPage(
+        '/webcrypto-mls/persistence/?tab=members', base
+    ), { kind: 'persistence' }, 'persistence remains selected')
+    t.deepEqual(selectDemoPage(
+        '/webcrypto-mls/multi-device/', base
+    ), { kind: 'multi-device' }, 'multi-device remains selected')
+    t.deepEqual(selectDemoPage(
+        '/webcrypto-mls/attachments/?tab=audio', base
+    ), { kind: 'main', showAttachments: true },
+    'attachments honors the base path and query')
+})
 
 test('isPersistencePath - dev base path (/)', (t) => {
     t.equal(isPersistencePath('/persistence', '/'), true,

@@ -864,17 +864,19 @@ await saveState(groupId, state)
 
 Implements [Encrypted Attachments for MLS][attach-spec].
 
-### Attachments vs X
+### Attachments vs _
 
 Why use an _encrypted attachment_ vs encrypting a blob, then including the
-_decrypt key_ inside an MLS message?
+_decryption key_ inside an MLS message?
 
 Two things: **where the key comes from**, and **how long it stays useful**.
 
 An attachment key is derived, never transferred. `attachmentCek` starts at
 the current epoch's `applicationExportSecret` and walks sixteen levels of
-`ExpandWithLabel`, one per bit of the 16 bit `ComponentID`, down to the leaf
-that belongs to attachments.
+`ExpandWithLabel`, one per bit of the 16 bit `ComponentID`, down to
+the leaf that belongs to attachments.
+
+
 
 The secret sitting at that leaf is the attachment's component secret: one
 value per epoch, encrypting every attachment the group sends in that epoch. It

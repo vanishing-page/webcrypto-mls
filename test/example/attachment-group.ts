@@ -1,5 +1,5 @@
 import { test } from '@substrate-system/tapzero'
-import { createDemoGroup } from '../../example/attachment-group.js'
+import { createDemoGroup } from '../helpers/attachment-group.js'
 import { getCipherSuite } from
     '../../src/crypto/get-ciphersuite-impl.js'
 import { encryptAttachmentForGroup } from

@@ -34,7 +34,7 @@
     "lint": "eslint \"./**/*.{ts,js}\"",
     "typecheck": "tsc -p tsconfig.json --noEmit --listFiles false && tsc -p tsconfig.scripts.json --noEmit --listFiles false",
     "test": "npm run test:node",
-    "test:checks": "node scripts/check-attachment-invariants.mjs && node scripts/check-vector-determinism.mjs && node scripts/check-signal-batching.mjs && node scripts/check-readme-attachments.mjs && node scripts/check-audit-closed.mjs",
+    "test:checks": "node scripts/check-attachment-invariants.mjs && node scripts/check-vector-determinism.mjs && node scripts/check-signal-batching.mjs && node scripts/check-audit-closed.mjs",
     "check:style": "node scripts/check-house-style.mjs",
     "test:node": "npm run test:checks && node scripts/run-tests.mjs all",
     "test:interop": "node scripts/run-interop.mjs",

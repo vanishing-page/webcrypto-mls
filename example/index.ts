@@ -25,11 +25,7 @@ import { PersistenceDemo } from './persistence-demo.js'
 import { MultiDeviceDemo } from './multi-device-demo.js'
 import { AttachmentsDemo } from './attachments-demo.js'
 import { Nav } from './nav.js'
-import {
-    isPersistencePath,
-    isMultiDevicePath,
-    isAttachmentsPath
-} from './routing.js'
+import { selectDemoPage } from './routing.js'
 import { toLeafIndex } from '../src/treemath.js'
 import {
     addUserToGroup,
@@ -81,7 +77,9 @@ const {
 // Initialize ciphersuite
 await State.init(state)
 
-const Example:FunctionComponent = function () {
+const Example:FunctionComponent<{ showAttachments?:boolean }> = function ({
+    showAttachments = false
+}) {
     const usersInGroup = useComputed<[string, User][]>(() => {
         const participants = selectParticipants(state.users.value)
         return participants.map((name) => {
@@ -324,6 +322,10 @@ const Example:FunctionComponent = function () {
     return html`
         <div class="container">
             <h1>WebCrypto MLS Browser Example</h1>
+
+            ${showAttachments ? html`
+                <${AttachmentsDemo} state=${state} />
+            ` : null}
 
             <p>
                 This example demonstrates end-to-end encrypted group
@@ -679,27 +681,22 @@ const Example:FunctionComponent = function () {
 }
 
 const App:FunctionComponent = function () {
-    const showPersistence = useComputed(() => {
-        return isPersistencePath(state.route.value, basePath)
-    })
+    const pageSelection = selectDemoPage(state.route.value, basePath)
+    let page
 
-    const showMultiDevice = useComputed(() => {
-        return isMultiDevicePath(state.route.value, basePath)
-    })
-
-    const showAttachments = useComputed(() => {
-        return isAttachmentsPath(state.route.value, basePath)
-    })
-
-    // First match wins; Example is the fallback route.
-    const routed = [
-        [showPersistence.value, PersistenceDemo],
-        [showMultiDevice.value, MultiDeviceDemo],
-        [showAttachments.value, AttachmentsDemo],
-    ] as const
-    const match = routed.find(([active]) => active)
-    const Page = match ? match[1] : Example
-    const page = html`<${Page} />`
+    switch (pageSelection.kind) {
+        case 'persistence':
+            page = html`<${PersistenceDemo} />`
+            break
+        case 'multi-device':
+            page = html`<${MultiDeviceDemo} />`
+            break
+        case 'main':
+            page = html`<${Example}
+                showAttachments=${pageSelection.showAttachments}
+            />`
+            break
+    }
 
     return html`
         <${Nav} route=${state.route.value} basePath=${basePath} />

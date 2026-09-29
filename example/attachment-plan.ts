@@ -2,6 +2,33 @@ import { AttachmentError } from '../src/attachment/error.js'
 import type { ByteRange } from '../src/attachment/layout.js'
 import { SAMPLE_RATE } from './attachment-audio.js'
 
+/** The group and epoch that own an encrypted attachment. */
+export interface AttachmentScope {
+    groupId:Uint8Array
+    epoch:bigint
+}
+
+/** Build a usable attachment scope, or null when no group is available. */
+export function attachmentScope (
+    groupId:Uint8Array|null|undefined,
+    epoch:bigint|null|undefined
+):AttachmentScope|null {
+    if (!groupId || epoch === null || epoch === undefined) return null
+    return { groupId, epoch }
+}
+
+/** Compare attachment scopes without relying on object or array identity. */
+export function sameAttachmentScope (
+    left:AttachmentScope|null|undefined,
+    right:AttachmentScope|null|undefined
+):boolean {
+    if (!left || !right || left.epoch !== right.epoch) return false
+    if (left.groupId.length !== right.groupId.length) return false
+    return left.groupId.every((byte, index) => {
+        return byte === right.groupId[index]
+    })
+}
+
 /**
  * The attachments demo's own wiring, minus preact: what a seek asks
  * for, how the stored object is cut into the streams `decrypt` wants,
