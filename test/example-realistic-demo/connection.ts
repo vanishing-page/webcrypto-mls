@@ -4,6 +4,8 @@ import type {
     RoomMessage
 } from '../../example-realistic-demo/protocol.js'
 import type { ClientState } from '../../src/index.js'
+import type { CommitSignal } from
+    '../../example-realistic-demo/client/pending-commit.js'
 import {
     createRealisticState,
     type RealisticState
@@ -122,6 +124,8 @@ interface Harness {
     fakes:Fakes
     applied:number[]
     control:RoomMessage[]
+    /** Everything the connection handed to the pending commit. */
+    signals:CommitSignal[]
     socket ():FakeSocket
     /** Deliver a room message down the socket, as the room would. */
     deliver (msg:RoomMessage):void
@@ -138,11 +142,13 @@ function harness (opts:{
     applyEntry? (e:LogEntry):Promise<void>
     onControl? (msg:RoomMessage):void|Promise<void>
     prove? (challenge:string):Promise<string>
+    commitAwaitsReplay? ():boolean
 } = {}):Harness {
     const fakes = installFakes()
     const state = createRealisticState()
     const applied:number[] = []
     const control:RoomMessage[] = []
+    const signals:CommitSignal[] = []
 
     const client = createConnection({
         state,
@@ -159,6 +165,8 @@ function harness (opts:{
             return opts.onControl?.(msg)
         },
         prove: opts.prove ?? (async (challenge) => `proof-of-${challenge}`),
+        observeCommit (signal) { signals.push(signal) },
+        commitAwaitsReplay: opts.commitAwaitsReplay ?? (() => false),
         page: fakes.page
     })
 
@@ -172,6 +180,7 @@ function harness (opts:{
         fakes,
         applied,
         control,
+        signals,
         socket,
         deliver (msg) {
             socket().delivers(JSON.stringify(msg))
@@ -447,6 +456,131 @@ test('connection - roster, pending and error reach the state', (t) => {
         h.stop()
     }
 })
+
+// F1 -- the pending commit hears every answer the room can give it
+
+test('connection - entries and errors reach the pending commit',
+    async (t) => {
+        const h = harness()
+        try {
+            h.state.group.value = group()
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+
+            h.deliver({ type: 'entry', entry: entry(1) })
+            h.deliver({
+                type: 'log',
+                entries: [entry(2), entry(3)],
+                more: false
+            })
+            h.deliver({ type: 'roster', live: [] })
+            h.deliver({
+                type: 'error',
+                reason: 'rate-limited',
+                ref: 'commit-1'
+            })
+            await h.client.queue.idle()
+
+            t.deepEqual(h.signals, [
+                { type: 'reconnected' },
+                { type: 'entry', entry: entry(1) },
+                { type: 'entry', entry: entry(2) },
+                { type: 'entry', entry: entry(3) },
+                { type: 'replay-end' },
+                { type: 'error', reason: 'rate-limited', ref: 'commit-1' }
+            ], 'live and replayed entries alike, and the refusal')
+            t.notEqual(h.state.status.value, 'Ready',
+                'and the refusal is still shown')
+        } finally {
+            h.stop()
+        }
+    })
+
+test('connection - a vanished room is offered to the pending commit',
+    async (t) => {
+        const h = harness()
+        try {
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            h.signals.length = 0
+
+            h.deliver({ type: 'no-room' })
+
+            t.deepEqual(h.signals, [{ type: 'no-room' }],
+                'a commit waiting on this room can never be logged')
+            t.ok(h.state.roomMissing.value, 'and the room still reads gone')
+        } finally {
+            h.stop()
+        }
+    })
+
+test('connection - only the last page of a replay ends it', async (t) => {
+    const h = harness()
+    try {
+        h.state.group.value = group()
+        h.client.connect('aB3xK9pQ2m')
+        h.socket().opened()
+        h.signals.length = 0
+
+        h.deliver({ type: 'log', entries: [entry(1)], more: true })
+        t.deepEqual(h.signals, [{ type: 'entry', entry: entry(1) }],
+            'a page with more to come settles nothing')
+
+        h.deliver({ type: 'log', entries: [entry(2)], more: false })
+        t.deepEqual(h.signals.slice(1), [
+            { type: 'entry', entry: entry(2) },
+            { type: 'replay-end' }
+        ], 'the last page ends the replay, after its own entries')
+        await h.client.queue.idle()
+    } finally {
+        h.stop()
+    }
+})
+
+test('connection - a dropped commit asks for a replay once hello is in',
+    async (t) => {
+        let awaiting = true
+        const h = harness({ commitAwaitsReplay: () => awaiting })
+        try {
+            h.state.cursor.value = 4
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-1')
+
+            // The room skips the page after `hello` when it is empty, so
+            // that page alone may never end the replay. Asking once the
+            // room has attached the socket always gets an answer.
+            h.deliver({
+                type: 'room-state',
+                isCreator: true,
+                createdAt: 1,
+                expiresAt: 2
+            })
+            t.deepEqual(
+                h.sent().filter(m => m.type === 'replay'),
+                [{ type: 'replay', cursor: 4 }],
+                'one replay, from the cursor'
+            )
+
+            awaiting = false
+            h.client.connect('aB3xK9pQ2m')
+            h.socket().opened()
+            await h.challenge('chal-2')
+            h.deliver({
+                type: 'room-state',
+                isCreator: true,
+                createdAt: 1,
+                expiresAt: 2
+            })
+            t.deepEqual(
+                h.sent().filter(m => m.type === 'replay'),
+                [],
+                'and none when no commit is waiting on one'
+            )
+        } finally {
+            h.stop()
+        }
+    })
 
 test('connection - every message is offered to the page exactly once',
     async (t) => {

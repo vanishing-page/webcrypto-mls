@@ -7,6 +7,7 @@ import {
     type PageOrigin
 } from './delivery-client.js'
 import type { RealisticState } from './state.js'
+import type { CommitSignal } from './pending-commit.js'
 
 /**
  * The one place an inbound `RoomMessage` becomes something the page can
@@ -51,6 +52,24 @@ export interface ConnectionDeps {
      * exists before it can apply anything to it.
      */
     onControl (msg:RoomMessage):void|Promise<void>
+
+    /**
+     * Every entry, live or replayed, every `error` and every `no-room`,
+     * handed to the commit waiting for the room -- `observe` from
+     * `pending-commit.ts`. Called as each arrives rather than when the
+     * queue applies it: the creator's commit is waiting inside the
+     * group lock, and the queue cannot apply anything until that lock
+     * is released.
+     */
+    observeCommit (signal:CommitSignal):void
+
+    /**
+     * Whether a commit sent on a socket that has since dropped is waiting
+     * for the replay to settle it -- `awaitsReplay` from
+     * `pending-commit.ts`. The room skips the page after `hello` when it
+     * is empty, so this client asks for one itself; see `room-state`.
+     */
+    commitAwaitsReplay ():boolean
 
     /**
      * Where the page was loaded from, passed straight through to the
@@ -165,6 +184,10 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
             // A new socket has not been challenged yet; a proof still
             // being made for the last one must not be sent on this one.
             challenge = null
+
+            // Whatever socket a pending commit went out on is gone, and
+            // its answer with it. The replay on this one settles it.
+            deps.observeCommit({ type: 'reconnected' })
         },
 
         /**
@@ -227,13 +250,34 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
                         state.isCreator.value = msg.isCreator
                         state.expiresAt.value = msg.expiresAt
                     })
+
+                    // The room sends this from `hello`, once the socket
+                    // is attached, so a `replay` is now answered. It is
+                    // answered even when empty, unlike the page `hello`
+                    // sends, and a commit lost with the old socket is
+                    // only settled by a replay that reaches its end.
+                    if (deps.commitAwaitsReplay()) {
+                        delivery.send({
+                            type: 'replay',
+                            cursor: state.cursor.value
+                        })
+                    }
                     break
 
                 case 'no-room':
+                    // Carries no `ref`, and a pending commit is refused
+                    // by it all the same: a room that is gone logs
+                    // nothing, and the creator would otherwise hold the
+                    // group lock waiting on an answer that never comes.
+                    deps.observeCommit(msg)
                     state.roomMissing.value = true
                     break
 
                 case 'log':
+                    for (const entry of msg.entries) {
+                        deps.observeCommit({ type: 'entry', entry })
+                    }
+
                     // One push, so the whole batch drains before
                     // anything pushed after it.
                     pushEntries(msg.entries)
@@ -251,10 +295,15 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
                                 cursor: last.seq
                             })
                         }
+                    } else {
+                        // After this page's entries, so an echo on it
+                        // settles the commit before the end does.
+                        deps.observeCommit({ type: 'replay-end' })
                     }
                     break
 
                 case 'entry':
+                    deps.observeCommit(msg)
                     pushEntries([msg.entry])
                     break
 
@@ -273,6 +322,7 @@ export function createConnection (deps:ConnectionDeps):DeliveryClient {
                     break
 
                 case 'error':
+                    deps.observeCommit(msg)
                     state.status.value =
                         `Server rejected that: ${msg.reason}`
                     break

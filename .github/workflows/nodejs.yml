@@ -40,6 +40,14 @@ jobs:
       run: npm run typecheck
       env:
         CI: true
+    # Every test imports `src/`, so nothing else consumes `dist/` the
+    # way a user does: by package name, through the export map. This
+    # job is the one that has built `dist/`, so the check runs here
+    # rather than in `checks`.
+    - name: Check the built package as a consumer
+      run: npm run check:package
+      env:
+        CI: true
 
   # The structural gates: layering, the getRandomValues ban, the
   # zeroization presence checks, the vector inventory, vector

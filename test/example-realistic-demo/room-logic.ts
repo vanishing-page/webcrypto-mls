@@ -165,6 +165,19 @@ test('entryFromMls - application kind', (t) => {
     t.equal(entry.kind, 'application')
 })
 
+// An `mls` write's `ref` is for the refusal only. The entry the room
+// stores and broadcasts is built from four fields and nothing else, so
+// a tagged write leaves no trace of its tag in the log.
+test('entryFromMls - a tagged write yields an entry without its ref', (t) => {
+    const msg = { type: 'mls', kind: 'commit', payload: 'cGF5', ref: 'zq-ref' }
+    const entry = entryFromMls(1, 'sender1', 'commit', msg.payload)
+    t.deepEqual(
+        Object.keys(entry).sort(),
+        ['kind', 'payload', 'sender', 'seq']
+    )
+    t.ok(!JSON.stringify(entry).includes(msg.ref))
+})
+
 // classifyStanding tests -- AC4.5 stranger
 test('classifyStanding - stranger when in neither list', (t) => {
     const standing = classifyStanding('identity1', ['other1'], ['other2'])

@@ -1491,11 +1491,8 @@ test(
  * True when `needle` appears as a contiguous run anywhere in `hay`.
  */
 function containsBytes (hay:Uint8Array, needle:Uint8Array):boolean {
-    outer: for (let i = 0; i + needle.length <= hay.length; i++) {
-        for (let j = 0; j < needle.length; j++) {
-            if (hay[i + j] !== needle[j]) continue outer
-        }
-        return true
+    for (let i = 0; i + needle.length <= hay.length; i++) {
+        if (needle.every((byte, j) => hay[i + j] === byte)) return true
     }
     return false
 }

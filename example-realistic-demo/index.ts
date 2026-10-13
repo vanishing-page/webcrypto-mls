@@ -414,7 +414,7 @@ export class Room extends DurableObject<Env> {
                     msg.proof
                 )
             case 'mls':
-                return this.onMls(ws, msg.kind, msg.payload)
+                return this.onMls(ws, msg.kind, msg.payload, msg.ref)
             case 'join-request':
                 return this.onJoinRequest(
                     ws, msg.identity, msg.keyPackage
@@ -560,24 +560,35 @@ export class Room extends DurableObject<Env> {
         if (isCreator) this.sendPendingToCreator()
     }
 
+    /**
+     * `ref` is the client's tag for this write. Every `error` refusing
+     * it carries the tag back, so the client knows which write the room
+     * turned down; nothing else sees it. It is not stored, and the
+     * entry below is built without it, so neither the log nor the
+     * broadcast carries it.
+     */
     private onMls (
         ws:WebSocket,
         kind:LogEntry['kind'],
-        payload:string
+        payload:string,
+        ref?:string
     ):void {
         const state = this.readAttachment(ws)
         if (!state) {
             return this.send(ws, {
                 type: 'error',
-                reason: 'bad-message'
+                reason: 'bad-message',
+                ref
             })
         }
 
         if (!this.requireRoom(ws)) return
-        if (!this.requireMember(ws, state)) return
-        if (!this.requireKind(ws, state, kind)) return
+        if (!this.requireMember(ws, state, ref)) return
+        if (!this.requireKind(ws, state, kind, ref)) return
         const now = Date.now()
-        if (!this.requireLogRoom(ws, state, payload.length, now)) return
+        if (!this.requireLogRoom(ws, state, payload.length, now, ref)) {
+            return
+        }
 
         const seq = nextSeq(this.highWater())
         // kind and payload cross untouched. The room never decodes an
@@ -1142,13 +1153,15 @@ export class Room extends DurableObject<Env> {
     /**
      * Applies `classifyMlsWrite`. The room totals are a count and a sum
      * over the log itself, so they cannot drift from what is stored. A
-     * refusal sends the verdict and writes nothing.
+     * refusal sends the verdict, with the write's `ref`, and writes
+     * nothing.
      */
     private requireLogRoom (
         ws:WebSocket,
         state:SocketState,
         payloadLength:number,
-        now:number
+        now:number,
+        ref?:string
     ):boolean {
         const row = this.ctx.storage.sql.exec<{
             rows:number
@@ -1164,11 +1177,15 @@ export class Room extends DurableObject<Env> {
             now
         })
         if (verdict === 'ok') return true
-        this.send(ws, { type: 'error', reason: verdict })
+        this.send(ws, { type: 'error', reason: verdict, ref })
         return false
     }
 
-    private requireMember (ws:WebSocket, state:SocketState):boolean {
+    private requireMember (
+        ws:WebSocket,
+        state:SocketState,
+        ref?:string
+    ):boolean {
         const may = mayWriteLog(
             state.identity,
             state.isCreator,
@@ -1176,7 +1193,7 @@ export class Room extends DurableObject<Env> {
             this.ledgerIdentities('removed')
         )
         if (may) return true
-        this.send(ws, { type: 'error', reason: 'not-member' })
+        this.send(ws, { type: 'error', reason: 'not-member', ref })
         return false
     }
 
@@ -1189,10 +1206,11 @@ export class Room extends DurableObject<Env> {
     private requireKind (
         ws:WebSocket,
         state:SocketState,
-        kind:LogEntry['kind']
+        kind:LogEntry['kind'],
+        ref?:string
     ):boolean {
         if (mayWriteKind(kind, state.isCreator)) return true
-        this.send(ws, { type: 'error', reason: 'commit-not-creator' })
+        this.send(ws, { type: 'error', reason: 'commit-not-creator', ref })
         return false
     }
 

@@ -13,7 +13,15 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
   issue file (see `triage-labels.md` for the role strings)
 - Dependencies are recorded as a `**Blocked by:**` line near the top of
   each issue file, listing the numbers of the tickets that must complete
-  first, or `None`
+  first, or `None`. A ticket in another feature is `<feature> <NN>`,
+  where `<feature>` is its `.scratch/<feature>/` directory name
+  (a path such as `rollout/billing` for a nested feature),
+  repeated before each of its numbers. List every number: `03-05`
+  means 3 and 5, and a feature name before it applies to both. Notes
+  in parentheses are ignored. The list may wrap onto the next lines
+  and ends at a blank line, the next `**Field:**` line, a heading or
+  a checklist item. Example:
+  `**Blocked by:** 01, 02, newsletter-audit 16 (shares the import route)`
 - Comments and conversation history append to the bottom of the file under
   a `## Comments` heading
 

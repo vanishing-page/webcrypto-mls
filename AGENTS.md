@@ -87,6 +87,21 @@ branch added. Its exemptions are for lines that *cannot* wrap -- URLs,
 a bare long path, a markdown table row, a fenced code block, the
 generated table of contents -- and each one is argued in the header
 comment. Add to that list only with the same kind of argument.
+`scripts/check-package-consumer.mjs` (`npm run check:package`) is the
+other exception: it consumes the built `dist/` by package name, from
+CommonJS and ESM, so it needs `npm run build` first. CI runs it in the
+`build` job, after the build, rather than in `test:checks`, which runs
+without one. Every other test imports `src/` and cannot see a defect
+that exists only in `dist/`. The CommonJS build depends on
+`scripts/cjs-specifiers.mjs`, chained after each `build-cjs*` step,
+because esbuild renames outputs to `.cjs` but leaves their relative
+`require`s pointing at `.js`, which is the ESM build.
+`scripts/cts.mjs` does the same for types: a `.d.cts` beside every
+`.d.ts` at every depth, with relative specifiers rewritten to `.cjs`.
+A clean `tsc` run does not prove that rewrite happened -- under
+`NodeNext` a CommonJS declaration may import an ESM one without
+error -- so the consumer check reads the CommonJS program's
+`--listFiles` and fails on any `dist/**/*.d.ts` in it.
 Callers reach the subsystem through the
 package's `./*` subpath export. The directory has its own `AGENTS.md`,
 and a change inside it should start there.
@@ -114,11 +129,30 @@ committed alongside `package.json`. Use `npm install` locally (it updates
 both) or `npm install --package-lock-only` to refresh the lockfile alone;
 never hand-edit it. Every dependency is a dev dependency except the
 runtime set (`@hpke/*`, `@noble/*`), and `npm audit --omit=dev` reports
-0 vulnerabilities. Plain `npm audit` does not: it reports `toml`, pulled
-in by `markdown-toc` (the `npm run toc` tool) through `gray-matter`,
-which `npm audit fix` leaves in place because `markdown-toc` pins
-it. Other tooling findings are usually fixable with plain
-`npm audit fix`; check the result still installs under `npm ci`.
+0 vulnerabilities. Plain `npm audit` does not. It reports six entries,
+all under `markdown-toc` (the `npm run toc` tool), and none can move
+without replacing that tool, which is a dev-only script run by hand on
+our own README:
+
+- `toml`: `gray-matter` 2 pins `toml` ^2.3, below every fixed release.
+- `gray-matter`: flagged for its `toml` and `js-yaml`; `markdown-toc`
+  pins `gray-matter` ^2.1.
+- `js-yaml`: `gray-matter` 2 pins `js-yaml` ^3, and the 3.x line
+  depends on a flagged `argparse`.
+- `argparse`: 1.x is flagged for its `sprintf-js`; `js-yaml` 3 and
+  `remarkable` 1.7.4 both pin `argparse` ^1.
+- `sprintf-js`: the advisory covers every version (`*`), so no
+  upgrade clears it.
+- `remarkable`: 1.7.4 is flagged for its `argparse`; `markdown-toc`
+  pins `remarkable` ^1.
+
+Do not take `npm audit fix` at its word for that chain. It claims a
+fix, and the fix is a downgrade of `remarkable` to 1.7.3, whose
+`argparse` 0.1 pulls in `underscore` and `underscore.string`: two new
+entries, one of them critical, and none of the six cleared. Clear the other tooling findings with `npm update <name>` for
+each package the report marks fixable instead, then diff the lockfile
+to confirm nothing was downgraded and no `@hpke/*` or `@noble/*`
+version moved, and check the result still installs under `npm ci`.
 
 The one workflow that still runs `npm install` is
 `.github/workflows/auto-dependabot.yml`, deliberately: its job is to
@@ -428,6 +462,17 @@ and WebCrypto's `DataError` is pre-empted by a length check. Match the
 dependency's class with `instanceof`, not by `name`, which a consumer's
 minifier can rename. `test/validation/peer-input-errors.ts` is where a
 new case of this belongs.
+
+The receive side has two state guards in `src/process-messages.ts`, and
+a new receive path needs both. `throwIfRemovedFromGroup` refuses
+everything and sits at the top. `throwIfSuspendedPendingReinit` cannot:
+after a ReInit, application messages from earlier epochs must still
+decrypt from historical receiver data, so it takes the message's epoch
+and content type and runs once those are read from the envelope, before
+any decrypt. A test of it needs a sender that ignores its own
+suspension; copy the sender's post-ReInit state with `groupActiveState`
+set to `active` (`test/scenario/reinit-suspended-receive.ts`), never
+edit the receiver's state.
 
 `ProcessMessageResult` is where a consumer learns who sent a message:
 `sender` on an application message, `committer` on an accepted commit

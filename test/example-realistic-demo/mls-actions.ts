@@ -294,8 +294,8 @@ test('commitAdd returns a commit and a Welcome the room can carry',
         t.ok(decodedCommit, 'the commit payload should decode')
         t.equal(
             decodedCommit ? decodedCommit[0].wireformat : null,
-            'mls_public_message',
-            'the commit goes out as a PublicMessage, as the room expects'
+            'mls_private_message',
+            'the commit goes out as a PrivateMessage'
         )
 
         // The Welcome is checked by using it, not by decoding it: a
@@ -345,13 +345,16 @@ test('joinFromWelcome refuses anything but a Welcome', async (t) => {
  * from the Welcome, so the two are at the same epoch without either
  * processing the other's message.
  */
-async function pair (cs:CiphersuiteImpl):Promise<{
+async function pair (
+    cs:CiphersuiteImpl,
+    creatorName = 'alice'
+):Promise<{
     alice:DemoUser
     bob:DemoUser
     aliceState:ClientState
     bobState:ClientState
 }> {
-    const alice = await createUser('alice', cs)
+    const alice = await createUser(creatorName, cs)
     const bob = await createUser('bob', cs)
     const group = await createOwnGroup(alice, cs)
     const added = await commitAdd(group, bob.keyPackage!, cs)
@@ -419,10 +422,40 @@ test('commitRemove produces a commit the room can carry', async (t) => {
     t.ok(decoded, 'the commit payload should decode')
     t.equal(
         decoded ? decoded[0].wireformat : null,
-        'mls_public_message',
-        'the commit goes out as a PublicMessage, as the room expects'
+        'mls_private_message',
+        'the commit goes out as a PrivateMessage'
     )
 })
+
+// Audit 2026-10 F3. A Remove carries an UpdatePath, and the committer's
+// leaf in it holds the creator's basic credential. Framed as a
+// PublicMessage that is the creator's name in the clear, in the room's
+// log. The bytes searched are the whole payload after base64, so the
+// name cannot hide anywhere in the envelope either.
+const CREATOR_NAME = 'Zephyrine Okonkwo-Vasquez'
+
+test('commitRemove does not put the creator\'s name on the wire',
+    async (t) => {
+        const { bob, aliceState } = await pair(cs, CREATOR_NAME)
+        const leafIndex = leafIndexOf(
+            aliceState.ratchetTree,
+            identityOf(bob.keyPackage!)
+        )
+        const { commit } = await commitRemove(aliceState, leafIndex!, cs)
+        const bytes = base64ToBytes(commit)
+        const decoded = decodeMlsMessage(bytes, 0)
+
+        t.equal(
+            decoded ? decoded[0].wireformat : null,
+            'mls_private_message',
+            'the Remove should be a PrivateMessage'
+        )
+        t.equal(
+            indexOfBytes(bytes, new TextEncoder().encode(CREATOR_NAME)),
+            -1,
+            'the creator\'s name should not occur in the encoded commit'
+        )
+    })
 
 test('processEntry tells a member they were removed, without failing',
     async (t) => {
@@ -432,6 +465,11 @@ test('processEntry tells a member they were removed, without failing',
             identityOf(bob.keyPackage!)
         )
         const { commit } = await commitRemove(aliceState, leafIndex!, cs)
+        t.equal(
+            wireformatOf(commit),
+            'mls_private_message',
+            'the Remove the removed member opens is a PrivateMessage'
+        )
 
         // No throw: being removed is the normal outcome of a commit that
         // processed correctly, not a processing failure.
@@ -455,6 +493,11 @@ test('processEntry applies somebody else\'s commit to a member',
         const { aliceState, bobState } = await pair(cs)
         const carol = await createUser('carol', cs)
         const added = await commitAdd(aliceState, carol.keyPackage!, cs)
+        t.equal(
+            wireformatOf(added.commit),
+            'mls_private_message',
+            'the Add the member opens is a PrivateMessage'
+        )
 
         const result = await processEntry(bobState, added.commit, cs)
 
@@ -473,6 +516,52 @@ test('processEntry applies somebody else\'s commit to a member',
             result.newState.groupActiveState.kind,
             'active',
             'somebody else being added leaves this member in the group'
+        )
+    })
+
+test('a member who stays processes a private Remove of somebody else',
+    async (t) => {
+        const { aliceState, bobState } = await pair(cs)
+        const carol = await createUser('carol', cs)
+        const added = await commitAdd(aliceState, carol.keyPackage!, cs)
+        const bobAtTwo = await processEntry(bobState, added.commit, cs)
+        if (bobAtTwo.kind !== 'newState') {
+            t.fail('bob should have processed the Add')
+            return
+        }
+
+        const leafIndex = leafIndexOf(
+            added.newState.ratchetTree,
+            identityOf(carol.keyPackage!)
+        )
+        const removed = await commitRemove(added.newState, leafIndex!, cs)
+        t.equal(
+            wireformatOf(removed.commit),
+            'mls_private_message',
+            'the Remove is a PrivateMessage'
+        )
+
+        const result = await processEntry(
+            bobAtTwo.newState,
+            removed.commit,
+            cs
+        )
+
+        t.equal(result.kind, 'newState', 'the commit should process')
+        t.equal(
+            result.newState.groupContext.epoch,
+            removed.newState.groupContext.epoch,
+            'the member who stays lands at the epoch the committer reached'
+        )
+        t.equal(
+            result.newState.groupActiveState.kind,
+            'active',
+            'and is still in the group'
+        )
+        t.deepEqual(
+            membersFromTree(result.newState.ratchetTree).map(m => m.name),
+            membersFromTree(removed.newState.ratchetTree).map(m => m.name),
+            'and sees the same members as the committer'
         )
     })
 
@@ -582,3 +671,42 @@ test('processEntry does not mark a real commit that will not process',
                 'and the group id it was framed for')
         }
     })
+
+// An Add has no UpdatePath today, so its public form did not leak the
+// name. It is private anyway, so that a later change to Add (a forced
+// path, say) cannot reopen the leak.
+test('commitAdd does not put the creator\'s name on the wire',
+    async (t) => {
+        const creator = await createUser(CREATOR_NAME, cs)
+        const bob = await createUser('bob', cs)
+        const group = await createOwnGroup(creator, cs)
+        const { commit } = await commitAdd(group, bob.keyPackage!, cs)
+        const bytes = base64ToBytes(commit)
+        const decoded = decodeMlsMessage(bytes, 0)
+
+        t.equal(
+            decoded ? decoded[0].wireformat : null,
+            'mls_private_message',
+            'the Add should be a PrivateMessage'
+        )
+        t.equal(
+            indexOfBytes(bytes, new TextEncoder().encode(CREATOR_NAME)),
+            -1,
+            'the creator\'s name should not occur in the encoded commit'
+        )
+    })
+
+/** Where `needle` first occurs in `haystack`, or -1. */
+function indexOfBytes (haystack:Uint8Array, needle:Uint8Array):number {
+    for (let i = 0; i + needle.length <= haystack.length; i++) {
+        let j = 0
+        while (j < needle.length && haystack[i + j] === needle[j]) j++
+        if (j === needle.length) return i
+    }
+    return -1
+}
+
+function wireformatOf (payload:string):string|null {
+    const decoded = decodeMlsMessage(base64ToBytes(payload), 0)
+    return decoded ? decoded[0].wireformat : null
+}

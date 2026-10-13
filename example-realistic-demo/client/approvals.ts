@@ -1,7 +1,10 @@
 import { batch } from '@preact/signals'
+import type { ClientState } from '../../src/index.js'
 import type { ClientMessage, PendingRequest } from '../protocol.js'
 import type { RealisticState } from './state.js'
 import type { GroupLock } from './group-lock.js'
+import type { CommitOutcome } from './pending-commit.js'
+import { MLS_WRITE_INTERVAL_MS } from '../room-logic.js'
 import {
     commitAdd,
     commitRemove,
@@ -45,7 +48,30 @@ export interface ApprovalDeps {
      * reported through `state.status` and changes no group state.
      */
     send (msg:ClientMessage):boolean
+
+    /**
+     * Send a commit and resolve once the room has answered it --
+     * `submit` from `pending-commit.ts`. The frame leaving the socket is
+     * not the room taking it: an `mls` write can be refused (the
+     * interval, a full log), and nothing that follows a commit may go
+     * out, or be adopted locally, until the room has said yes.
+     */
+    submitCommit (payload:string):Promise<CommitOutcome>
+
+    /**
+     * Let `ms` pass before a rate-limited commit is tried again.
+     * Defaults to a timer; a test passes its own clock.
+     */
+    wait? (ms:number):Promise<void>
 }
+
+/**
+ * How many times one commit is sent before a `rate-limited` refusal is
+ * reported rather than retried. The interval is per socket and only
+ * this page writes on it, so one retry clears it unless a chat message
+ * was sent in between; a few more cover that without waiting for ever.
+ */
+export const MAX_COMMIT_ATTEMPTS = 4
 
 export interface Approvals {
     /** Never rejects: a failure is reported in the status line. */
@@ -73,8 +99,12 @@ function requestIsCoherent (request:PendingRequest):boolean {
     return keyPackageBelongsTo(keyPackage, request.identity)
 }
 
+function timer (ms:number):Promise<void> {
+    return new Promise(resolve => { setTimeout(resolve, ms) })
+}
+
 export function createApprovals (
-    { state, lock, send }:ApprovalDeps
+    { state, lock, send, submitCommit, wait = timer }:ApprovalDeps
 ):Approvals {
     // The promise the last caller was handed, so a repeat click gets
     // something to await rather than nothing. Ordering is the lock's --
@@ -90,6 +120,91 @@ export function createApprovals (
     // approval settles either way, so one that failed can be retried.
     const inFlight = new Set<string>()
 
+    // An Add the room accepted whose Welcome did not get out. The joiner's
+    // leaf is in the tree, so the next approve of that identity reads as
+    // already admitted and commits nothing -- this is what it sends
+    // instead. It has to go out before any later commit: the room stamps
+    // a Welcome's cursor at the log's end when it arrives, so a Welcome
+    // sent after another commit tells its joiner to skip one it needs.
+    // Only this module commits, so at most one is ever held.
+    let unsentWelcome:{ identity:string, payload:string }|null = null
+
+    /**
+     * The Welcome, then the approval, short-circuited. Whatever did not
+     * get out is held for the next attempt.
+     */
+    function sendWelcome (identity:string, payload:string):boolean {
+        const delivered =
+            send({ type: 'welcome', to: identity, payload }) &&
+            send({ type: 'approve', identity })
+
+        unsentWelcome = delivered ? null : { identity, payload }
+        return delivered
+    }
+
+    /** Send a held Welcome, unless it is for `except`. */
+    function flushUnsentWelcome (except:string):void {
+        if (!unsentWelcome || unsentWelcome.identity === except) return
+        const { identity, payload } = unsentWelcome
+        if (!sendWelcome(identity, payload)) {
+            throw new Error('the connection dropped before that was sent')
+        }
+    }
+
+    /**
+     * Commit and wait for the room to take it. `build` makes the commit
+     * from a group state -- an Add or a Remove. Resolves with what it
+     * built only once its own echo has come back; anything else throws,
+     * having sent nothing but the commit and changed no group state.
+     *
+     * `rate-limited` is temporary -- the room refuses an `mls` write
+     * inside `MLS_WRITE_INTERVAL_MS` of the socket's last one, which a
+     * walked pending list hits by design -- so it is retried after the
+     * interval, a bounded number of times. The room never logged the
+     * refused write, so the same commit is sent again unless the group
+     * it was built from has moved on. `log-full` and `log-too-large` are
+     * permanent for this room and are reported at once.
+     *
+     * A socket that drops after the commit leaves it waiting here until
+     * the replay on the next socket settles it: accepted if the replay
+     * echoes it, `lost` if the replay ends without it. A lost commit is
+     * reported like a refusal and not resent.
+     */
+    async function commitAndConfirm<T extends { commit:string }> (
+        group:ClientState,
+        build:(from:ClientState) => Promise<T>
+    ):Promise<T> {
+        let from = group
+        let built = await build(from)
+
+        for (let attempt = 1; ; attempt++) {
+            const outcome = await submitCommit(built.commit)
+            if (outcome.status === 'accepted') return built
+
+            if (outcome.reason === 'closed') {
+                throw new Error('the connection dropped before that was sent')
+            }
+
+            if (
+                outcome.reason !== 'rate-limited' ||
+                attempt >= MAX_COMMIT_ATTEMPTS
+            ) {
+                throw new Error(
+                    `the room refused that commit (${outcome.reason})`
+                )
+            }
+
+            await wait(MLS_WRITE_INTERVAL_MS)
+
+            const current = state.group.value
+            if (!current) throw new Error('there is no group any more')
+            if (current !== from) {
+                from = current
+                built = await build(from)
+            }
+        }
+    }
+
     async function commit (request:PendingRequest):Promise<void> {
         const group = state.group.value
         const cs = state.ciphersuite.value
@@ -97,6 +212,8 @@ export function createApprovals (
         if (!group || !cs) {
             throw new Error('there is no group to add anyone to')
         }
+
+        flushUnsentWelcome(request.identity)
 
         // Somebody already in the tree is not added again. This is not a
         // defensive flourish: a joiner whose socket dropped before its
@@ -113,6 +230,20 @@ export function createApprovals (
         // stop being asked.
         const already = membersFromTree(group.ratchetTree)
             .find(member => member.identity === request.identity)
+
+        // Unless its Welcome never went out: an accepted Add whose
+        // Welcome the socket dropped leaves exactly this tree, and the
+        // `approve` alone would admit somebody who cannot get in.
+        if (already && unsentWelcome?.identity === request.identity) {
+            if (!sendWelcome(request.identity, unsentWelcome.payload)) {
+                throw new Error(
+                    'the connection dropped before that was sent'
+                )
+            }
+
+            state.status.value = `Let ${already.name} in.`
+            return
+        }
 
         if (already) {
             if (!send({ type: 'approve', identity: request.identity })) {
@@ -146,33 +277,30 @@ export function createApprovals (
             )
         }
 
-        const added = await commitAdd(group, keyPackage, cs)
+        const added = await commitAndConfirm(
+            group,
+            from => commitAdd(from, keyPackage, cs)
+        )
 
         // The order is not incidental and must not be rearranged.
         //
-        // The commit goes first so it is in the log before the room
-        // stamps the Welcome's cursor -- the room sets that cursor to
-        // the current high-water seq, and one socket is processed in
-        // order, so the commit is guaranteed to already be there. The
+        // The commit went first, and the room has accepted it, so it is
+        // in the log before the room stamps the Welcome's cursor -- the
+        // room sets that cursor to the current high-water seq. The
         // approval goes last, so the ledger only ever records an
         // admission that actually happened.
         //
         // The short-circuit matters as much as the order: a Welcome for
         // a commit that never reached the log strands the joiner at an
         // epoch nobody else is at.
-        const delivered =
-            send({ type: 'mls', kind: 'commit', payload: added.commit }) &&
-            send({
-                type: 'welcome',
-                to: request.identity,
-                payload: added.welcome
-            }) &&
-            send({ type: 'approve', identity: request.identity })
-
-        if (!delivered) {
-            // The local state is deliberately left where it was. An
-            // epoch the creator reached alone is worse than an approval
-            // that has to be made again.
+        if (!sendWelcome(request.identity, added.welcome)) {
+            // The commit is in the log, so everyone else will reach its
+            // epoch, and so must the creator; the request stays pending
+            // in the room, because `approve` never went out, and the
+            // Welcome is held for the next approve of it.
+            batch(() => {
+                state.group.value = added.newState
+            })
             throw new Error('the connection dropped before that was sent')
         }
 
@@ -185,9 +313,10 @@ export function createApprovals (
 
     /**
      * Removing is the mirror of `commit` above, and its two frames go
-     * out in the same shape of order: the commit reaches the log before
-     * the room is told to write the ledger, so the ledger only ever
-     * records a removal that actually happened.
+     * out in the same shape of order: the room has echoed the commit
+     * before it is told to write the ledger, so the ledger only ever
+     * records a removal that actually happened, and a refused commit
+     * sends nothing after it and leaves the creator where it was.
      *
      * The creator check here is the second of two, and neither is
      * cryptographic. The room refuses a `removed` from a socket without
@@ -217,19 +346,31 @@ export function createApprovals (
             throw new Error('that person is not in the group')
         }
 
-        const removed = await commitRemove(group, leafIndex, cs)
+        // A held Welcome for the member being removed is not sent: they
+        // are on their way out, and it would let them in for one epoch.
+        if (unsentWelcome?.identity === member.identity) unsentWelcome = null
+        flushUnsentWelcome(member.identity)
 
-        const delivered =
-            send({
-                type: 'mls',
-                kind: 'commit',
-                payload: removed.commit
-            }) &&
-            send({ type: 'removed', identity: member.identity })
+        // A rebuilt commit resolves the leaf again, for the same reason
+        // as above. One that cannot is a removal somebody else already
+        // made.
+        const removed = await commitAndConfirm(group, from => {
+            const leaf = from === group ?
+                leafIndex :
+                leafIndexOf(from.ratchetTree, member.identity)
+            if (leaf === null) {
+                throw new Error('that person is not in the group')
+            }
+            return commitRemove(from, leaf, cs)
+        })
 
-        if (!delivered) {
-            // As in `commit`: an epoch the creator reached alone is
-            // worse than a removal that has to be made again.
+        // The room has the commit, so the creator moves to its epoch
+        // whether or not the ledger frame gets out -- `apply-entry`
+        // skips its own commits, so it could never catch up otherwise.
+        if (!send({ type: 'removed', identity: member.identity })) {
+            batch(() => {
+                state.group.value = removed.newState
+            })
             throw new Error('the connection dropped before that was sent')
         }
 

@@ -237,6 +237,25 @@ be set by that call -- otherwise the later `doWipe`, once `ctx`
 exists, is swallowed and `payloadKey`, `snapKey` and `nonceBase` stay
 live.
 
+The latches are not enough on their own, because a later `doWipe`
+only happens if something calls it. When the whole object arrives in
+the first chunk, nothing after the commitment gate reads the cancelled
+source again, so a cancel during the gate's last derivation used to let
+startup finish with a live schedule and no pull to wipe it (audit
+2026-10 F4). The reader therefore has a third flag, `cancelled`, set
+only by `cancel()`, and `start()` checks it as soon as `openCommitment`
+returns: if set, it wipes and returns. Any new await in `start()` that
+hands back a `SealState` needs the same check right after it. The
+range path already has it as `throwIfCancelled` after `verifyRoot`.
+`test/attachment/cancel-schedule-wipe.ts` pins all three stream entry
+points at each schedule label. It uses `pauseAt` and `pureKdfSuite`
+from `test/attachment/kdf-recorder.ts`: with a JavaScript HKDF and a
+fully buffered source, everything after the gate is released is a
+microtask, so `settle()` is a queue flush and not a timing wait. Keep
+a derivation label out of a fixture's objectId: the commitment frames
+the objectId into its info, and the recorder matches labels by
+substring.
+
 The KDF's own scratch buffers are wiped too, so wiping the CEK no
 longer leaves copies behind in `kdf.ts`. `sealKdf` zeroes its extract
 input and PRK in a `finally`, and `encode` zeroes the parts `frame()`
@@ -314,6 +333,21 @@ calls `wipeSealState` on that state before throwing. The thrown error
 is deliberately unchanged -- a bare `AttachmentError`, saying nothing
 about why the open failed. Callers that hold the returned state are
 unaffected, because a throwing `startOpen` never returns one.
+
+The same rule covers a KDF that rejects partway. `deriveSchedule`
+keeps every buffer it has derived and zeroes them all if a later
+derivation rejects, then rethrows the original error, so the seal
+path still propagates a crypto failure untouched. `verifyRoot` owns
+the state from `openCommitment` until it returns it and wipes it on
+any rejection of `checkRoot`, not only a mismatch. `checkRoot` itself
+does not wipe: its other caller, the sequential reader, has already
+stored the state where `doWipe` reaches it. A new step between
+"derived" and "handed to someone who can wipe it" needs the same
+catch. `test/attachment/kdf-recorder.ts` is the seam for all of this:
+`recordingSuite` keeps every `kdf.expand` output by label and can
+reject at a label, and the tests in
+`test/attachment/failed-derivation-wipe.ts` assert on those buffers
+rather than on a `SealState`.
 
 The commitment gate is shadowed on every public read path. Delete the
 compare in `startOpen` and `openObject`, `decryptAttachmentStream` and

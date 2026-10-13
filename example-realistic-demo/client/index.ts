@@ -18,6 +18,7 @@ import { createRealisticState } from './state.js'
 import { routeFromPath } from './routing.js'
 import { createConnection } from './connection.js'
 import { createApprovals } from './approvals.js'
+import { createPendingCommits } from './pending-commit.js'
 import { createApplyEntry } from './apply-entry.js'
 import { createChat } from './chat.js'
 import { createGroupLock } from './group-lock.js'
@@ -148,6 +149,14 @@ const delivery = createConnection({
     },
 
     /**
+     * The room's answers to a commit this page sent. Declared below,
+     * after `delivery`, because it sends through it; nothing arrives to
+     * observe until a socket message does.
+     */
+    observeCommit: (signal) => { pendingCommits.observe(signal) },
+    commitAwaitsReplay: () => pendingCommits.awaitsReplay(),
+
+    /**
      * Applying an entry is its own module; see `apply-entry.ts` for why
      * a client never processes its own commit, and why being removed is
      * not a failure.
@@ -204,6 +213,11 @@ const delivery = createConnection({
     }
 })
 
+const pendingCommits = createPendingCommits({
+    identity: ownIdentity,
+    send: (msg) => delivery.send(msg)
+})
+
 /**
  * Approving is the creator's, and it is the same path whether a person
  * clicked Approve or the request arrived already pre-approved. Declared
@@ -213,7 +227,8 @@ const delivery = createConnection({
 const approvals = createApprovals({
     state,
     lock: groupLock,
-    send: (msg) => delivery.send(msg)
+    send: (msg) => delivery.send(msg),
+    submitCommit: (payload) => pendingCommits.submit(payload)
 })
 
 /** Saying something, declared after `delivery` for the same reason. */

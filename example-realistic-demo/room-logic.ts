@@ -332,12 +332,15 @@ export function classifyJoinRequest (req:{
 /**
  * The shortest gap between two `mls` writes from one socket.
  *
- * Short on purpose. The creator sends commits back to back while it
- * walks a pending list, and a refused commit leaves the creator at an
- * epoch nobody else reached, so the interval has to sit below the time
- * one commit takes to build. What it still stops is the loop that holds
- * a socket open and writes as fast as the frames go out: twenty writes
- * a second is far past any honest chat and far below a flood.
+ * A refused commit costs the creator nothing but time: the client
+ * waits for the room's echo before it sends a Welcome or adopts the new
+ * epoch, and retries a `rate-limited` commit after this interval (see
+ * `approvals.ts`). So the interval is short for the creator's sake --
+ * it walks a pending list one commit after another, and each refusal
+ * is a wait -- not because a refusal would strand anyone. What it
+ * stops is the loop that holds a socket open and writes as fast as the
+ * frames go out: twenty writes a second is far past any honest chat
+ * and far below a flood.
  */
 export const MLS_WRITE_INTERVAL_MS = 50
 

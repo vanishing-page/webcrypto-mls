@@ -123,29 +123,44 @@ async function deriveSchedule (
         params.salt,
     ]
     const nh = kdf.size
-    const commitment = await sealKdf(
-        kdf, pid, 'commit', [cek], [...rawFields, g], nh,
-    )
-    const payloadKey = await sealKdf(
-        kdf, pid, 'payload_key', [cek], rawFields, crypto.keyLength,
-    )
-    const snapKey = await sealKdf(
-        kdf, pid, 'acc_key', [cek], rawFields, nh,
-    )
-    const nonceBase = params.nonceMode === NONCE_DERIVED ?
-        await sealKdf(
-            kdf, pid, 'nonce_base', [cek], rawFields, crypto.nonceLength,
-        ) :
-        null
-    return {
-        params,
-        commitment,
-        payloadKey,
-        snapKey,
-        nonceBase,
-        crypto,
-        epochKeys: new Map(),
-        wiped: false,
+    // Every buffer derived so far, in order. If a later derivation
+    // rejects, nothing else holds a reference to these, so they are
+    // zeroed here before the original error goes on. The CEK is
+    // borrowed and is never in this list.
+    const derived:Uint8Array[] = []
+    const derive = async (
+        label:string,
+        info:Uint8Array[],
+        length:number,
+    ):Promise<Uint8Array> => {
+        const out = await sealKdf(kdf, pid, label, [cek], info, length)
+        derived.push(out)
+        return out
+    }
+    try {
+        const commitment = await derive(
+            'commit', [...rawFields, g], nh,
+        )
+        const payloadKey = await derive(
+            'payload_key', rawFields, crypto.keyLength,
+        )
+        const snapKey = await derive('acc_key', rawFields, nh)
+        const nonceBase = params.nonceMode === NONCE_DERIVED ?
+            await derive('nonce_base', rawFields, crypto.nonceLength) :
+            null
+        return {
+            params,
+            commitment,
+            payloadKey,
+            snapKey,
+            nonceBase,
+            crypto,
+            epochKeys: new Map(),
+            wiped: false,
+        }
+    } catch (err) {
+        for (const buf of derived) buf.fill(0)
+        throw err
     }
 }
 

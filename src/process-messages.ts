@@ -13,6 +13,7 @@ import {
     validateLeafNodeUpdateOrCommit,
 } from './client-state.js'
 import { applyUpdatePathSecret } from './create-commit.js'
+import type { ContentTypeName } from './content-type.js'
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
 import type { Kdf } from './crypto/kdf.js'
 import { deriveSecret } from './crypto/kdf.js'
@@ -113,6 +114,32 @@ function throwIfRemovedFromGroup (state:ClientState):void {
 }
 
 /**
+ * RFC 9420 12.4.2: a member that has processed a ReInit must stop using
+ * the old group, and a receiver cannot rely on every sender honouring
+ * that. Refuse any commit or proposal, which would move the suspended
+ * state on and drop the ReInit, and any application message framed at
+ * the suspended epoch, which no conforming member sends. Application
+ * messages from earlier epochs still decrypt from historical receiver
+ * data, so mail in flight when the ReInit landed is not lost. Called
+ * once the epoch and content type are known, before any key is used.
+ */
+function throwIfSuspendedPendingReinit (
+    state:ClientState,
+    epoch:bigint,
+    contentType:ContentTypeName,
+):void {
+    if (state.groupActiveState.kind !== 'suspendedPendingReinit') return
+    if (
+        contentType !== 'application' ||
+        epoch === state.groupContext.epoch
+    ) {
+        throw new ValidationError(
+            'Cannot process message, group is suspended pending reinit'
+        )
+    }
+}
+
+/**
  * Process private message and apply proposal or commit and return the updated ClientState or return an application message
  */
 export async function processPrivateMessage (
@@ -127,6 +154,8 @@ export async function processPrivateMessage (
     if (!constantTimeEqual(pm.groupId, state.groupContext.groupId)) {
         throw new ValidationError('Cannot process message, groupId does not match')
     }
+
+    throwIfSuspendedPendingReinit(state, pm.epoch, pm.contentType)
 
     // a future epoch has no keys yet; refuse it before touching the
     // ratchet rather than letting it decrypt under the current epoch
@@ -267,6 +296,12 @@ export async function processPublicMessage (
     if (!constantTimeEqual(pm.content.groupId, state.groupContext.groupId)) {
         throw new ValidationError('Cannot process message, groupId does not match')
     }
+
+    throwIfSuspendedPendingReinit(
+        state,
+        pm.content.epoch,
+        pm.content.contentType,
+    )
 
     if (pm.content.epoch < state.groupContext.epoch) throw new ValidationError('Cannot process message, epoch too old')
 

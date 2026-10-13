@@ -97,10 +97,10 @@ export async function proveIdentity (
  * Identity on the wire is the signature public key, never the display
  * name. The name is not secret from the server, though: it is a basic
  * credential inside the key package, so it crosses the socket in the
- * clear on a `join-request` and again in the public Add that admits the
- * requester. Only the creator's name stays out of the server's reach,
- * since the creator's key package is never sent and the tree carrying
- * the name reaches joiners inside an encrypted Welcome.
+ * clear on a `join-request`. Only the creator's name stays out of the
+ * server's reach, since the creator's key package is never sent, the
+ * tree carrying the name reaches joiners inside an encrypted Welcome,
+ * and every commit is a PrivateMessage.
  */
 export function identityOf (keyPackage:KeyPackage):string {
     return bytesToBase64url(keyPackage.leafNode.signaturePublicKey)
@@ -243,6 +243,11 @@ export async function joinFromWelcome (
  *
  * `ratchetTreeExtension` is what puts the tree inside the Welcome, so
  * the joiner needs nothing else to build its own view of the group.
+ *
+ * A PrivateMessage, like `commitRemove`. An Add has no UpdatePath today,
+ * so a public one would not leak the creator's name, but no demo commit
+ * is public: a later change here (a forced path, say) must not be able
+ * to reopen that leak.
  */
 export async function commitAdd (
     state:ClientState,
@@ -259,7 +264,7 @@ export async function commitAdd (
             extraProposals: [
                 { proposalType: 'add', add: { keyPackage } }
             ],
-            wireAsPublicMessage: true,
+            wireAsPublicMessage: false,
             ratchetTreeExtension: true
         }
     )
@@ -288,6 +293,12 @@ export async function commitAdd (
  * proposal names a position in the tree, so the caller resolves the
  * identity it holds through `leafIndexOf` first, against the tree it is
  * committing from rather than the one it last rendered.
+ *
+ * A PrivateMessage, never a public one. A Remove carries an UpdatePath,
+ * and the committer's leaf in it holds the creator's basic credential,
+ * so a public Remove hands the room the one name the explainer says it
+ * never sees. The member being removed can still open it: it holds the
+ * keys for the epoch the commit is framed in.
  */
 export async function commitRemove (
     state:ClientState,
@@ -300,7 +311,7 @@ export async function commitRemove (
             extraProposals: [
                 { proposalType: 'remove', remove: { removed: leafIndex } }
             ],
-            wireAsPublicMessage: true,
+            wireAsPublicMessage: false,
             ratchetTreeExtension: true
         }
     )

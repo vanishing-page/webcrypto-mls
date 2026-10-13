@@ -12,6 +12,7 @@ import {
     MAX_WIRE_MESSAGE_LENGTH,
     MAX_PROOF_LENGTH,
     MAX_CHALLENGE_LENGTH,
+    MAX_REF_LENGTH,
 } from '../../example-realistic-demo/protocol.js'
 
 /**
@@ -1250,4 +1251,39 @@ test('isRoomMessage - error log-full', (t) => {
 
 test('isRoomMessage - error log-too-large', (t) => {
     t.ok(isRoomMessage({ type: 'error', reason: 'log-too-large' }))
+})
+
+// A `ref` lets the client tell which of its `mls` writes the room
+// refused. It is optional, so a frame without one stays valid.
+test('isClientMessage - mls with a ref within the bound', (t) => {
+    const mls = { type: 'mls', kind: 'commit', payload: 'cGF5' }
+    t.ok(isClientMessage({ ...mls, ref: 'r1' }))
+    t.ok(isClientMessage({ ...mls, ref: 'A'.repeat(MAX_REF_LENGTH) }),
+        'a ref of exactly the bound is legal')
+    t.ok(isClientMessage(mls), 'a ref is optional')
+})
+
+test('isClientMessage - mls ref over the bound or not a string', (t) => {
+    const mls = { type: 'mls', kind: 'commit', payload: 'cGF5' }
+    t.ok(!isClientMessage({ ...mls, ref: 'A'.repeat(MAX_REF_LENGTH + 1) }))
+    t.ok(!isClientMessage({ ...mls, ref: 7 }))
+    t.ok(!isClientMessage({ ...mls, ref: null }))
+    t.ok(!isClientMessage({ ...mls, ref: { id: 'r1' } }))
+})
+
+test('isRoomMessage - error with and without a ref', (t) => {
+    const error = { type: 'error', reason: 'rate-limited' }
+    t.ok(isRoomMessage(error))
+    t.ok(isRoomMessage({ ...error, ref: 'r1' }))
+    t.ok(isRoomMessage({ ...error, ref: 'A'.repeat(MAX_REF_LENGTH) }))
+    t.ok(!isRoomMessage({ ...error, ref: 'A'.repeat(MAX_REF_LENGTH + 1) }))
+    t.ok(!isRoomMessage({ ...error, ref: 7 }))
+    t.ok(!isRoomMessage({ ...error, ref: null }))
+})
+
+// A ref is short against any identity or payload, so the whole-frame
+// wall never has to account for it.
+test('MAX_REF_LENGTH is far below the identity bound', (t) => {
+    t.ok(MAX_REF_LENGTH > 0)
+    t.ok(MAX_REF_LENGTH < MAX_IDENTITY_LENGTH)
 })

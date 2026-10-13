@@ -128,6 +128,15 @@ the decoders `base64ToBytes`/`base64urlToBytes` are not re-exported
 there, so they come from `../../src/util/byte-array.js`. All four
 already exist -- never write a fifth.
 
+Every commit the demo sends is a PrivateMessage
+(`wireAsPublicMessage: false`), and a new commit path has to be one too.
+The explainer promises the room never sees the creator's name, and a
+commit with an UpdatePath (a Remove, or any forced path) carries the
+committer's leaf, credential and all; framed publicly that is the name
+in the room's log. `test/example-realistic-demo/mls-actions.ts` checks
+it by searching the base64-decoded payload for the name's bytes, and a
+new commit path wants the same test.
+
 `state.ts` and `mls-actions.ts` are unit tested in Node too. `state.ts`
 imports `@preact/signals`, which bundles and runs under
 `--platform=node` without a DOM, so a derived-view test needs no browser.
@@ -206,6 +215,66 @@ screen, retried on every re-broadcast of the list. The lone `approve` is
 what deletes the pending row; a request that has been answered has to
 stop being asked.
 
+## A commit counts once the room echoes it
+
+`send` returning true means the socket was open, not that the room
+took the write; an `mls` write can still be refused (the interval, a
+full log). So `approvals.ts` sends a commit through
+`ApprovalDeps.submitCommit` -- `createPendingCommits` in
+`pending-commit.ts`, pure -- and sends what follows the commit (the
+Welcome and `approve` for an Add, `removed` for a Remove), and writes
+`state.group`, only once that settles as accepted. Both go through
+`commitAndConfirm`, which takes a builder so a retry can rebuild the
+commit from a group that moved; a new kind of commit goes through it
+too, never through a bare `send`. Accepted is
+this client's own `entry` echoed with the same payload; refused is an
+`error` carrying the commit's `ref`. `connection.ts` feeds every live
+entry, every entry of a replayed `log` page and every `error` to
+`observeCommit` at dispatch time, not from the entry queue: the
+approval waits inside the group lock, and the queue cannot apply
+anything until that lock is free, so an echo routed through the queue
+would never arrive. At most one commit is pending; `submit` throws on
+a second.
+
+Every answer the room can give an `mls` write has to settle the
+pending commit, or the creator holds the group lock until the socket
+happens to drop. Two answers carry no `ref`, and each is handled on
+the client: `no-room` refuses whatever is pending (it is forwarded to
+`observeCommit` too), and a frame the room would refuse before parsing
+it -- over `MAX_WIRE_MESSAGE_LENGTH`, or failing `isClientMessage` --
+is refused by `submit` and never sent. A new room refusal for `mls`
+writes either carries the write's `ref` or gets the same treatment.
+
+A Welcome that does not get out after an accepted Add is held in
+`approvals.ts` and sent before anything else is committed. The room
+stamps a Welcome's cursor at the log's end when the Welcome arrives,
+so one sent after a later commit has its joiner skip that commit.
+
+A dropped socket leaves the commit pending, and the replay on the next
+socket settles it. `connection.ts` reports every `onOpen` as
+`reconnected` (a new socket orphans the old one's answer, whether or
+not `isReconnect` says so) and every `log` page with `more` false as
+`replay-end`, after that page's entries. Only a `replay-end` after a
+`reconnected` settles the commit as `lost`; on a live socket, a paged
+replay still running when the commit went out ends without it and
+proves nothing. The room skips the page after `hello` when it is
+empty, so that page may never come: `room-state` (sent from `hello`
+once the socket is attached) is where the client asks for a `replay`
+itself, when `commitAwaitsReplay` says one is owed. A `replay` sent
+before that races `hello`'s async proof and is refused.
+
+`test/example-realistic-demo/approvals.ts` simulates the room inside
+its fake `send`: the production `classifyMlsWrite` against a clock the
+test moves, a log, the echo or the `error`, and Welcomes joined by real
+`mls-actions` states that catch up from that log. `ApprovalDeps.wait`
+is how the retry's interval passes on that clock rather than a timer.
+A new refusal path is tested there. Each `mls` write after the first
+lands inside the interval unless the test advances `room.now`, so a
+test that counts frames after an earlier commit sees a refused first
+try unless it lets the interval pass. A failing tapzero `t.equal` on a
+`ClientState` crashes the run on a BigInt rather than reporting, so
+compare states with `t.ok(a === b)`.
+
 ## One lock over `state.group`, shared by all three writers
 
 `chat.ts`, `approvals.ts` and `apply-entry.ts` each read `state.group`,
@@ -265,10 +334,19 @@ by `attach`), and room caps on log rows and payload characters read
 from storage with a `COUNT`/`SUM` over `log` rather than a counter. A
 refusal writes nothing, the throttle included.
 
-The interval is deliberately short (`MLS_WRITE_INTERVAL_MS`): the
-creator commits back to back while approving a pending list, and a
-refused commit strands the creator at an epoch nobody reached. Raising
-it needs the client to pace or retry those commits first.
+An `mls` write may carry an optional `ref` (bounded by
+`MAX_REF_LENGTH`), and every `error` that refuses it carries the same
+`ref` back -- that is the only way a client can tell which of its
+writes was refused. So every `require*` guard `onMls` calls takes the
+`ref` and puts it on its refusal; a new guard there has to as well.
+`ref` never reaches `entryFromMls`, so it is not stored or broadcast;
+acceptance is still the echoed entry, matched by payload.
+
+The interval is short (`MLS_WRITE_INTERVAL_MS`) because the creator
+commits back to back while approving a pending list and each refusal
+is a wait. A refusal no longer strands anyone: an approval waits for
+the room to accept its commit (see "A commit counts once the room
+echoes it"), and retries a `rate-limited` one after the interval.
 `scripts/probe.mjs` carries a copy of the constant and sends bursts of
 `mls` through `sendPaced`; a new probe check that writes twice from one
 socket must pace too, or it fails as `rate-limited`.

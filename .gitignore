@@ -34,3 +34,7 @@ WIP.md
 specs
 .superpowers
 .scratch/**/logs
+.agents
+
+# scratch consumer of scripts/check-package-consumer.mjs
+.package-consumer-*

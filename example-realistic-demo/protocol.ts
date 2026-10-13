@@ -72,6 +72,9 @@ export type ClientMessage =
         type:'mls'
         kind:EntryKind
         payload:string
+        // Client-chosen and opaque. Echoed on the `error` that refuses
+        // this write, and never stored or broadcast. See MAX_REF_LENGTH.
+        ref?:string
     }
     | {
         type:'join-request'
@@ -149,6 +152,8 @@ export type RoomMessage =
     | {
         type:'error'
         reason:ErrorReason
+        // The `ref` of the `mls` write this refuses, when it had one.
+        ref?:string
     }
 
 // Anything arriving off a socket is unknown until proven otherwise.
@@ -188,6 +193,10 @@ function isStr (v:unknown):v is string {
  *
  * - A challenge is 32 random bytes as base64url, 43 characters.
  * - A proof is a signature as base64url: 86 characters for Ed25519.
+ * - A ref is a client-chosen tag on an `mls` write, echoed back only on
+ *   the `error` that refuses it, so the client can tell which of its
+ *   writes was refused. It names one in-flight write, so a counter or
+ *   a short random id is all it needs; 64 is room for either.
  *
  * A display name has no bound of its own because it has no field of its
  * own -- it rides inside a key package as a basic credential, so it is
@@ -209,6 +218,7 @@ export const MAX_IDENTITY_LENGTH = 512
 export const MAX_CREATOR_TOKEN_LENGTH = 128
 export const MAX_CHALLENGE_LENGTH = 128
 export const MAX_PROOF_LENGTH = 512
+export const MAX_REF_LENGTH = 64
 export const MAX_PAYLOAD_LENGTH = 256 * 1024
 export const MAX_WIRE_MESSAGE_LENGTH = MAX_PAYLOAD_LENGTH + 64 * 1024
 
@@ -230,6 +240,12 @@ function isPayload (v:unknown):v is string {
 // `room-logic.ts` for what it proves.
 function isOptionalProof (v:unknown):boolean {
     return v === undefined || isBounded(v, MAX_PROOF_LENGTH)
+}
+
+// Optional on the wire, so a client that never tags its writes (the
+// probe, for one) still sends valid frames.
+function isOptionalRef (v:unknown):boolean {
+    return v === undefined || isBounded(v, MAX_REF_LENGTH)
 }
 
 // Rejects NaN and Infinity, which survive a `typeof === 'number'` check
@@ -300,7 +316,8 @@ export function isClientMessage (v:unknown):v is ClientMessage {
                     isBounded(v.creatorToken, MAX_CREATOR_TOKEN_LENGTH)) &&
                 isOptionalProof(v.proof)
         case 'mls':
-            return isEntryKind(v.kind) && isPayload(v.payload)
+            return isEntryKind(v.kind) && isPayload(v.payload) &&
+                isOptionalRef(v.ref)
         case 'join-request':
             return isIdentity(v.identity) && isPayload(v.keyPackage)
         case 'approve':
@@ -345,7 +362,7 @@ export function isRoomMessage (v:unknown):v is RoomMessage {
         case 'roster':
             return Array.isArray(v.live) && v.live.every(isIdentity)
         case 'error':
-            return isErrorReason(v.reason)
+            return isErrorReason(v.reason) && isOptionalRef(v.ref)
         default:
             return false
     }

@@ -109,7 +109,9 @@ export function openCommitment (
  * Root check on a state that has already passed the commitment gate:
  * recompute epochTreeRoot over the complete epoch heads, constant-time
  * compare against `refSnapshot` AND require the stored snapshot field
- * to match. Wipes `state` on a mismatch.
+ * to match. Does not wipe `state` on a rejection: the caller holds it
+ * and wipes it -- `verifyRoot` in its own catch, the sequential reader
+ * through `doWipe` in `start()`'s catch.
  */
 export async function checkRoot (
     state:SealState,
@@ -124,13 +126,18 @@ export async function checkRoot (
 
     if (!constantTimeEqual(root, refSnapshot) ||
         !constantTimeEqual(root, prefix.storedSnapshot)) {
-        wipeSealState(state)
         throw new AttachmentError()
     }
 }
 
 /**
  * Commitment gate + root check. Returns the SealState.
+ *
+ * OWNERSHIP: this call owns the state from the moment `openCommitment`
+ * returns it until it is returned. A caller that sees a rejection
+ * never receives the state, so nothing else could wipe it; any
+ * rejection of the root check -- a mismatch, or the KDF failing under
+ * it -- wipes the schedule here before rethrowing.
  */
 export async function verifyRoot (
     cek:Uint8Array,
@@ -142,7 +149,12 @@ export async function verifyRoot (
     const state = await openCommitment(
         cek, objectId, prefix.salt, prefix.storedCommitment, crypto,
     )
-    await checkRoot(state, prefix, refSnapshot)
+    try {
+        await checkRoot(state, prefix, refSnapshot)
+    } catch (err) {
+        wipeSealState(state)
+        throw err
+    }
     return state
 }
 
@@ -347,6 +359,11 @@ export function decryptAttachmentStream (
     let state:SealState|null = null
     let stateWiped = false
     let cekWiped = false
+    // Latched by cancel() and nothing else. The two wipe latches
+    // below say what has been wiped; this one says that the consumer
+    // has gone, which start() needs to know after an await that hands
+    // it a SealState. See the check after openCommitment.
+    let cancelled = false
     let reader:ReadableStreamDefaultReader<Uint8Array>|null = null
 
     const doWipe = () => {
@@ -370,10 +387,10 @@ export function decryptAttachmentStream (
         // awaits (commit, payload_key, acc_key, nonce_base). A cancel
         // landing between them leaves a SealState whose commitment
         // came from the real key and whose other fields came from
-        // zeros; checkRoot's constantTimeEqual then fails and the
-        // stream errors, and checkRoot wipes that state itself.
-        // Benign: the stream is being cancelled, and keys derived
-        // from zeros make it error rather than return wrong data.
+        // zeros, or -- if the cancel landed during the last
+        // derivation -- one derived wholly from the real key. Either
+        // way start() checks `cancelled` as soon as the gate returns
+        // and wipes that state before going any further.
         if (!cekWiped) {
             cekWiped = true
             opts?.ownedCek?.fill(0)
@@ -480,6 +497,19 @@ export function decryptAttachmentStream (
                     head.subarray(0, 32), head.subarray(32, prefixSize),
                     crypto,
                 )
+                // A cancel that landed while the gate was deriving
+                // found state null and could wipe only the CEK. If
+                // the whole object arrived in the first chunk, nothing
+                // below reads the cancelled source again, so startup
+                // would finish with a live schedule and no pull would
+                // ever come to wipe it. Wipe it here and stop. This is
+                // the only await in start() that acquires a SealState;
+                // a cancel after it finds state set, and doWipe
+                // reaches it directly.
+                if (cancelled) {
+                    doWipe()
+                    return
+                }
 
                 // The root covers the stored snapshot and the epoch
                 // heads, which sit ahead of the metadata, so it is
@@ -628,6 +658,7 @@ export function decryptAttachmentStream (
             }
         },
         cancel () {
+            cancelled = true
             doWipe()
             if (reader) return reader.cancel().catch(() => {})
         },
