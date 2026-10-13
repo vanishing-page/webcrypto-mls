@@ -123,6 +123,11 @@
     "vite": "^8.3.1",
     "wrangler": "^4.114.0"
   },
+  "overrides": {
+    "ts-api-utils": {
+      "typescript": "~6.0.3"
+    }
+  },
   "directories": {
     "example": "example",
     "test": "test"
