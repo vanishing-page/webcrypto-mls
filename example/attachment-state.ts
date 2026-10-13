@@ -99,7 +99,9 @@ export type AttachmentStateOptions = {
         cipherSuite:CiphersuiteImpl
     ) => Promise<AttachmentGroup>
     readonly makeTonePcm?:(seconds:number) => Float32Array
-    readonly getRandomValues?:(bytes:Uint8Array) => Uint8Array
+    readonly getRandomValues?:(
+        bytes:Uint8Array<ArrayBuffer>
+    ) => Uint8Array<ArrayBuffer>
     readonly encrypt?:(
         keySchedule:AttachmentGroup['keySchedule'],
         objectId:Uint8Array,
@@ -181,7 +183,9 @@ export function createAttachmentState (
     const makeGroup = options.createGroup
     const makePcm = options.makeTonePcm ?? makeTonePcm
     const randomValues = options.getRandomValues ??
-        ((bytes:Uint8Array) => globalThis.crypto.getRandomValues(bytes))
+        ((bytes:Uint8Array<ArrayBuffer>) => {
+            return globalThis.crypto.getRandomValues(bytes)
+        })
     const encrypt = options.encrypt ?? encryptAttachmentForGroup
     const decryptStream = options.decryptStream ??
         decryptAttachmentStreamForGroup
