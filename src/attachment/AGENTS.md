@@ -496,7 +496,15 @@ must be a **debug** build: the CLI uses `@testable import RAAE` to reach derived
 schedule values and the package-scoped `Segment.encryptRandom`, which
 swift-raae's public API does not expose, and `@testable` requires
 `-enable-testing`. A release build will not compile. CI runs this on
-macos-14 only, so a Linux-only contributor never sees it fail.
+macos-15 only, so a Linux-only contributor never sees it fail.
+
+The toolchain floor is Swift 6.0, and it is not ours to lower: the
+seal-cli manifest says `swift-tools-version:6.0` because swift-raae's
+does, and the pinned swift-crypto 4.x needs Swift 6 as well. The
+macos-14 image defaults to Xcode 15 and Swift 5.10, which rejects the
+manifest before resolving anything, so the job cannot go back to it.
+The job prints `swift --version` first so the next image change shows
+up in the log rather than as a manifest error.
 
 A machine without the toolchain skips the run and exits 0. On CI it
 fails instead: `scripts/interop-toolchain.ts` reads `CI` and returns

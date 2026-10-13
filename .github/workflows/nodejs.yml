@@ -163,7 +163,7 @@ jobs:
         CI: true
 
   interop:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 20
 
     steps:
@@ -176,6 +176,8 @@ jobs:
       run: npm ci
       env:
         CI: true
+    - name: Swift toolchain
+      run: swift --version
     - name: Run interop tests
       run: npm run test:interop
       env:

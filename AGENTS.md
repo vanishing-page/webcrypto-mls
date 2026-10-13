@@ -255,8 +255,8 @@ npm test                           # everything, several minutes
 `npm run test:interop` is separate from all of those and runs in
 neither `npm test` nor the Linux CI jobs. It builds a Swift executable
 against swift-raae, so it needs a Swift toolchain and only runs on the
-`macos-14` job; see `src/attachment/AGENTS.md` for why the build has to
-be a debug build.
+`macos-15` job; see `src/attachment/AGENTS.md` for why the build has to
+be a debug build and why the runner cannot be older.
 
 A test whose cost is out of proportion to what a second ciphersuite would
 tell it loops over `sampleCiphersuites()` instead, which is the sample
