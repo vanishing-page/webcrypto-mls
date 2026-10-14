@@ -72,7 +72,7 @@ import {
 import { partitionDeviceRecords } from './device-restore.js'
 import { HowToUse } from '../example-shared/how-to-use.js'
 import { bytesToBase64url } from '../src/index.js'
-import { EM_DASH, NBSP, SPACE } from '../example-shared/constants.js'
+import { EM_DASH, NBSP } from '../example-shared/constants.js'
 
 /**
  * The multi-device demo page. Every person here is three separate MLS
@@ -1155,11 +1155,11 @@ export const MultiDeviceDemo:FunctionComponent = function () {
             <h1>Multi-device Demo</h1>
 
             <p>
-                MLS has no notion of a user. Each of the seven people
-                here gets three devices ${EM_DASH} a phone, a laptop, and
-                a desktop ${EM_DASH} and <strong>each device is a a node
-                in the MLS tree</strong>, with its own key package, its own
-                leaf, and its own${SPACE}<code>ClientState</code>. The mapping
+                Each of the seven people here gets three devices ${EM_DASH} a
+                phone, a laptop, and a desktop ${EM_DASH} and <strong>each
+                device is a a node in the MLS tree</strong>,
+                with its own key package, its own leaf, and its
+                own <code>ClientState</code>. The mapping
                 from devices to user exists only in application code
                 (<code>example/user.ts</code>).
             </p>

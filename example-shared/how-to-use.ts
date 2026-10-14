@@ -17,14 +17,14 @@ export interface SetupStep {
 export const SETUP_STEPS:SetupStep[] = [
     {
         id: 'create-devices',
-        title: 'Create a person\'s devices',
-        detail: 'Three clients appear at once -- a phone, a laptop, and ' +
-            'a desktop -- each with its own key package and its own ' +
-            'signature keypair.'
+        title: "Create a person's devices",
+        detail: 'Three clients appear per user. Each user gets a phone, ' +
+            'a laptop, and  a desktop. Each device has its own key package ' +
+            'and its own signature keypair.'
     },
     {
         id: 'start-group',
-        title: 'Start the group as that person',
+        title: 'Start the group as someone',
         detail: 'Their phone creates the group and then adds their laptop ' +
             'and desktop, so one person already occupies three leaves.'
     },
