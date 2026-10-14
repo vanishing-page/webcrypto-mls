@@ -71,7 +71,7 @@ body {
     column-gap: 0;
     grid-template-columns: 26rem minmax(0, 1fr);
     margin: 0 auto;
-    max-width: 90vw;
+    max-width: 98vw;
     padding: 0 2rem 6rem;
 }
 
