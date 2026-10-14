@@ -1199,11 +1199,11 @@ export const MultiDeviceDemo:FunctionComponent = function () {
                     ${groupId.value ? html`
                         <p>
                             The group is active. Every device in it is one
-                            leaf of the ratchet tree. A whole user moves in
-                            one commit ${EM_DASH} one proposal per device,
-                            so the
-                            epoch advances once however many devices arrive
-                            or leave.
+                            leaf of the ratchet tree. Adding or removing a
+                            user is a single commit that carries one Add or
+                            Remove proposal for each of their devices. The
+                            epoch advances once per commit, and one commit
+                            includes multiple devices.
                         </p>
 
                         <label class="actor">

@@ -2,7 +2,7 @@ import type { FunctionComponent } from 'preact'
 import { html } from 'htm/preact'
 import { CardHeader } from '../example-shared/card-header.js'
 import type { DeviceInfo } from './device-info.js'
-import { EM_DASH, SPACE } from '../example-shared/constants.js'
+import { SPACE } from '../example-shared/constants.js'
 
 export interface DeviceInfoPanelProps {
     info:DeviceInfo;
@@ -139,11 +139,7 @@ export const DeviceInfoPanel:FunctionComponent<
                             <p class="hint">
                                 Each device stores its own
                                 ${SPACE}<code>ClientState</code> under its
-                                own key. A person is not a unit of storage
-                                any more than they are a unit of
-                                membership ${EM_DASH} persisting this device
-                                says
-                                nothing about the other two.
+                                own key.
                             </p>
                         </div>
                     ` : null}

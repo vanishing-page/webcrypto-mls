@@ -63,7 +63,6 @@ export const HowToUse:FunctionComponent<{ steps?:SetupStep[] }> = function ({
     const list = steps ?? SETUP_STEPS
 
     return html`<div class="card instructions">
-        <h2>How to use</h2>
         <ol>
             ${list.map(step => html`
                 <li key=${step.id}>

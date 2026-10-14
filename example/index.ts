@@ -657,7 +657,6 @@ const Example:FunctionComponent<{ showAttachments?:boolean }> = function ({
 
             <!-- Instructions -->
             <div class="card instructions">
-                <h2>How to use</h2>
                 <ol>
                     <li>
                         <strong>Create users</strong> with the Alice, Bob,
