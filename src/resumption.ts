@@ -180,6 +180,7 @@ export async function joinGroupFromBranch (
         ratchetTree,
         oldState,
         oldState.clientConfig,
+        'branch',
     )
 }
 
@@ -208,5 +209,6 @@ export async function joinGroupFromReinit (
         ratchetTree,
         suspendedState,
         suspendedState.clientConfig,
+        'reinit',
     )
 }

@@ -2,7 +2,10 @@ import type { AuthenticatedContent } from './authenticated-content.js'
 import { makeProposalRef } from './authenticated-content.js'
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
 import { getCiphersuiteFromName } from './crypto/ciphersuite.js'
-import { isSmallOrderSignatureKey } from './crypto/small-order.js'
+import {
+    isLowOrderKemPublicKey,
+    isSmallOrderSignatureKey,
+} from './crypto/small-order.js'
 import type { Hash } from './crypto/hash.js'
 import type { Hpke } from './crypto/hpke.js'
 import type { SignatureSecretKey } from './crypto/signature.js'
@@ -440,6 +443,7 @@ export async function validateRatchetTree (
                         authService,
                         nodeToLeafIndex(toNodeIndex(index)),
                         cs.signature,
+                        cs.hpke,
                     )
                     : await validateLeafNodeUpdateOrCommit(
                         n.leaf,
@@ -448,6 +452,7 @@ export async function validateRatchetTree (
                         tree,
                         authService,
                         cs.signature,
+                        cs.hpke,
                     )
 
             if (err !== undefined) return err
@@ -478,6 +483,7 @@ export async function validateLeafNodeUpdateOrCommit (
     tree:RatchetTree,
     authService:AuthenticationService,
     s:Signature,
+    hpke:Hpke,
     // overrides the credential read from `tree`, for an external resync
     // whose Remove has already blanked the replaced leaf
     priorCredential:Credential | undefined = credentialAtLeaf(tree, leafIndex),
@@ -497,6 +503,7 @@ export async function validateLeafNodeUpdateOrCommit (
         groupContext,
         tree,
         authService,
+        hpke,
         leafIndex,
         priorCredential,
     )
@@ -559,9 +566,21 @@ async function validateLeafNodeCommon (
     groupContext:GroupContext,
     tree:RatchetTree,
     authService:AuthenticationService,
+    hpke:Hpke,
     leafIndex?:number,
     priorCredential?:Credential,
 ) {
+    // A path commit encrypts to this key, so one that cannot be used
+    // would fail later, as a provider error, on an unrelated commit
+    const keyError = await validateHpkePublicKey(
+        leafNode.hpkePublicKey,
+        groupContext,
+        hpke,
+        'LeafNode encryption key',
+    )
+
+    if (keyError !== undefined) return keyError
+
     const credentialValid = await authService.validateCredential(
         leafNode.credential,
         leafNode.signaturePublicKey,
@@ -648,6 +667,7 @@ async function validateLeafNodeKeyPackage (
     authService:AuthenticationService,
     leafIndex:number | undefined,
     s:Signature,
+    hpke:Hpke,
 ):Promise<MlsError | undefined> {
     // Checked before the signature: a small-order key makes a forged
     // signature verify, so it has to fail as a key (audit M4).
@@ -670,7 +690,14 @@ async function validateLeafNodeKeyPackage (
         }
     }
 
-    const commonError = await validateLeafNodeCommon(leafNode, groupContext, tree, authService, leafIndex)
+    const commonError = await validateLeafNodeCommon(
+        leafNode,
+        groupContext,
+        tree,
+        authService,
+        hpke,
+        leafIndex,
+    )
 
     if (commonError !== undefined) return commonError
 }
@@ -698,6 +725,7 @@ async function validateKeyPackage (
         authService,
         undefined,
         s,
+        hpke,
     )
     if (leafNodeError !== undefined) return leafNodeError
 
@@ -706,13 +734,40 @@ async function validateKeyPackage (
 
     if (constantTimeEqual(kp.initKey, kp.leafNode.hpkePublicKey)) { return new ValidationError('Cannot have identicial init and encryption keys') }
 
-    // every committer encrypts the Welcome to this key, so one that does
-    // not import makes every commit carrying the Add throw
+    // every committer encrypts the Welcome to this key, so one that
+    // cannot be used makes every commit carrying the Add throw
+    return validateHpkePublicKey(
+        kp.initKey,
+        groupContext,
+        hpke,
+        'KeyPackage initKey',
+    )
+}
+
+/**
+ * RFC 9420 5.1.1: an HPKE public key a peer hands us must be valid for
+ * the ciphersuite. The low-order check comes first because the provider
+ * imports a low-order X25519 or X448 point and fails only at seal time;
+ * the provider's own import error is mapped here, since the key is
+ * peer input.
+ */
+async function validateHpkePublicKey (
+    key:Uint8Array,
+    groupContext:GroupContext,
+    hpke:Hpke,
+    what:string,
+):Promise<MlsError | undefined> {
+    const kem = getCiphersuiteFromName(groupContext.cipherSuite).hpke.kem
+
+    if (isLowOrderKemPublicKey(kem, key)) {
+        return new ValidationError(what + ' is of low order')
+    }
+
     try {
-        await hpke.importPublicKey(kp.initKey)
+        await hpke.importPublicKey(key)
     } catch {
         return new ValidationError(
-            'KeyPackage initKey is not a public key for the ciphersuite',
+            what + ' is not a public key for the ciphersuite',
         )
     }
 }
@@ -774,6 +829,22 @@ function validatePskProposals (pskIds:PreSharedKeyID[], groupContext:GroupContex
         return new ValidationError(
             'PreSharedKey proposal must reference an external PSK, an application-usage resumption PSK, ' +
             'or a reinit/branch-usage resumption PSK in the group-creating commit',
+        )
+    }
+}
+
+/**
+ * RFC 9420 SS8.4: the psk_nonce is KDF.Nh bytes. Accumulating the PSK
+ * secret refuses any other length, so a proposal carrying one can never
+ * be committed.
+ */
+function validatePskNonce (
+    pskId:PreSharedKeyID,
+    cs:CiphersuiteImpl,
+):MlsError | undefined {
+    if (pskId.pskNonce.length !== cs.kdf.size) {
+        return new ValidationError(
+            'PreSharedKey proposal nonce must be KDF.Nh bytes',
         )
     }
 }
@@ -1096,10 +1167,23 @@ function branchMembersMatch (
 }
 
 /**
+ * The kind of resumption a caller expects a Welcome to be. Narrower than
+ * the resumption PSK usage: an application-usage PSK carries no group
+ * continuity, so it cannot be what a caller resumes from.
+ */
+export type ExpectedResumption = 'branch' | 'reinit'
+
+/**
  * Consumes `privateKeys.initPrivateKey`: RFC 9420 SS16.8 requires an init
  * key never be reused for a second Welcome, so on success this function
  * zeroizes the caller's `initPrivateKey` buffer in place. A thrown
  * validation error leaves it intact so the caller can retry.
+ *
+ * With `expectedResumption` set, the Welcome must carry exactly one
+ * resumption PSK that requires prior state, of that usage; anything else
+ * is refused, so an ordinary invitation cannot pass for a branch or a
+ * ReInit. Without it, a Welcome with no such PSK joins as an ordinary
+ * invitation.
  */
 export async function joinGroup (
     welcome:Welcome,
@@ -1110,7 +1194,14 @@ export async function joinGroup (
     ratchetTree?:RatchetTree,
     resumingFromState?:ClientState,
     clientConfig:ClientConfig = defaultClientConfig,
+    expectedResumption?:ExpectedResumption,
 ):Promise<ClientState> {
+    if (expectedResumption !== undefined && resumingFromState === undefined) {
+        throw new UsageError(
+            `A ${expectedResumption} join needs the prior state`,
+        )
+    }
+
     const keyPackageRef = await makeKeyPackageRef(keyPackage, cs.hash)
     const privKey = await cs.hpke.importPrivateKey(privateKeys.initPrivateKey)
     const groupSecrets = await decryptGroupSecrets(privKey, keyPackageRef, welcome, cs.hpke)
@@ -1130,6 +1221,24 @@ export async function joinGroup (
     const resumptionPsksRequiringPriorState = pskIds.filter(
         (id):id is PreSharedKeyIdResumption => id.psktype === 'resumption' && id.usage !== 'application',
     )
+
+    // RFC 9420 SS11.2, SS11.3: the PSK is what ties the Welcome to the
+    // group being resumed, so a resumption join without exactly one of the
+    // expected usage is not one
+    if (expectedResumption !== undefined) {
+        if (resumptionPsksRequiringPriorState.length !== 1) {
+            throw new ValidationError(
+                `A ${expectedResumption} Welcome must carry exactly one ` +
+                'resumption PSK',
+            )
+        }
+        if (resumptionPsksRequiringPriorState[0]!.usage !==
+            expectedResumption) {
+            throw new ValidationError(
+                `Expected a ${expectedResumption} resumption PSK`,
+            )
+        }
+    }
 
     for (const resumptionPsk of resumptionPsksRequiringPriorState) {
         if (resumingFromState === undefined) throw new ValidationError('No prior state passed for resumption')
@@ -1412,6 +1521,7 @@ async function applyTreeMutations (
                 tree,
                 authService,
                 cs.signature,
+                cs.hpke,
             ),
         )
         return updateLeafNode(
@@ -1523,7 +1633,16 @@ export async function validateProposalOnReceipt (
                 state.ratchetTree,
                 authService,
                 cs.signature,
+                cs.hpke,
             ))
+        case 'psk':
+            // Whether the PSK is available is left to commit time, where
+            // the PSK index is; a receiver may not hold the secret yet.
+            return validatePskNonce(proposal.psk.preSharedKeyId, cs) ??
+                validatePskProposals(
+                    [proposal.psk.preSharedKeyId],
+                    state.groupContext,
+                )
         case 'external_init':
             // only ever valid by value, inside a new_member_commit
             return new ValidationError(

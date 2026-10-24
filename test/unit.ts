@@ -170,6 +170,7 @@ import './crypto/hash.js'
 import './crypto/hpke.js'
 import './crypto/signature.js'
 import './crypto/signature-interop.js'
+import './crypto/small-order-kem.js'
 
 // Scenario tests
 import './scenario/mixed-provider-interop.js'

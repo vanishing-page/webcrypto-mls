@@ -1669,6 +1669,8 @@ a fixed set of **named secrets**, each used for a different job:
   applied correctly.
 * `membershipKey` -- authenticates public messages as coming from a member.
 * `resumptionPsk` -- links this group to resumption (reinit/branch) flows.
+  `joinGroupFromReinit` and `joinGroupFromBranch` refuse a Welcome that
+  does not carry exactly one resumption PSK of the matching usage.
 * `epochAuthenticator` -- a public per-epoch value every member derives
   identically; the example app shows it as the "shared epoch secret".
 * `initSecret` -- the input that chains this epoch to the next one.

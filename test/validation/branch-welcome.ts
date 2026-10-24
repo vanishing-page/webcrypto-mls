@@ -27,7 +27,7 @@ import type { ProtocolVersionName } from '../../src/protocol-version.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { constantTimeEqual } from '../../src/util/constant-time-compare.js'
-import { ValidationError } from '../../src/mls-error.js'
+import { UsageError, ValidationError } from '../../src/mls-error.js'
 import { testClientConfig } from '../helpers/client-config.js'
 import { sameSignerKeyPackage } from '../helpers/same-signer-key-package.js'
 import { testEveryoneCanMessageEveryone } from '../scenario/common.js'
@@ -319,4 +319,209 @@ test('honest branch with a custom equality config', async t => {
         impl,
     )
     await testEveryoneCanMessageEveryone([branch.newState, bobBranch], impl, t)
+})
+
+type Packages = Pick<Member, 'publicPackage' | 'privatePackage'>
+
+/** Alice's new group for a branch, Welcoming `bob` with `psks` beside. */
+async function welcomeWithPsks (
+    aliceGroup:ClientState,
+    aliceNew:Packages,
+    bobNew:Packages,
+    psks:Proposal[],
+    groupId:string,
+    cs:CiphersuiteImpl,
+) {
+    const newGroup = await createGroup(
+        enc(groupId),
+        aliceNew.publicPackage,
+        aliceNew.privatePackage,
+        [],
+        cs,
+        testClientConfig
+    )
+    return createCommit(
+        {
+            state: newGroup,
+            pskIndex: makePskIndex(aliceGroup, {}),
+            cipherSuite: cs,
+        },
+        {
+            extraProposals: [
+                {
+                    proposalType: 'add',
+                    add: { keyPackage: bobNew.publicPackage },
+                },
+                ...psks,
+            ],
+        },
+    )
+}
+
+function resumptionPsk (
+    state:ClientState,
+    usage:'branch'|'reinit'|'application',
+    cs:CiphersuiteImpl,
+):Proposal {
+    return {
+        proposalType: 'psk',
+        psk: { preSharedKeyId: makeResumptionPsk(state, usage, cs).id },
+    }
+}
+
+const nonZero = (key:Uint8Array) => key.some((b) => b !== 0)
+
+/**
+ * After a refused Welcome, Bob's key material is intact and the honest
+ * branch Welcome for the same KeyPackage joins.
+ */
+async function honestBranchStillJoins (
+    t:any,
+    aliceGroup:ClientState,
+    bobGroup:ClientState,
+    aliceNew:Packages,
+    bobNew:Packages,
+    cs:CiphersuiteImpl,
+) {
+    t.ok(nonZero(bobNew.privatePackage.initPrivateKey),
+        'the refused join left the init private key intact')
+    const branch = await branchGroup(
+        aliceGroup,
+        aliceNew.publicPackage,
+        aliceNew.privatePackage,
+        [bobNew.publicPackage],
+        enc('branch'),
+        cs,
+    )
+    const bobBranch = await joinGroupFromBranch(
+        bobGroup,
+        branch.welcome!,
+        bobNew.publicPackage,
+        bobNew.privatePackage,
+        branch.newState.ratchetTree,
+        cs,
+    )
+    t.ok(constantTimeEqual(bobBranch.groupContext.groupId, enc('branch')),
+        'the honest branch Welcome joins with the same key material')
+}
+
+test('an ordinary Welcome to an unrelated group is not a branch', async t => {
+    const impl = await getCipherSuite(getCiphersuiteFromName(SUITE))
+    const { alice, bob, aliceGroup, bobGroup } =
+        await aliceAndBob(impl, testClientConfig)
+
+    const aliceNew = await resign(alice, impl)
+    const bobNew = await resign(bob, impl)
+    const unrelated = await welcomeWithPsks(
+        aliceGroup, aliceNew, bobNew, [], 'unrelated', impl)
+
+    await rejects(t, () => joinGroupFromBranch(
+        bobGroup,
+        unrelated.welcome!,
+        bobNew.publicPackage,
+        bobNew.privatePackage,
+        unrelated.newState.ratchetTree,
+        impl,
+    ), 'a Welcome with no resumption PSK is a ValidationError')
+
+    await honestBranchStillJoins(
+        t, aliceGroup, bobGroup, aliceNew, bobNew, impl)
+})
+
+type PskList = (s:ClientState, cs:CiphersuiteImpl) => Proposal[]
+
+const wrongPskLists:[string, PskList][] = [
+    ['whose only prior-state resumption PSK has ReInit usage',
+        (s, cs) => [resumptionPsk(s, 'reinit', cs)]],
+    ['carrying only an application-usage resumption PSK',
+        (s, cs) => [resumptionPsk(s, 'application', cs)]],
+    ['carrying two resumption PSKs that require prior state',
+        (s, cs) => [
+            resumptionPsk(s, 'branch', cs),
+            resumptionPsk(s, 'reinit', cs),
+        ]],
+]
+
+for (const [name, psks] of wrongPskLists) {
+    test(`a Welcome ${name} is not a branch`, async t => {
+        const impl = await getCipherSuite(getCiphersuiteFromName(SUITE))
+        const { alice, bob, aliceGroup, bobGroup } =
+            await aliceAndBob(impl, testClientConfig)
+
+        const aliceNew = await resign(alice, impl)
+        const bobNew = await resign(bob, impl)
+        const forged = await welcomeWithPsks(aliceGroup, aliceNew, bobNew,
+            psks(aliceGroup, impl), 'branch', impl)
+
+        await rejects(t, () => joinGroupFromBranch(
+            bobGroup,
+            forged.welcome!,
+            bobNew.publicPackage,
+            bobNew.privatePackage,
+            forged.newState.ratchetTree,
+            impl,
+        ), 'the wrong resumption PSKs are a ValidationError')
+
+        await honestBranchStillJoins(
+            t, aliceGroup, bobGroup, aliceNew, bobNew, impl)
+    })
+}
+
+test('a branch join with no prior state is a UsageError', async t => {
+    const impl = await getCipherSuite(getCiphersuiteFromName(SUITE))
+    const { alice, bob, aliceGroup } =
+        await aliceAndBob(impl, testClientConfig)
+
+    const aliceNew = await resign(alice, impl)
+    const bobNew = await resign(bob, impl)
+    const branch = await branchGroup(
+        aliceGroup,
+        aliceNew.publicPackage,
+        aliceNew.privatePackage,
+        [bobNew.publicPackage],
+        enc('branch'),
+        impl,
+    )
+
+    try {
+        await joinGroup(
+            branch.welcome!,
+            bobNew.publicPackage,
+            bobNew.privatePackage,
+            emptyPskIndex,
+            impl,
+            branch.newState.ratchetTree,
+            undefined,
+            testClientConfig,
+            'branch',
+        )
+        t.fail('joined without a prior state')
+    } catch (err) {
+        t.ok(err instanceof UsageError,
+            'an expectation without a prior state is a UsageError')
+    }
+})
+
+test('an ordinary join of an unrelated Welcome still succeeds', async t => {
+    const impl = await getCipherSuite(getCiphersuiteFromName(SUITE))
+    const { alice, bob, aliceGroup } =
+        await aliceAndBob(impl, testClientConfig)
+
+    const aliceNew = await resign(alice, impl)
+    const bobNew = await resign(bob, impl)
+    const unrelated = await welcomeWithPsks(
+        aliceGroup, aliceNew, bobNew, [], 'unrelated', impl)
+
+    const joined = await joinGroup(
+        unrelated.welcome!,
+        bobNew.publicPackage,
+        bobNew.privatePackage,
+        emptyPskIndex,
+        impl,
+        unrelated.newState.ratchetTree,
+        undefined,
+        testClientConfig,
+    )
+    t.ok(constantTimeEqual(joined.groupContext.groupId, enc('unrelated')),
+        'the joined state is in the unrelated group')
 })

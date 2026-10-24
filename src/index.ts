@@ -72,6 +72,7 @@ export {
     type ClientState,
     type GroupActiveState,
     type EpochReceiverData,
+    type ExpectedResumption,
 } from './client-state.js'
 
 export {

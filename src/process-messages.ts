@@ -409,6 +409,7 @@ async function processCommit (
                 result.tree,
                 state.clientConfig.authService,
                 cs.signature,
+                cs.hpke,
                 result.additionalResult.kind === 'externalCommit' ?
                     result.additionalResult.priorCredential :
                     undefined,

@@ -184,6 +184,7 @@ async function replacementLeafMustSupportInUseTypes (
         aliceGroup.ratchetTree,
         unsafeAcceptAllAuthenticationService,
         impl.signature,
+        impl.hpke,
     )
 
     t.ok(
@@ -201,6 +202,7 @@ async function replacementLeafMustSupportInUseTypes (
         aliceGroup.ratchetTree,
         unsafeAcceptAllAuthenticationService,
         impl.signature,
+        impl.hpke,
     )
 
     t.equal(

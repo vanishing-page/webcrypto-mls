@@ -153,6 +153,40 @@ entries, one of them critical, and none of the six cleared. Clear the other tool
 each package the report marks fixable instead, then diff the lockfile
 to confirm nothing was downgraded and no `@hpke/*` or `@noble/*`
 version moved, and check the result still installs under `npm ci`.
+0 vulnerabilities. Plain `npm audit` does not. It reports five
+entries, in two chains, and neither can move without replacing a tool.
+
+The first chain is under `markdown-toc` (the `npm run toc` tool), a
+dev-only script run by hand on our own README:
+
+- `toml`: `gray-matter` 2 pins `toml` ^2.3, below every fixed release.
+- `gray-matter`: flagged for its `toml`; `markdown-toc` pins
+  `gray-matter` ^2.1.
+
+The second is under `wrangler`, which runs the realistic demo's Worker
+locally and deploys it. GHSA-xjj6-f33q-929c and two other advisories
+cover `undici` below 7.30.1:
+
+- `undici`: `miniflare` pins it exactly (7.29.1 today), so the caret
+  range the lockfile records does not help. It clears once a
+  `miniflare` release depends on `undici` 7.30.1 or later.
+- `miniflare`: flagged for its `undici` from 4.20250906.1 on; the
+  latest release still pins 7.28.0.
+- `wrangler`: flagged for its `miniflare`. The latest release still
+  pulls a vulnerable `undici`, so `npm update wrangler` does not clear
+  it. Check `npm view miniflare@<wrangler's pin> dependencies.undici`
+  for 7.30.1 before trying again.
+
+Do not take `npm audit fix` at its word for either chain. For the
+first it claims a fix, and the fix is a downgrade of `remarkable` to
+1.7.3, whose `argparse` 0.1 pulls in `underscore` and
+`underscore.string`: new entries, one of them critical. For the second
+it offers `--force` and a downgrade of `wrangler` to 4.35.0, outside
+the `^4.114.0` range `package.json` asks for. Clear the other tooling findings
+with `npm update <name>` for each package the report marks fixable
+instead (`vite` was the last, within 7.x), then diff the lockfile to
+confirm nothing was downgraded and no `@hpke/*` or `@noble/*` version
+moved, and check the result still installs under `npm ci`.
 
 The one workflow that still runs `npm install` is
 `.github/workflows/auto-dependabot.yml`, deliberately: its job is to
@@ -406,13 +440,24 @@ signature key. So a test that branches must build each member's new
 KeyPackage with its old signature key -- `sameSignerKeyPackage` in
 `test/helpers/same-signer-key-package.ts` -- since `generateKeyPackage`
 mints a fresh one and the member would read as a stranger.
+`joinGroup`'s continuity checks run only over the resumption PSKs a
+Welcome carries, so a resumption wrapper must pass the
+`expectedResumption` argument (`'branch'` or `'reinit'`); without it a
+Welcome with no resumption PSK joins as an ordinary invitation. A test
+that wants a Welcome with a chosen PSK list can commit PSK proposals
+from `makeResumptionPsk` into a fresh group with
+`makePskIndex(oldState, {})` as the index, as `welcomeWithPsks` in
+`test/validation/branch-welcome.ts` does, rather than re-encrypting.
 A proposal is validated twice: once alone, on arrival, by
 `validateProposalOnReceipt` (`src/client-state.ts`, called from
 `processProposal` and from `createProposal` before it signs), and again
 with the rest of the commit in `applyProposals`. A receipt check may only
 refuse what no commit in this epoch could make valid. An Add of a current
 member is the example: the same commit may remove them, so receipt checks
-the KeyPackage against the tree without the matching leaf. A test that
+the KeyPackage against the tree without the matching leaf. The PSK arm
+is the other example: it checks the nonce length and reuses the
+commit-time `validatePskProposals` epoch rule, but never the PSK index,
+since a receiver may not hold the secret until it commits. A test that
 needs a peer to deliver an invalid proposal cannot use `createProposal`,
 which refuses it; sign the message with `protectProposalPublic` or
 `protectExternalProposalPublic` instead (see
@@ -439,6 +484,37 @@ via `src/crypto/small-order.ts`; a new signature provider or algorithm
 needs the same treatment and a case in `test/crypto/signature-interop.ts`.
 Leaf validation checks the key before the signature, so a small-order key
 fails as a `ValidationError` rather than a `CryptoVerificationError`.
+The same module holds the KEM counterpart, `isLowOrderKemPublicKey`,
+because the HPKE provider imports a low-order X25519 key and fails only
+at seal time. It answers false for every KEM but X25519 and X448, where
+import is the whole check. `test/crypto/small-order-kem.ts` classifies
+every `KemAlgorithm` in a `Record`, so a new KEM fails typecheck there
+until someone decides whether it needs a low-order list.
+Its consumer is `validateHpkePublicKey` in `src/client-state.ts`, which
+runs that check and then the provider import, mapping the import's
+throw to a `ValidationError`. `validateLeafNodeCommon` calls it for
+every leaf's encryption key, and `validateKeyPackage` for the init key,
+so both leaf validators and every caller of them take the HPKE handle
+beside the signature one. A new place a peer's HPKE public key enters
+state goes through the same helper. Parent node keys on an UpdatePath
+or in a received tree do not yet.
+A receive-side check needs a test with an input that the sending code
+already refuses, so the input has to be forged. Mutating the result
+does not work: every leaf is hashed into the tree, the GroupContext
+and the confirmation tag. `test/validation/leaf-key-dishonest-committer.ts`
+has the two forging shapes. `forgeAddCommit` builds an Add-only commit
+and its Welcome from the exported pieces (`createContentCommitSignature`,
+`nextEpochContext`, `initializeEpoch`, `createGroupInfoWithRatchetTree`,
+`encryptGroupSecrets`); with no path and no PSK, both secrets are
+all-zero. `withCommitLeafKey` wraps a `CiphersuiteImpl` so that
+`createCommit` itself emits a chosen UpdatePath leaf key, and every
+hash and signature then agrees with that key. A forgery that has
+drifted (a stale tree hash, a wrong transcript input) is still
+refused, often as a `ValidationError`, so a refusal case that checks
+only the error class cannot tell the two apart. Every forging helper
+therefore needs an in-suite control, per ciphersuite, that feeds it
+honest inputs and requires the result to be accepted, as the first
+test in that file does. Disabling the check by hand is not enough.
 The incoming-message callback's default is not `acceptAll`: it is
 `defaultIncomingMessageCallback`, which rejects a `new_member_proposal`.
 A test that relies on a self-signed Add (`proposeAddExternal`) being

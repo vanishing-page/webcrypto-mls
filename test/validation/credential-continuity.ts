@@ -326,6 +326,7 @@ async function commitPathLeafSeesPriorCredential (
         aliceGroup.ratchetTree,
         continuityService,
         impl.signature,
+        impl.hpke,
     )
 
     t.ok(
@@ -340,6 +341,7 @@ async function commitPathLeafSeesPriorCredential (
         aliceGroup.ratchetTree,
         unsafeAcceptAllAuthenticationService,
         impl.signature,
+        impl.hpke,
     )
 
     t.equal(
