@@ -1,6 +1,9 @@
 import type { ClientState } from './client-state.js'
 import { makePskIndex, createGroup, joinGroup } from './client-state.js'
-import type { CreateCommitResult } from './create-commit.js'
+import type {
+    CreateCommitOptions,
+    CreateCommitResult
+} from './create-commit.js'
 import { createCommit } from './create-commit.js'
 import type { CiphersuiteName, CiphersuiteImpl } from './crypto/ciphersuite.js'
 import { getCiphersuiteFromName } from './crypto/ciphersuite.js'
@@ -15,6 +18,16 @@ import type { Proposal, ProposalAdd, ProposalPSK } from './proposal.js'
 import type { ProtocolVersionName } from './protocol-version.js'
 import type { RatchetTree } from './ratchet-tree.js'
 import type { Welcome } from './welcome.js'
+
+/**
+ * The `createCommit` options a resumption commit passes through, with
+ * the same defaults: no ratchet tree in the Welcome, so the joiner
+ * needs the tree out of band, and a commit framed as a private message.
+ */
+export type ResumptionOptions = Pick<
+    CreateCommitOptions,
+    'ratchetTreeExtension' | 'wireAsPublicMessage'
+>
 
 export async function reinitGroup (
     state:ClientState,
@@ -46,6 +59,12 @@ export async function reinitGroup (
     )
 }
 
+/**
+ * Starts the group a ReInit resumes into. `consumed` is always empty:
+ * the suspended `state` is not superseded by the new group's state --
+ * it still decrypts application messages from its earlier epochs -- so
+ * none of its secrets are the caller's to wipe yet.
+ */
 export async function reinitCreateNewGroup (
     state:ClientState,
     keyPackage:KeyPackage,
@@ -55,6 +74,7 @@ export async function reinitCreateNewGroup (
     cipherSuite:CiphersuiteName,
     extensions:Extension[],
     provider:CryptoProvider = defaultCryptoProvider,
+    options:ResumptionOptions = {},
 ):Promise<CreateCommitResult> {
     const cs = await getCipherSuite(getCiphersuiteFromName(cipherSuite), provider)
     // the resumed group inherits the old group's configuration -- including
@@ -82,16 +102,20 @@ export async function reinitCreateNewGroup (
         },
     }
 
-    return createCommit(
+    const result = await createCommit(
         {
             state: newGroup,
             pskIndex: makePskIndex(state, {}),
             cipherSuite: cs,
         },
         {
+            ratchetTreeExtension: options.ratchetTreeExtension,
+            wireAsPublicMessage: options.wireAsPublicMessage,
             extraProposals: [...addProposals, resumptionPsk],
         },
     )
+
+    return { ...result, consumed: [] }
 }
 
 export function makeResumptionPsk (
@@ -114,6 +138,11 @@ export function makeResumptionPsk (
     return { id: psk, secret }
 }
 
+/**
+ * Starts a subgroup of `state`'s group. `consumed` is always empty: the
+ * group being branched from carries on, and `state` stays its live
+ * state.
+ */
 export async function branchGroup (
     state:ClientState,
     keyPackage:KeyPackage,
@@ -121,6 +150,7 @@ export async function branchGroup (
     memberKeyPackages:KeyPackage[],
     newGroupId:Uint8Array,
     cs:CiphersuiteImpl,
+    options:ResumptionOptions = {},
 ):Promise<CreateCommitResult> {
     const resumptionPsk = makeResumptionPsk(state, 'branch', cs)
 
@@ -149,16 +179,20 @@ export async function branchGroup (
         },
     }
 
-    return createCommit(
+    const result = await createCommit(
         {
             state: newGroup,
             pskIndex: pskSearch,
             cipherSuite: cs,
         },
         {
+            ratchetTreeExtension: options.ratchetTreeExtension,
+            wireAsPublicMessage: options.wireAsPublicMessage,
             extraProposals: [...addMemberProposals, branchPskProposal],
         },
     )
+
+    return { ...result, consumed: [] }
 }
 
 export async function joinGroupFromBranch (

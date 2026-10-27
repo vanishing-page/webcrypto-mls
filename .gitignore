@@ -19,6 +19,9 @@ id_ed25519
 public
 .claude
 .test-bundle*.cjs
+.test-outcome-*.mjs
+# scratch bundles, e.g. the one-file run in AGENTS.md
+.tmp*
 .interop-bundle.cjs
 .vector-gen-bundle.cjs
 .mut-bundle.cjs

@@ -22,9 +22,23 @@ jobs:
       uses: actions/setup-node@v5
       with:
         node-version: ${{ env.NODE_VERSION }}
-    - name: npm ci, build, lint
+    - name: npm ci
+      run: npm ci
+      env:
+        CI: true
+    # A known vulnerability in a runtime dependency (`@hpke/*`,
+    # `@noble/*`) should fail the push that brings it in, not wait for
+    # someone to run `npm audit` by hand. `--omit=dev` keeps the
+    # tooling findings AGENTS.md documents (under `markdown-toc` and
+    # `wrangler`) out of it: they never reach a consumer, and neither
+    # can move without replacing a tool. Its own step, ahead of the
+    # build, so an advisory is not hidden behind a lint failure.
+    - name: Audit runtime dependencies
+      run: npm audit --omit=dev --audit-level=high
+      env:
+        CI: true
+    - name: build, lint
       run: |
-        npm ci
         npm run build --if-present
         npm run lint
       env:

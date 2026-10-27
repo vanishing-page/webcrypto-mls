@@ -83,89 +83,108 @@ function satisfiesResolutionCriterion (
     return sameNodeIndexSet(unmergedUnderC, resolutionOfCWithoutD)
 }
 
-function validateParentHashCoverage (parentIndices:number[], coverage:Record<number, number>):boolean {
-    for (const index of parentIndices) {
-        if ((coverage[index] ?? 0) !== 1) {
-            return false
-        }
+/**
+ * RFC 9420 SS7.9.2: every non-blank parent node is covered by exactly one
+ * parent-hash chain. One call reads one tree, so the subtree hashes and the
+ * parent hash of each node are computed once and shared by every chain that
+ * passes through it. The subtree hashes stay cached against `tree` (see
+ * `treeHash`), so a tree-hash check of the same tree reuses them.
+ */
+export async function verifyParentHashes (
+    tree:RatchetTree,
+    h:Hash,
+):Promise<boolean> {
+    const parentNodes:number[] = []
+    for (const [index, node] of tree.entries()) {
+        if (node?.nodeType === 'parent') parentNodes.push(index)
     }
-    return true
-}
-
-export async function verifyParentHashes (tree:RatchetTree, h:Hash):Promise<boolean> {
-    const parentNodes = tree.reduce((acc, cur, index) => {
-        if (cur !== undefined && cur.nodeType === 'parent') {
-            return [...acc, index]
-        } else return acc
-    }, [] as number[])
 
     if (parentNodes.length === 0) return true
 
     const coverage = await parentHashCoverage(tree, h)
 
-    return validateParentHashCoverage(parentNodes, coverage)
+    return parentNodes.every((index) => coverage.get(index) === 1)
 }
 
 /**
- * Traverse tree from bottom up, verifying that all non-blank parent nodes are covered by exactly one chain
+ * Traverse tree from bottom up, counting for each non-blank parent node the
+ * chains that cover it
  */
-function parentHashCoverage (tree:RatchetTree, h:Hash):Promise<Record<number, number>> {
-    const leaves = tree.filter((_v, i) => isLeaf(toNodeIndex(i)))
-    return leaves.reduce(
-        async (acc, leafNode, leafIndex) => {
-            if (leafNode === undefined) return acc
+async function parentHashCoverage (
+    tree:RatchetTree,
+    h:Hash,
+):Promise<Map<number, number>> {
+    const coverage = new Map<number, number>()
+    const parentHashes = new Map<
+        NodeIndex,
+        Promise<[Uint8Array, NodeIndex | undefined]>
+    >()
+    const memoizedParentHash = (nodeIndex:NodeIndex) => {
+        let result = parentHashes.get(nodeIndex)
+        if (result === undefined) {
+            result = calculateParentHash(tree, nodeIndex, h)
+            parentHashes.set(nodeIndex, result)
+        }
+        return result
+    }
 
-            let currentIndex = leafToNodeIndex(toLeafIndex(leafIndex))
-            let updated = { ...(await acc) }
+    const rootIndex = root(leafWidth(tree.length))
 
-            const rootIndex = root(leafWidth(tree.length))
+    for (const [index, node] of tree.entries()) {
+        if (node === undefined || !isLeaf(toNodeIndex(index))) continue
 
-            while (currentIndex !== rootIndex) {
-                const currentNode = tree[currentIndex]
+        let currentIndex = toNodeIndex(index)
 
-                // defense in depth: currentIndex should always be either the
-                // leaf we started from or a parentHashNodeIndex produced
-                // below (always non-blank, or the root), so this should be
-                // unreachable -- but if it ever is, advance to the nearest
-                // non-blank ancestor via findFirstNonBlankAncestor instead of
-                // looping in place on a blank node forever.
-                if (currentNode === undefined) {
-                    currentIndex = findFirstNonBlankAncestor(tree, currentIndex)
-                    continue
-                }
+        while (currentIndex !== rootIndex) {
+            const currentNode = tree[currentIndex]
 
-                // parentHashNodeIndex is the node index where the nearest non blank ancestor was
-                const [parentHash, parentHashNodeIndex] = await calculateParentHash(tree, currentIndex, h)
-
-                if (parentHashNodeIndex === undefined) {
-                    throw new InternalError('Reached root before completing parent hash coeverage')
-                }
-
-                const expectedParentHash = getParentHash(currentNode)
-
-                const cIndex = currentIndex < parentHashNodeIndex
-                    ? left(parentHashNodeIndex)
-                    : right(parentHashNodeIndex)
-
-                if (
-                    expectedParentHash !== undefined &&
-                    constantTimeEqual(parentHash, expectedParentHash) &&
-                    satisfiesResolutionCriterion(tree, currentIndex, parentHashNodeIndex, cIndex)
-                ) {
-                    const newCount = (updated[parentHashNodeIndex] ?? 0) + 1
-                    updated = { ...updated, [parentHashNodeIndex]: newCount }
-                } else {
-                    // skip to next leaf
-                    break
-                }
-
-                currentIndex = parentHashNodeIndex
+            // defense in depth: currentIndex should always be either the
+            // leaf we started from or a parentHashNodeIndex produced
+            // below (always non-blank, or the root), so this should be
+            // unreachable -- but if it ever is, advance to the nearest
+            // non-blank ancestor via findFirstNonBlankAncestor instead of
+            // looping in place on a blank node forever.
+            if (currentNode === undefined) {
+                currentIndex = findFirstNonBlankAncestor(tree, currentIndex)
+                continue
             }
 
-            return updated
-        },
-        Promise.resolve({} as Record<number, number>),
-    )
+            // parentHashNodeIndex is the node index where the nearest
+            // non blank ancestor was
+            const [parentHash, parentHashNodeIndex] =
+                await memoizedParentHash(currentIndex)
+
+            if (parentHashNodeIndex === undefined) {
+                throw new InternalError(
+                    'Reached root before completing parent hash coeverage')
+            }
+
+            const expectedParentHash = getParentHash(currentNode)
+
+            const cIndex = currentIndex < parentHashNodeIndex
+                ? left(parentHashNodeIndex)
+                : right(parentHashNodeIndex)
+
+            if (
+                expectedParentHash !== undefined &&
+                constantTimeEqual(parentHash, expectedParentHash) &&
+                satisfiesResolutionCriterion(
+                    tree, currentIndex, parentHashNodeIndex, cIndex)
+            ) {
+                coverage.set(
+                    parentHashNodeIndex,
+                    (coverage.get(parentHashNodeIndex) ?? 0) + 1,
+                )
+            } else {
+                // skip to next leaf
+                break
+            }
+
+            currentIndex = parentHashNodeIndex
+        }
+    }
+
+    return coverage
 }
 
 function getParentHash (node:Node):Uint8Array | undefined {
@@ -198,9 +217,13 @@ export async function calculateParentHash (
 
     if (parentNode === undefined || parentNode.nodeType === 'leaf') { throw new InternalError('Expected non-blank parent Node') }
 
-    const removedUnmerged = removeLeaves(tree, parentNode.parent.unmergedLeaves as LeafIndex[])
+    const unmerged = parentNode.parent.unmergedLeaves as LeafIndex[]
 
-    const originalSiblingTreeHash = await treeHash(removedUnmerged, siblingIndex, h)
+    // with no unmerged leaves the original sibling is the sibling as it
+    // stands, so its hash is the one cached against `tree`
+    const originalSiblingTreeHash = unmerged.length === 0 ?
+        await treeHash(tree, siblingIndex, h) :
+        await treeHash(removeLeaves(tree, unmerged), siblingIndex, h)
 
     const input = {
         encryptionKey: parentNode.parent.hpkePublicKey,

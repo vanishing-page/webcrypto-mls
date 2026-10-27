@@ -1,24 +1,12 @@
 import { test } from '@substrate-system/tapzero'
 import { skipReason } from '../helpers/skip.js'
-import {
-    createGroup,
-    joinGroup,
-    nextEpochContext,
-} from '../../src/client-state.js'
+import { createGroup, joinGroup } from '../../src/client-state.js'
 import type { ClientState } from '../../src/client-state.js'
 import {
     createCommit,
     createGroupInfoWithExternalPubAndRatchetTree,
-    createGroupInfoWithRatchetTree,
     joinGroupExternal,
 } from '../../src/create-commit.js'
-import {
-    createConfirmationTag,
-    createContentCommitSignature,
-} from '../../src/framed-content.js'
-import {
-    protectPublicMessage
-} from '../../src/message-protection-public.js'
 import { processMessage } from '../../src/process-messages.js'
 import { acceptAll } from '../../src/incoming-message-action.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
@@ -30,28 +18,17 @@ import { getCiphersuiteFromName } from '../../src/crypto/ciphersuite.js'
 import { getCipherSuite } from '../../src/crypto/get-ciphersuite-impl.js'
 import type { KemAlgorithm } from '../../src/crypto/kem.js'
 import { deriveSecret } from '../../src/crypto/kdf.js'
-import {
-    generateKeyPackage,
-    makeKeyPackageRef,
-    signKeyPackage,
-} from '../../src/key-package.js'
-import type {
-    KeyPackage,
-    PrivateKeyPackage,
-} from '../../src/key-package.js'
-import { initializeEpoch } from '../../src/key-schedule.js'
-import { signLeafNodeKeyPackage } from '../../src/leaf-node.js'
+import { generateKeyPackage } from '../../src/key-package.js'
 import { addLeafNode } from '../../src/ratchet-tree.js'
 import { treeHashRoot } from '../../src/tree-hash.js'
 import { leafToNodeIndex, toLeafIndex } from '../../src/treemath.js'
-import { encryptGroupInfo, encryptGroupSecrets } from '../../src/welcome.js'
-import type { Welcome } from '../../src/welcome.js'
 import { defaultLifetime } from '../../src/lifetime.js'
 import { defaultCapabilities } from '../../src/default-capabilities.js'
 import { ValidationError } from '../../src/mls-error.js'
 import { constantTimeEqual } from '../../src/util/constant-time-compare.js'
 import { testCiphersuites } from '../helpers/suite-filter.js'
 import { testClientConfig } from '../helpers/client-config.js'
+import { forgeAddCommit, withLeafKey } from '../helpers/forge-commit.js'
 import type { MLSMessage } from '../../src/message.js'
 
 // Audit 2026-10-24 F3, from the other side: a committer whose own
@@ -288,138 +265,6 @@ async function member (name:string, impl:CiphersuiteImpl) {
         [],
         impl,
     )
-}
-
-/**
- * Re-mint a KeyPackage around a chosen leaf encryption key, signed by its
- * own owner, so it fails on the key and not on a signature.
- */
-async function withLeafKey (
-    base:KeyPackage,
-    priv:PrivateKeyPackage,
-    hpkePublicKey:Uint8Array,
-    impl:CiphersuiteImpl,
-):Promise<KeyPackage> {
-    const { signature: _signature, ...tbs } = base.leafNode
-    const leafNode = await signLeafNodeKeyPackage(
-        {
-            ...tbs,
-            hpkePublicKey,
-            info: { leafNodeSource: 'key_package' },
-        },
-        priv.signaturePrivateKey,
-        impl.signature,
-    )
-    return signKeyPackage(
-        {
-            version: base.version,
-            cipherSuite: base.cipherSuite,
-            initKey: base.initKey,
-            leafNode,
-            extensions: base.extensions,
-        },
-        priv.signaturePrivateKey,
-        impl.signature,
-    )
-}
-
-/**
- * An Add-only commit of `keyPackages` from `state`, and its Welcome, built
- * the way createCommit built them before it validated a leaf's encryption
- * key: the tree, the epoch and every signature and tag are consistent, so
- * the only thing wrong with them is the key.
- */
-async function forgeAddCommit (
-    state:ClientState,
-    keyPackages:KeyPackage[],
-    impl:CiphersuiteImpl,
-):Promise<{ commit:MLSMessage; welcome:Welcome }> {
-    let tree = state.ratchetTree
-    for (const kp of keyPackages) {
-        [tree] = addLeafNode(tree, kp.leafNode)
-    }
-
-    const { signature, framedContent } = await createContentCommitSignature(
-        state.groupContext,
-        'mls_public_message',
-        {
-            proposals: keyPackages.map((keyPackage) => ({
-                proposalOrRefType: 'proposal' as const,
-                proposal: { proposalType: 'add', add: { keyPackage } },
-            })),
-            path: undefined,
-        },
-        { senderType: 'member', leafIndex: state.privatePath.leafIndex },
-        new Uint8Array(),
-        state.signaturePrivateKey,
-        impl.signature,
-    )
-    const groupContext = await nextEpochContext(
-        state.groupContext,
-        'mls_public_message',
-        framedContent,
-        signature,
-        await treeHashRoot(tree, impl.hash),
-        state.confirmationTag,
-        impl.hash,
-    )
-    // no path and no PSKs: both secrets are all-zero
-    const epoch = await initializeEpoch(
-        state.keySchedule.initSecret,
-        new Uint8Array(impl.kdf.size),
-        groupContext,
-        new Uint8Array(impl.kdf.size),
-        impl.kdf,
-    )
-    const confirmationTag = await createConfirmationTag(
-        epoch.keySchedule.confirmationKey,
-        groupContext.confirmedTranscriptHash,
-        impl.hash,
-    )
-    const publicMessage = await protectPublicMessage(
-        state.keySchedule.membershipKey,
-        state.groupContext,
-        {
-            wireformat: 'mls_public_message',
-            content: framedContent,
-            auth: { contentType: 'commit', signature, confirmationTag },
-        },
-        impl,
-    )
-
-    const groupInfo = await createGroupInfoWithRatchetTree(groupContext,
-        confirmationTag, state, tree, [], impl)
-    const encryptedGroupInfo = await encryptGroupInfo(groupInfo,
-        epoch.welcomeSecret, impl)
-    const secrets = await Promise.all(keyPackages.map(async (kp) => {
-        const egs = await encryptGroupSecrets(
-            await impl.hpke.importPublicKey(kp.initKey),
-            encryptedGroupInfo,
-            {
-                joinerSecret: epoch.joinerSecret,
-                pathSecret: undefined,
-                psks: [],
-            },
-            impl.hpke,
-        )
-        return {
-            newMember: await makeKeyPackageRef(kp, impl.hash),
-            encryptedGroupSecrets: { kemOutput: egs.enc, ciphertext: egs.ct },
-        }
-    }))
-
-    return {
-        commit: {
-            wireformat: 'mls_public_message',
-            version: 'mls10',
-            publicMessage,
-        },
-        welcome: {
-            cipherSuite: groupContext.cipherSuite,
-            secrets,
-            encryptedGroupInfo,
-        },
-    }
 }
 
 /**

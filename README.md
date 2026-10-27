@@ -43,6 +43,7 @@ which means it is usable in the browser.
     + [Key Rotation Example Code](#key-rotation-example-code)
   * [Persistence](#persistence)
     + [`indexedDB` Helpers](#indexeddb-helpers)
+    + [Deleting Secrets](#deleting-secrets)
   * [Catching Up](#catching-up)
     + [Catch Up Example](#catch-up-example)
 - [Encrypted attachments](#encrypted-attachments)
@@ -69,10 +70,12 @@ which means it is usable in the browser.
 - [Defaults](#defaults)
   * [Incoming message callback](#incoming-message-callback)
   * [Optional Ciphersuite Dependencies](#optional-ciphersuite-dependencies)
+  * [Post-quantum ciphersuites](#post-quantum-ciphersuites)
 - [Some Terms](#some-terms)
   * [Leaf-node Keypair](#leaf-node-keypair)
   * [Commits and Proposals](#commits-and-proposals)
     + [Proposal](#proposal)
+    + [Update proposals](#update-proposals)
     + [Pending proposals](#pending-proposals)
     + [Commit](#commit)
   * [Key Schedule](#key-schedule)
@@ -807,6 +810,50 @@ function loadState (
 
 ---
 
+#### Deleting Secrets
+
+`ClientState` is an immutable value: every operation returns a new state
+and leaves the one you passed in untouched, because you might still need
+it (a failed save, a lost commit, a retry). So the library never wipes a
+secret the input state holds. Forward secrecy then depends on the old
+state being dropped and garbage collected, which JavaScript does not
+promise to do promptly, and does not zero the memory when it does.
+
+To wipe them yourself, read `consumed`. Every operation that returns a
+new state also returns `consumed`: the secret buffers the input state
+references and the new state does not. That is the previous epoch's
+init secret and key schedule after a commit, a message key ratcheted
+past, a retained epoch dropped under `KeyRetentionConfig`, a private
+key the commit replaced. A buffer the new state still uses is never
+listed, so wiping the list cannot break the new state.
+
+The results that carry it: `createCommit` (and `reinitGroup`),
+`createProposal`, `createUpdateProposal`, `createApplicationMessage`,
+and every branch of
+`processMessage`, `processPrivateMessage` and `processPublicMessage`.
+
+Wipe **after** the new state is persisted, not before. Until the save
+succeeds the old state is the only copy of your membership. Once it is
+wiped, the old state is unusable: drop it.
+
+```ts
+const { newState, privateMessage, consumed } =
+    await createApplicationMessage(aliceState, message, cipherSuite)
+
+await saveState(groupId, newState)  // persist first
+for (const buffer of consumed) buffer.fill(0)  // then wipe
+aliceState = newState  // the old state is unusable now
+```
+
+`branchGroup` and `reinitCreateNewGroup` always return an empty list.
+They create a new group without superseding the state you pass them:
+a branch leaves the old group running, and a suspended state still
+decrypts application messages from its earlier epochs. Drop that state
+when you are done with the old group.
+
+A non-extractable `CryptoKey` is not a buffer and is never listed. Its
+key material is out of reach of the page in any case.
+
 ### Catching Up
 
 In the [Persistence](#persistence) section, we mentioned feeding past messages
@@ -1511,6 +1558,13 @@ a Welcome.
 `acceptAll` accepts everything, including a `new_member_proposal`. Pass
 it only if your application deliberately allows open self-add.
 
+A commit reaches the callback with its `committer`, the same
+`{ senderType, leafIndex }` that `processMessage` reports once the
+commit is accepted, so a commit can be refused by who sent it. For a
+`member` committer, the credential is the leaf at `leafIndex` in the
+receiver's current ratchet tree. A rejected commit leaves the state
+where it was.
+
 ### Optional Ciphersuite Dependencies
 
 Non-default ciphersuites pull in extra packages that are declared as
@@ -1527,6 +1581,24 @@ optional peer dependencies -- install the ones you need, or you'll hit a
 ```sh
 npm i -S @noble/curves @noble/post-quantum @hpke/ml-kem @hpke/hybridkem-x-wing
 ```
+
+### Post-quantum ciphersuites
+
+The twelve post-quantum ciphersuites (the `MLKEM` and `XWING` names in
+`ciphersuites`) are not IANA-registered. They use private-use code
+points, `0xf007` to `0xf012`, which are the ones ts-mls 2.x assigns to
+the same names, so a post-quantum group can mix the two
+implementations.
+
+Earlier releases numbered these suites `0xF001` to `0xF00C`. A
+KeyPackage, Welcome or GroupInfo encoded by one of those releases
+under a post-quantum suite decodes as an unknown suite, or as a
+different one, after the upgrade. A persisted
+`ClientState` stores its suite by name and still loads, but the
+encoded group context, which member signatures and every key
+derivation cover, now carries the new code point, so members on
+either side of the upgrade disagree. Recreate post-quantum groups when
+upgrading. The seven IANA suites are unaffected.
 
 ---
 
@@ -1569,6 +1641,50 @@ shows the variants, each corresponding to one kind of change:
   (version/ciphersuite/extensions)
 * ExternalInit -- how an external joiner enters via an external commit
 * GroupContextExtensions -- change the group's extension set
+
+#### Update proposals
+
+A member rotates its own leaf with `createUpdateProposal`, which signs
+an Update carrying a fresh HPKE key and sends it like any proposal:
+
+```ts
+import { createUpdateProposal } from '@vanishing.page/webcrypto-mls'
+
+const { newState, message, consumed } =
+    await createUpdateProposal(bobState, false, cipherSuite)
+```
+
+The new private key stays in `newState`, so persist that state, not the
+one you passed in. When another member commits the Update, the commit
+encrypts bob's share of the new epoch to that key, and `processMessage`
+installs it. A commit that leaves the Update out drops the key and
+lists it in `consumed`. So does bob's own commit: RFC 9420 forbids a
+committer to include its own Update, and the commit's UpdatePath
+rotates bob's leaf instead.
+
+The Update can change more than the HPKE key. A `LeafNodePatch` in
+the options replaces the credential, the signature key pair, the
+capabilities or the leaf extensions:
+
+```ts
+const keys = await cipherSuite.signature.keygen()
+const { newState, message } = await createUpdateProposal(
+    bobState,
+    false,
+    cipherSuite,
+    { leafNodePatch: { signatureKeyPair: keys, credential: newCredential } },
+)
+```
+
+Bob's own `AuthenticationService` checks the new leaf, with his current
+credential as `priorCredential`, before anything is signed, as every
+peer will. The proposal itself, and every message bob sends until a
+commit applies it, is signed with the key in the tree. The new
+signature private key is held beside the pending HPKE key: a commit
+that applies the Update installs it, and one that leaves the Update out
+drops it and lists it in `consumed` (when the key is bytes rather than
+a `CryptoKey`). Widening the capabilities this way is how a group comes
+to require a capability its members did not join with.
 
 #### Pending proposals
 

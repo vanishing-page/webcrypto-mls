@@ -1,4 +1,4 @@
-import { DependencyError } from '../../../mls-error.js'
+import { DependencyError, UsageError } from '../../../mls-error.js'
 import type { SignatureAlgorithm, Signature } from '../../signature.js'
 import {
     isSmallOrderEd25519,
@@ -65,7 +65,13 @@ export async function makeNobleSignatureImpl (alg:SignatureAlgorithm):Promise<Si
                 const { p256 } = await import('@noble/curves/nist.js')
                 return {
                     async sign (signKey, message) {
-                        return p256.sign(message, signKey as Uint8Array, { prehash: true, format: 'der', lowS: false })
+                        return withFieldLengthKey(
+                            signKey as Uint8Array,
+                            32,
+                            (key) => p256.sign(message, key, {
+                                prehash: true, format: 'der', lowS: false
+                            })
+                        )
                     },
                     async verify (publicKey, message, signature) {
                         return p256.verify(signature, message, publicKey, { prehash: true, format: 'der', lowS: false })
@@ -88,7 +94,13 @@ export async function makeNobleSignatureImpl (alg:SignatureAlgorithm):Promise<Si
                 const { p384 } = await import('@noble/curves/nist.js')
                 return {
                     async sign (signKey, message) {
-                        return p384.sign(message, signKey as Uint8Array, { prehash: true, format: 'der', lowS: false })
+                        return withFieldLengthKey(
+                            signKey as Uint8Array,
+                            48,
+                            (key) => p384.sign(message, key, {
+                                prehash: true, format: 'der', lowS: false
+                            })
+                        )
                     },
                     async verify (publicKey, message, signature) {
                         return p384.verify(signature, message, publicKey, { prehash: true, format: 'der', lowS: false })
@@ -111,10 +123,12 @@ export async function makeNobleSignatureImpl (alg:SignatureAlgorithm):Promise<Si
                 const { p521 } = await import('@noble/curves/nist.js')
                 return {
                     async sign (signKey, message) {
-                        return p521.sign(
-                            message,
-                            normalizeP521PrivateKey(signKey as Uint8Array),
-                            { prehash: true, format: 'der', lowS: false }
+                        return withFieldLengthKey(
+                            signKey as Uint8Array,
+                            66,
+                            (key) => p521.sign(message, key, {
+                                prehash: true, format: 'der', lowS: false
+                            })
                         )
                     },
                     async verify (publicKey, message, signature) {
@@ -159,10 +173,30 @@ export async function makeNobleSignatureImpl (alg:SignatureAlgorithm):Promise<Si
     }
 }
 
-function normalizeP521PrivateKey (key:Uint8Array):Uint8Array {
-    if (key.length >= 66) return key
+/**
+ * Run `sign` with a P-curve private key at exactly the field length. A
+ * source that trims leading zero bytes yields a shorter key, which noble
+ * rejects, so it is left-padded into a copy this call owns and wipes. The
+ * caller's key is never written to.
+ */
+function withFieldLengthKey (
+    key:Uint8Array,
+    fieldLength:number,
+    sign:(key:Uint8Array) => Uint8Array
+):Uint8Array {
+    if (key.length > fieldLength) {
+        throw new UsageError(
+            `Private key is ${key.length} bytes, longer than the ` +
+            `${fieldLength}-byte field length`
+        )
+    }
+    if (key.length === fieldLength) return sign(key)
 
-    const normalized = new Uint8Array(66)
-    normalized.set(key, normalized.length - key.length)
-    return normalized
+    const padded = new Uint8Array(fieldLength)
+    try {
+        padded.set(key, fieldLength - key.length)
+        return sign(padded)
+    } finally {
+        padded.fill(0)
+    }
 }

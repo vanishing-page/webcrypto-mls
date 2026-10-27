@@ -20,20 +20,17 @@ import {
     encodeLeafNode,
     signLeafNodeCommit,
 } from './leaf-node.js'
+import type { ResolvedLeafNodePatch } from './leaf-node-patch.js'
 import { calculateParentHash } from './parent-hash.js'
-import type {
-    Node,
-    RatchetTree
-} from './ratchet-tree.js'
+import type { RatchetTree } from './ratchet-tree.js'
 import {
     filteredDirectPath,
     filteredDirectPathAndCopathResolution,
     getHpkePublicKey
 } from './ratchet-tree.js'
-import { treeHashRoot } from './tree-hash.js'
+import { carryTreeHashes, treeHashRoot } from './tree-hash.js'
 import type { LeafIndex, NodeIndex } from './treemath.js'
 import { isAncestor, leafToNodeIndex } from './treemath.js'
-import { updateArray } from './util/array.js'
 import { constantTimeEqual } from './util/constant-time-compare.js'
 import type { HPKECiphertext } from './hpke-ciphertext.js'
 import { decodeHpkeCiphertext, encodeHpkeCiphertext } from './hpke-ciphertext.js'
@@ -89,6 +86,15 @@ export function filterNewLeaves (resolution:NodeIndex[], excludeNodes:NodeIndex[
     return resolution.filter((i) => !set.has(i))
 }
 
+// at most this many HPKE encryptions run at once when building an
+// UpdatePath, so a large group does not start one per member together
+const MAX_CONCURRENT_ENCRYPTIONS = 512
+
+/**
+ * Builds the sender's UpdatePath and the tree it produces. Also returns
+ * the new tree's hash, which the caller needs for the next epoch's group
+ * context and must not compute a second time.
+ */
 export async function createUpdatePath (
     originalTree:RatchetTree,
     senderLeafIndex:LeafIndex,
@@ -96,8 +102,18 @@ export async function createUpdatePath (
     signaturePrivateKey:SignatureSecretKey,
     cs:CiphersuiteImpl,
     excludeNodes:NodeIndex[] = [],
-):Promise<[RatchetTree, UpdatePath, PathSecret[], PrivateKey]> {
-    const originalLeafNode = originalTree[leafToNodeIndex(senderLeafIndex)]
+    // changes to the sender's own leaf; its new signature key, if any,
+    // signs the leaf, since peers verify the leaf against the key it carries
+    patch:ResolvedLeafNodePatch = {},
+):Promise<[
+    RatchetTree,
+    UpdatePath,
+    PathSecret[],
+    PrivateKey,
+    Uint8Array,
+]> {
+    const senderNodeIndex = leafToNodeIndex(senderLeafIndex)
+    const originalLeafNode = originalTree[senderNodeIndex]
     if (originalLeafNode === undefined || originalLeafNode.nodeType === 'parent') { throw new InternalError('Expected non-blank leaf node') }
 
     const pathSecret = cs.rng.randomBytes(cs.kdf.size)
@@ -115,37 +131,54 @@ export async function createUpdatePath (
         ({ nodeIndex, resolution }) => ({ nodeIndex, resolution: filterNewLeaves(resolution, excludeNodes) }),
     )
 
-    const [ps, updatedTree]:[PathSecret[], RatchetTree] = await applyInitialTreeUpdate(
+    // one copy, owned by this call: every write below replaces a slot of
+    // this array with a new node and never touches a node object that
+    // the input tree, still held by the caller, shares with it
+    const tree = originalTree.slice()
+    // seeded before the first parent hash, which hashes the copath
+    // subtrees: they are the same in both arrays, and only the sender's
+    // leaf and direct path, which the cache leaves out, are written below
+    carryTreeHashes(originalTree, tree, [senderLeafIndex])
+
+    const ps = await applyInitialTreeUpdate(
         fdp,
         pathSecret,
         senderLeafIndex,
-        originalTree,
+        tree,
         cs,
     )
 
-    const treeWithHashes = await insertParentHashes(fdp, updatedTree, cs)
+    await insertParentHashes(fdp, tree, cs)
 
-    const leafParentHash = await calculateParentHash(treeWithHashes, leafToNodeIndex(senderLeafIndex), cs.hash)
+    const leafParentHash = await calculateParentHash(
+        tree,
+        senderNodeIndex,
+        cs.hash,
+    )
 
     const updatedLeafNodeTbs:LeafNodeTBSCommit = {
         leafNodeSource: 'commit',
         hpkePublicKey: await cs.hpke.exportPublicKey(leafKeypair.publicKey),
-        extensions: originalLeafNode.leaf.extensions,
-        capabilities: originalLeafNode.leaf.capabilities,
-        credential: originalLeafNode.leaf.credential,
-        signaturePublicKey: originalLeafNode.leaf.signaturePublicKey,
+        extensions: patch.extensions ?? originalLeafNode.leaf.extensions,
+        capabilities:
+            patch.capabilities ?? originalLeafNode.leaf.capabilities,
+        credential: patch.credential ?? originalLeafNode.leaf.credential,
+        signaturePublicKey:
+            patch.signature?.publicKey ??
+            originalLeafNode.leaf.signaturePublicKey,
         parentHash: leafParentHash[0],
         info: { leafNodeSource: 'commit', groupId: groupContext.groupId, leafIndex: senderLeafIndex },
     }
 
-    const updatedLeafNode = await signLeafNodeCommit(updatedLeafNodeTbs, signaturePrivateKey, cs.signature)
+    const updatedLeafNode = await signLeafNodeCommit(
+        updatedLeafNodeTbs,
+        patch.signature?.signKey ?? signaturePrivateKey,
+        cs.signature,
+    )
 
-    const finalTree = updateArray(treeWithHashes, leafToNodeIndex(senderLeafIndex), {
-        nodeType: 'leaf',
-        leaf: updatedLeafNode,
-    })
+    tree[senderNodeIndex] = { nodeType: 'leaf', leaf: updatedLeafNode }
 
-    const updatedTreeHash = await treeHashRoot(finalTree, cs.hash)
+    const updatedTreeHash = await treeHashRoot(tree, cs.hash)
 
     const updatedGroupContext:GroupContext = {
         ...groupContext,
@@ -157,8 +190,12 @@ export async function createUpdatePath (
     const pathSecretsToDistribute = ps.slice(0, ps.length - 1).reverse()
 
     // we have to pass the old tree here since the receiver won't have the updated public keys yet
-    const updatePathNodes:UpdatePathNode[] = await Promise.all(
-        pathSecretsToDistribute.map(encryptSecretsForPath(originalTree, finalTree, updatedGroupContext, cs)),
+    const updatePathNodes = await encryptSecretsForPath(
+        pathSecretsToDistribute,
+        originalTree,
+        tree,
+        updatedGroupContext,
+        cs,
     )
 
     const updatePath:UpdatePath = { leafNode: updatedLeafNode, nodes: updatePathNodes }
@@ -170,59 +207,96 @@ export async function createUpdatePath (
     // predictable constant that a removed member could reconstruct.
     const pathSecrets = pathSecretsToDistribute.length > 0 ? pathSecretsToDistribute : [ps[0]!]
 
-    return [finalTree, updatePath, pathSecrets, leafKeypair.privateKey] as const
+    return [
+        tree,
+        updatePath,
+        pathSecrets,
+        leafKeypair.privateKey,
+        updatedTreeHash,
+    ] as const
 }
 
-function encryptSecretsForPath (
+/**
+ * Encrypts each path secret to its copath resolution. The group context
+ * is encoded once for the whole path, and the encryptions run in batches
+ * of at most MAX_CONCURRENT_ENCRYPTIONS, in wire order.
+ */
+async function encryptSecretsForPath (
+    pathSecrets:PathSecret[],
     originalTree:RatchetTree,
     updatedTree:RatchetTree,
     updatedGroupContext:GroupContext,
     cs:CiphersuiteImpl,
-):(pathSecret:PathSecret) => Promise<UpdatePathNode> {
-    return async (pathSecret) => {
-        const key = getHpkePublicKey(updatedTree[pathSecret.nodeIndex]!)
+):Promise<UpdatePathNode[]> {
+    const context = encodeGroupContext(updatedGroupContext)
 
-        const res:UpdatePathNode = {
-            hpkePublicKey: key,
-            encryptedPathSecret: await Promise.all(
-                pathSecret.sendTo.map(async (nodeIndex) => {
-                    const { ct, enc } = await encryptWithLabel(
-                        await cs.hpke.importPublicKey(getHpkePublicKey(originalTree[nodeIndex]!)),
-                        'UpdatePathNode',
-                        encodeGroupContext(updatedGroupContext),
-                        pathSecret.secret,
-                        cs.hpke,
-                    )
-                    return { ciphertext: ct, kemOutput: enc }
-                }),
-            ),
-        }
-        return res
+    const jobs = pathSecrets.flatMap((pathSecret) => {
+        return pathSecret.sendTo.map((nodeIndex) => ({
+            secret: pathSecret.secret,
+            recipientKey: getHpkePublicKey(originalTree[nodeIndex]!),
+        }))
+    })
+
+    const ciphertexts:HPKECiphertext[] = []
+    for (
+        let start = 0;
+        start < jobs.length;
+        start += MAX_CONCURRENT_ENCRYPTIONS
+    ) {
+        const batch = jobs.slice(start, start + MAX_CONCURRENT_ENCRYPTIONS)
+        const encrypted = await Promise.all(batch.map(async (job) => {
+            const { ct, enc } = await encryptWithLabel(
+                await cs.hpke.importPublicKey(job.recipientKey),
+                'UpdatePathNode',
+                context,
+                job.secret,
+                cs.hpke,
+            )
+            return { ciphertext: ct, kemOutput: enc }
+        }))
+        ciphertexts.push(...encrypted)
     }
-}
 
-async function insertParentHashes (
-    fdp:{ resolution:NodeIndex[]; nodeIndex:NodeIndex }[],
-    updatedTree:RatchetTree,
-    cs:CiphersuiteImpl,
-) {
-    return await fdp
-        .slice()
-        .reverse()
-        .reduce(async (treePromise, { nodeIndex }) => {
-            const tree = await treePromise
-            const parentHash = await calculateParentHash(tree, nodeIndex, cs.hash)
-            const currentNode = tree[nodeIndex]
-            if (currentNode === undefined || currentNode.nodeType === 'leaf') { throw new InternalError('Expected non-blank parent node') }
-            const updatedNode:Node = { nodeType: 'parent', parent: { ...currentNode.parent, parentHash: parentHash[0] } }
-
-            return updateArray(tree, nodeIndex, updatedNode)
-        }, Promise.resolve(updatedTree))
+    let offset = 0
+    return pathSecrets.map((pathSecret) => {
+        const count = pathSecret.sendTo.length
+        const node:UpdatePathNode = {
+            hpkePublicKey: getHpkePublicKey(
+                updatedTree[pathSecret.nodeIndex]!
+            ),
+            encryptedPathSecret: ciphertexts.slice(offset, offset + count),
+        }
+        offset += count
+        return node
+    })
 }
 
 /**
- * Inserts new public keys from a single secret in the update path and returns the resulting tree along with the secrets along the path
- * Note that the path secrets are returned root to leaf
+ * Writes the parent hash of each node on the filtered direct path into
+ * `tree`, root first. `tree` must be an array the caller owns.
+ */
+async function insertParentHashes (
+    fdp:{ resolution:NodeIndex[]; nodeIndex:NodeIndex }[],
+    tree:RatchetTree,
+    cs:CiphersuiteImpl,
+):Promise<void> {
+    for (const { nodeIndex } of fdp.slice().reverse()) {
+        const parentHash = await calculateParentHash(tree, nodeIndex, cs.hash)
+        const currentNode = tree[nodeIndex]
+        if (currentNode === undefined || currentNode.nodeType === 'leaf') {
+            throw new InternalError('Expected non-blank parent node')
+        }
+        tree[nodeIndex] = {
+            nodeType: 'parent',
+            parent: { ...currentNode.parent, parentHash: parentHash[0] },
+        }
+    }
+}
+
+/**
+ * Writes the new public key derived from a single secret into each node
+ * of the update path, in `tree`, which must be an array the caller owns,
+ * and returns the secrets along the path, root to leaf.
  */
 async function applyInitialTreeUpdate (
     fdp:{ resolution:number[]; nodeIndex:number }[],
@@ -230,32 +304,43 @@ async function applyInitialTreeUpdate (
     senderLeafIndex:LeafIndex,
     tree:RatchetTree,
     cs:CiphersuiteImpl,
-):Promise<[PathSecret[], RatchetTree]> {
-    return await fdp.reduce(
-        async (acc, { nodeIndex, resolution }) => {
-            const [pathSecrets, tree] = await acc
-            const lastPathSecret = pathSecrets[0]!
-            const nextPathSecret = await deriveSecret(lastPathSecret.secret, 'path', cs.kdf)
-            const nextNodeSecret = await deriveSecret(nextPathSecret, 'node', cs.kdf)
-            const { publicKey } = await cs.hpke.deriveKeyPair(nextNodeSecret)
-            nextNodeSecret.fill(0)
+):Promise<PathSecret[]> {
+    const pathSecrets:PathSecret[] = [{
+        secret: pathSecret,
+        nodeIndex: leafToNodeIndex(senderLeafIndex),
+        sendTo: [],
+    }]
+    for (const { nodeIndex, resolution } of fdp) {
+        const lastPathSecret = pathSecrets[0]!
+        const nextPathSecret = await deriveSecret(
+            lastPathSecret.secret,
+            'path',
+            cs.kdf,
+        )
+        const nextNodeSecret = await deriveSecret(
+            nextPathSecret,
+            'node',
+            cs.kdf,
+        )
+        const { publicKey } = await cs.hpke.deriveKeyPair(nextNodeSecret)
+        nextNodeSecret.fill(0)
 
-            const updatedTree = updateArray(tree, nodeIndex, {
-                nodeType: 'parent',
-                parent: {
-                    hpkePublicKey: await cs.hpke.exportPublicKey(publicKey),
-                    parentHash: new Uint8Array(),
-                    unmergedLeaves: [],
-                },
-            })
+        tree[nodeIndex] = {
+            nodeType: 'parent',
+            parent: {
+                hpkePublicKey: await cs.hpke.exportPublicKey(publicKey),
+                parentHash: new Uint8Array(),
+                unmergedLeaves: [],
+            },
+        }
 
-            return [[{ nodeIndex, secret: nextPathSecret, sendTo: resolution }, ...pathSecrets], updatedTree]
-        },
-        Promise.resolve([[{ secret: pathSecret, nodeIndex: leafToNodeIndex(senderLeafIndex), sendTo: [] }], tree] as [
-            PathSecret[],
-            RatchetTree,
-        ]),
-    )
+        pathSecrets.unshift({
+            nodeIndex,
+            secret: nextPathSecret,
+            sendTo: resolution,
+        })
+    }
+    return pathSecrets
 }
 
 export async function applyUpdatePath (
@@ -312,6 +397,9 @@ export async function applyUpdatePath (
     }
 
     const copy = tree.slice()
+    // as in createUpdatePath: only the sender's leaf and direct path are
+    // written below, and the carried cache holds neither
+    carryTreeHashes(tree, copy, [senderLeafIndex])
 
     copy[leafToNodeIndex(senderLeafIndex)] = { nodeType: 'leaf', leaf: path.leafNode }
 

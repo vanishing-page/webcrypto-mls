@@ -208,6 +208,27 @@ export async function signLeafNodeCommit (
     return { ...tbs, signature: await signWithLabel(signaturePrivateKey, 'LeafNodeTBS', encodeLeafNodeTBS(tbs), sig) }
 }
 
+export type LeafNodeTBSUpdate = LeafNodeData &
+    LeafNodeInfoUpdate &
+    LeafNodeExtensions &
+    { info:GroupIdLeafIndex }
+
+export async function signLeafNodeUpdate (
+    tbs:LeafNodeTBSUpdate,
+    signaturePrivateKey:SignatureSecretKey,
+    sig:Signature,
+):Promise<LeafNodeUpdate> {
+    return {
+        ...tbs,
+        signature: await signWithLabel(
+            signaturePrivateKey,
+            'LeafNodeTBS',
+            encodeLeafNodeTBS(tbs),
+            sig,
+        ),
+    }
+}
+
 export async function signLeafNodeKeyPackage (
     tbs:LeafNodeTBSKeyPackage,
     signaturePrivateKey:SignatureSecretKey,

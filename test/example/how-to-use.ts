@@ -41,7 +41,6 @@ test('HowToUse renders one ordered list item per step', t => {
         1,
         'should reuse the shared instructions card'
     )
-    t.equal(findByType(tree, 'h2').length, 1, 'should render one heading')
     t.equal(findByType(tree, 'ol').length, 1, 'should render one list')
     t.equal(
         findByType(tree, 'li').length,

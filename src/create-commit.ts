@@ -1,3 +1,4 @@
+import { consumedSecrets } from './consumed.js'
 import { emptyUnappliedProposals } from './unapplied-proposals.js'
 import type {
     ClientState,
@@ -11,7 +12,10 @@ import {
     exportSecret,
     checkCanSendHandshakeMessages,
     validateExternalSenders,
-    validateProposalOnReceipt
+    validateProposalOnReceipt,
+    requiredCapabilitiesError,
+    validateHpkePublicKey,
+    validateLeafNodeUpdateOrCommit
 } from './client-state.js'
 import type { AuthenticatedContentCommit } from './authenticated-content.js'
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
@@ -75,6 +79,11 @@ import { base64ToBytes, bytesToBase64 } from './util/byte-array.js'
 import type { Welcome, EncryptedGroupSecrets } from './welcome.js'
 import { encryptGroupInfo, encryptGroupSecrets } from './welcome.js'
 import {
+    decodeVarLenData,
+    encodeVarLenData,
+} from './codec/variable-length.js'
+import {
+    CodecError,
     CryptoVerificationError,
     UsageError,
     ValidationError,
@@ -83,6 +92,8 @@ import type { ClientConfig } from './client-config.js'
 import { defaultClientConfig } from './client-config.js'
 import type { Extension } from './extension.js'
 import { extensionsSupportedByCapabilities } from './extension.js'
+import type { LeafNodePatch } from './leaf-node-patch.js'
+import { resolveLeafNodePatch } from './leaf-node-patch.js'
 
 export interface MLSContext {
     state:ClientState
@@ -93,7 +104,19 @@ export interface MLSContext {
 export interface CreateCommitResult {
     newState:ClientState
     welcome:Welcome | undefined
+    /**
+     * `welcome` wrapped as an `MLSMessage` with the `mls_welcome` wire
+     * format, ready for `encodeMlsMessage`. Undefined exactly when
+     * `welcome` is.
+     */
+    welcomeMessage:MLSMessage | undefined
     commit:MLSMessage
+    /**
+     * The secret buffers the input state references and `newState` does
+     * not. Wipe them once `newState` is persisted; the input state is
+     * unusable afterwards.
+     */
+    consumed:Uint8Array[]
 }
 
 export interface CreateCommitOptions {
@@ -102,6 +125,12 @@ export interface CreateCommitOptions {
     ratchetTreeExtension?:boolean
     groupInfoExtensions?:Extension[]
     authenticatedData?:Uint8Array
+    /**
+     * Changes to the committer's own leaf, carried in the commit's
+     * UpdatePath. A commit that would otherwise have no UpdatePath gets
+     * one. The new state signs with the patch's signature key, if any.
+     */
+    leafNodePatch?:LeafNodePatch
 }
 
 export async function createCommit (context:MLSContext, options?:CreateCommitOptions):Promise<CreateCommitResult> {
@@ -112,14 +141,19 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
         ratchetTreeExtension = false,
         authenticatedData = new Uint8Array(),
         groupInfoExtensions = [],
+        leafNodePatch,
     } = options ?? {}
 
     checkCanSendHandshakeMessages(state)
 
+    const patch = leafNodePatch === undefined ?
+        undefined :
+        await resolveLeafNodePatch(leafNodePatch, cipherSuite)
+
     const wireformat = wireAsPublicMessage ? 'mls_public_message' : 'mls_private_message'
 
     const allProposals = bundleAllProposals(
-        await filterPendingProposals(state, cipherSuite),
+        await filterPendingProposals(state, extraProposals, cipherSuite),
         extraProposals,
     )
 
@@ -141,23 +175,48 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
             ? res.additionalResult.addedLeafNodes.map((l) => leafToNodeIndex(l[0]))
             : []
 
-    const updatedExtensions =
-        res.additionalResult.kind === 'memberCommit' && res.additionalResult.hasGroupContextExtensionsProposal
-            ? res.additionalResult.extensions
-            : state.groupContext.extensions
+    const groupContextWithExtensions =
+        res.additionalResult.kind === 'memberCommit' ?
+            res.additionalResult.groupContext :
+            state.groupContext
 
-    const groupContextWithExtensions = { ...state.groupContext, extensions: updatedExtensions }
+    const [tree, updatePath, pathSecrets, newPrivateKey, pathTreeHash] =
+        res.needsUpdatePath || patch !== undefined
+            ? await createUpdatePath(
+                res.tree,
+                toLeafIndex(state.privatePath.leafIndex),
+                groupContextWithExtensions,
+                state.signaturePrivateKey,
+                cipherSuite,
+                addedLeafNodeIndices,
+                patch,
+            )
+            : [res.tree, undefined, [] as PathSecret[], undefined, undefined]
 
-    const [tree, updatePath, pathSecrets, newPrivateKey] = res.needsUpdatePath
-        ? await createUpdatePath(
-            res.tree,
-            toLeafIndex(state.privatePath.leafIndex),
+    // a patched leaf is checked exactly as a peer will check it on
+    // receipt: against the post-proposal tree, the post-GCE context, and
+    // with the credential it replaces as priorCredential
+    if (patch !== undefined && updatePath !== undefined) {
+        const err = await validateLeafNodeUpdateOrCommit(
+            updatePath.leafNode,
+            state.privatePath.leafIndex,
             groupContextWithExtensions,
-            state.signaturePrivateKey,
-            cipherSuite,
-            addedLeafNodeIndices,
+            res.tree,
+            state.clientConfig.authService,
+            cipherSuite.signature,
+            cipherSuite.hpke,
         )
-        : [res.tree, undefined, [] as PathSecret[], undefined]
+        if (err !== undefined) {
+            zeroPathSecretsArray(pathSecrets)
+            throw err
+        }
+    }
+
+    // the commit itself is signed with the old key, which is the one the
+    // receivers' current tree holds; everything signed for the new epoch
+    // (the GroupInfo, later messages) uses the new one
+    const signaturePrivateKey =
+        patch?.signature?.signKey ?? state.signaturePrivateKey
 
     const lastPathSecret = pathSecrets.at(-1)
 
@@ -176,7 +235,8 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
         cipherSuite.signature,
     )
 
-    const treeHash = await treeHashRoot(tree, cipherSuite.hash)
+    const treeHash =
+        pathTreeHash ?? await treeHashRoot(tree, cipherSuite.hash)
 
     const updatedGroupContext = await nextEpochContext(
         groupContextWithExtensions,
@@ -221,7 +281,7 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
         ratchetTreeExtension,
         updatedGroupContext,
         confirmationTag,
-        state,
+        { ...state, signaturePrivateKey },
         tree,
         cipherSuite,
         epochSecrets,
@@ -269,6 +329,9 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
     )
     epochSecrets.encryptionSecret.fill(0)
 
+    // pendingUpdateKeys is left out on purpose: the committer's own
+    // pending Update is never in its commit (RFC 9420 12.2), so its keys
+    // are dropped here and reported through `consumed`
     const newState:ClientState = {
         groupContext: updatedGroupContext,
         ratchetTree: tree,
@@ -278,12 +341,22 @@ export async function createCommit (context:MLSContext, options?:CreateCommitOpt
         unappliedProposals: emptyUnappliedProposals(),
         historicalReceiverData: addHistoricalReceiverData(state),
         confirmationTag,
-        signaturePrivateKey: state.signaturePrivateKey,
+        signaturePrivateKey,
         groupActiveState,
         clientConfig: state.clientConfig,
     }
 
-    return { newState, welcome, commit }
+    const welcomeMessage:MLSMessage | undefined = welcome === undefined ?
+        undefined :
+        { version: 'mls10', wireformat: 'mls_welcome', welcome }
+
+    return {
+        newState,
+        welcome,
+        welcomeMessage,
+        commit,
+        consumed: consumedSecrets(state, newState),
+    }
 }
 
 function bundleAllProposals (
@@ -312,6 +385,7 @@ function bundleAllProposals (
  */
 async function filterPendingProposals (
     state:ClientState,
+    extraProposals:Proposal[],
     cs:CiphersuiteImpl,
 ):Promise<Uint8Array[]> {
     const own = state.privatePath.leafIndex
@@ -324,7 +398,7 @@ async function filterPendingProposals (
     let tree = state.ratchetTree
     const removed = new Set<number>()
     const seen = new Set<string>()
-    const kept:Uint8Array[] = []
+    const kept:[string, Proposal][] = []
 
     for (const [ref, { proposal, senderLeafIndex }] of ordered) {
         const encoded = bytesToBase64(encodeProposal(proposal))
@@ -352,10 +426,39 @@ async function filterPendingProposals (
         }
 
         seen.add(encoded)
-        kept.push(base64ToBytes(ref))
+        kept.push([ref, proposal])
     }
 
+    // The receipt check leaves required capabilities to commit time, so
+    // an Add or Update is held to the requirement this commit sets: its
+    // GroupContextExtensions proposal's, by value or kept, else the
+    // current one.
+    const extensions = extensionsAfterCommit(
+        state.groupContext.extensions,
+        [...kept.map(([, p]) => p), ...extraProposals],
+    )
+
     return kept
+        .filter(([, p]) => {
+            const leaf = p.proposalType === 'add' ?
+                p.add.keyPackage.leafNode :
+                p.proposalType === 'update' ?
+                    p.update.leafNode :
+                    undefined
+            return leaf === undefined ||
+                requiredCapabilitiesError(leaf, extensions) === undefined
+        })
+        .map(([ref]) => base64ToBytes(ref))
+}
+
+function extensionsAfterCommit (
+    current:Extension[],
+    proposals:Proposal[],
+):Extension[] {
+    const gce = proposals.filter(
+        (p) => p.proposalType === 'group_context_extensions')
+    if (gce.length === 0) return current
+    return gce.flatMap((p) => p.groupContextExtensions.extensions)
 }
 
 async function createWelcome (
@@ -468,13 +571,47 @@ export async function createGroupInfoWithRatchetTree (
     return gi
 }
 
+/**
+ * The `external_pub` extension data: RFC 9420 12.4.3.2 wraps the key in
+ * `struct { HPKEPublicKey external_pub; }`, and `HPKEPublicKey` is
+ * `opaque<V>`, so the key carries its variable-length prefix.
+ */
+async function encodeExternalPub (
+    state:ClientState,
+    cs:CiphersuiteImpl,
+):Promise<Uint8Array> {
+    const keyPair = await cs.hpke.deriveKeyPair(
+        state.keySchedule.externalSecret,
+    )
+    return encodeVarLenData(await cs.hpke.exportPublicKey(keyPair.publicKey))
+}
+
+/**
+ * Read the HPKE public key out of a peer's `external_pub` extension data.
+ * A missing, truncated, over-long or non-minimal prefix, or bytes after
+ * the key, is a `ValidationError`: the GroupInfo is peer input.
+ */
+export function decodeExternalPub (extensionData:Uint8Array):Uint8Array {
+    let decoded:[Uint8Array, number] | undefined
+    try {
+        decoded = decodeVarLenData(extensionData, 0)
+    } catch (err) {
+        if (!(err instanceof CodecError)) throw err
+    }
+    if (decoded === undefined || decoded[1] !== extensionData.length) {
+        throw new ValidationError(
+            'external_pub is not a length-prefixed HPKE public key',
+        )
+    }
+    return decoded[0]
+}
+
 export async function createGroupInfoWithExternalPub (
     state:ClientState,
     extensions:Extension[],
     cs:CiphersuiteImpl,
 ):Promise<GroupInfo> {
-    const externalKeyPair = await cs.hpke.deriveKeyPair(state.keySchedule.externalSecret)
-    const externalPub = await cs.hpke.exportPublicKey(externalKeyPair.publicKey)
+    const externalPub = await encodeExternalPub(state, cs)
 
     const gi = await createGroupInfo(
         state.groupContext,
@@ -494,8 +631,7 @@ export async function createGroupInfoWithExternalPubAndRatchetTree (
 ):Promise<GroupInfo> {
     const encodedTree = encodeRatchetTree(state.ratchetTree)
 
-    const externalKeyPair = await cs.hpke.deriveKeyPair(state.keySchedule.externalSecret)
-    const externalPub = await cs.hpke.exportPublicKey(externalKeyPair.publicKey)
+    const externalPub = await encodeExternalPub(state, cs)
 
     const gi = await createGroupInfo(
         state.groupContext,
@@ -628,9 +764,17 @@ export async function joinGroupExternal (
         ),
     )
 
-    const { enc, secret: initSecret } = await exportSecret(externalPub.extensionData, cs)
+    const externalPubKey = decodeExternalPub(externalPub.extensionData)
+    throwIfDefined(await validateHpkePublicKey(
+        externalPubKey,
+        groupInfo.groupContext,
+        cs.hpke,
+        'external_pub',
+    ))
+    const { enc, secret: initSecret } = await exportSecret(externalPubKey, cs)
 
-    const ratchetTree = ratchetTreeFromExtension(groupInfo) ?? tree
+    // a copy, for the reason `joinGroupWithGroupInfo` gives
+    const ratchetTree = ratchetTreeFromExtension(groupInfo) ?? tree?.slice()
 
     if (ratchetTree === undefined) throw new UsageError('No RatchetTree passed and no ratchet_tree extension')
 
@@ -678,7 +822,13 @@ export async function joinGroupExternal (
 
     const [treeWithNewLeafNode, newLeafNodeIndex] = addLeafNode(updatedTree, keyPackage.leafNode)
 
-    const [newTree, updatePath, pathSecrets, newPrivateKey] = await createUpdatePath(
+    const [
+        newTree,
+        updatePath,
+        pathSecrets,
+        newPrivateKey,
+        treeHash,
+    ] = await createUpdatePath(
         treeWithNewLeafNode,
         nodeToLeafIndex(newLeafNodeIndex),
         groupInfo.groupContext,
@@ -722,8 +872,6 @@ export async function joinGroupExternal (
         privateKeys.signaturePrivateKey,
         cs.signature,
     )
-
-    const treeHash = await treeHashRoot(newTree, cs.hash)
 
     const groupContext = await nextEpochContext(
         groupInfo.groupContext,

@@ -475,8 +475,9 @@ for (const cs of testCiphersuites()) {
                 georgeCredential,
                 defaultCapabilities(),
                 defaultLifetime(),
-                [georgeExtension],
+                [],
                 impl,
+                { leafExtensions: [georgeExtension] },
             )
 
             const addGeorge:Proposal = {

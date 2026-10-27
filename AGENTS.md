@@ -92,8 +92,11 @@ other exception: it consumes the built `dist/` by package name, from
 CommonJS and ESM, so it needs `npm run build` first. CI runs it in the
 `build` job, after the build, rather than in `test:checks`, which runs
 without one. Every other test imports `src/` and cannot see a defect
-that exists only in `dist/`. The CommonJS build depends on
-`scripts/cjs-specifiers.mjs`, chained after each `build-cjs*` step,
+that exists only in `dist/`. Its `ROOT_EXPORTS` list pins the error
+classes and byte helpers the package root must export; a new
+`MlsError` subclass goes in `src/index.ts` and in that list together.
+The CommonJS build depends on `scripts/cjs-specifiers.mjs`, chained
+after each `build-cjs*` step,
 because esbuild renames outputs to `.cjs` but leaves their relative
 `require`s pointing at `.js`, which is the ESM build.
 `scripts/cts.mjs` does the same for types: a `.d.cts` beside every
@@ -129,31 +132,13 @@ committed alongside `package.json`. Use `npm install` locally (it updates
 both) or `npm install --package-lock-only` to refresh the lockfile alone;
 never hand-edit it. Every dependency is a dev dependency except the
 runtime set (`@hpke/*`, `@noble/*`), and `npm audit --omit=dev` reports
-0 vulnerabilities. Plain `npm audit` does not. It reports six entries,
-all under `markdown-toc` (the `npm run toc` tool), and none can move
-without replacing that tool, which is a dev-only script run by hand on
-our own README:
+0 vulnerabilities. CI holds it there: the `build` job in
+`.github/workflows/nodejs.yml` runs
+`npm audit --omit=dev --audit-level=high` right after `npm ci`, so a
+high or critical advisory against a runtime dependency fails the push.
+A finding there is a release blocker, not something to add below.
 
-- `toml`: `gray-matter` 2 pins `toml` ^2.3, below every fixed release.
-- `gray-matter`: flagged for its `toml` and `js-yaml`; `markdown-toc`
-  pins `gray-matter` ^2.1.
-- `js-yaml`: `gray-matter` 2 pins `js-yaml` ^3, and the 3.x line
-  depends on a flagged `argparse`.
-- `argparse`: 1.x is flagged for its `sprintf-js`; `js-yaml` 3 and
-  `remarkable` 1.7.4 both pin `argparse` ^1.
-- `sprintf-js`: the advisory covers every version (`*`), so no
-  upgrade clears it.
-- `remarkable`: 1.7.4 is flagged for its `argparse`; `markdown-toc`
-  pins `remarkable` ^1.
-
-Do not take `npm audit fix` at its word for that chain. It claims a
-fix, and the fix is a downgrade of `remarkable` to 1.7.3, whose
-`argparse` 0.1 pulls in `underscore` and `underscore.string`: two new
-entries, one of them critical, and none of the six cleared. Clear the other tooling findings with `npm update <name>` for
-each package the report marks fixable instead, then diff the lockfile
-to confirm nothing was downgraded and no `@hpke/*` or `@noble/*`
-version moved, and check the result still installs under `npm ci`.
-0 vulnerabilities. Plain `npm audit` does not. It reports five
+Plain `npm audit` is not clean, and CI does not run it. It reports five
 entries, in two chains, and neither can move without replacing a tool.
 
 The first chain is under `markdown-toc` (the `npm run toc` tool), a
@@ -167,26 +152,29 @@ The second is under `wrangler`, which runs the realistic demo's Worker
 locally and deploys it. GHSA-xjj6-f33q-929c and two other advisories
 cover `undici` below 7.30.1:
 
-- `undici`: `miniflare` pins it exactly (7.29.1 today), so the caret
-  range the lockfile records does not help. It clears once a
-  `miniflare` release depends on `undici` 7.30.1 or later.
-- `miniflare`: flagged for its `undici` from 4.20250906.1 on; the
-  latest release still pins 7.28.0.
-- `wrangler`: flagged for its `miniflare`. The latest release still
-  pulls a vulnerable `undici`, so `npm update wrangler` does not clear
-  it. Check `npm view miniflare@<wrangler's pin> dependencies.undici`
-  for 7.30.1 before trying again.
+- `undici`: `miniflare` pins it exactly (7.29.1 in the lockfile), so
+  the caret range the lockfile records does not help.
+- `miniflare`: flagged for its `undici` from 4.20250906.1 on.
+- `wrangler`: flagged for its `miniflare`, up to 4.152.0. Unlike the
+  first chain, this one is no longer stuck: as of 2026-10-27,
+  `npm update wrangler --dry-run` moves `wrangler` to 4.153.0, within
+  `^4.114.0`, and `miniflare` with it to a release that pins `undici`
+  7.30.1. Taking that update is a lockfile change of its own, and it
+  removes these three entries from the baseline when it lands.
 
-Do not take `npm audit fix` at its word for either chain. For the
-first it claims a fix, and the fix is a downgrade of `remarkable` to
+Do not take `npm audit fix` at its word for the first chain. It claims
+a fix, and the fix is a downgrade (as of 2026-10-27, `gray-matter`
+2.1.1 to 2.1.0; an earlier release of the report proposed `remarkable`
 1.7.3, whose `argparse` 0.1 pulls in `underscore` and
-`underscore.string`: new entries, one of them critical. For the second
-it offers `--force` and a downgrade of `wrangler` to 4.35.0, outside
-the `^4.114.0` range `package.json` asks for. Clear the other tooling findings
-with `npm update <name>` for each package the report marks fixable
-instead (`vite` was the last, within 7.x), then diff the lockfile to
-confirm nothing was downgraded and no `@hpke/*` or `@noble/*` version
-moved, and check the result still installs under `npm ci`.
+`underscore.string`, one of them critical). Read
+`npm audit fix --dry-run` before trusting it, and never pass `--force`:
+for the second chain it once offered a downgrade of `wrangler` to
+4.35.0, outside the range `package.json` asks for. Clear tooling
+findings with `npm update <name>` for each package the report marks
+fixable instead (`vite` was the last, within 7.x), then diff the
+lockfile to confirm nothing was downgraded and no `@hpke/*` or
+`@noble/*` version moved, and check the result still installs under
+`npm ci`.
 
 The one workflow that still runs `npm install` is
 `.github/workflows/auto-dependabot.yml`, deliberately: its job is to
@@ -273,6 +261,21 @@ totals to agree; `test/browser-tap.ts` covers that decision. A step
 that has to be silent for longer than three seconds has to report
 progress, or its run is treated as truncated.
 
+The node run is checked the same way. A test that awaits a promise
+that never settles empties the event loop, and node exits 0 with every
+later test unrun. `scripts/run-tests.mjs` hands its stdout to
+`tapRunOutcome` in `scripts/tap-outcome.ts`, the plan check
+`browserRunOutcome` also delegates to, and `test/tap-outcome.ts` covers
+it. The usual cause of such a stall is a fixed sleep standing in for
+something that *will* happen: a test arms a fault, sleeps, and then
+reacts, and under load the faulted operation has not run yet.
+`longEnoughToHaveFinished` in `test/example-realistic-demo/async-helpers.ts`
+is only for asserting that something has *not* happened; to wait for an
+event, use `until` beside it, which polls a condition and fails loudly
+at a deadline. A timing flake does not show up in one run. Reproduce
+it by running the bundled file 32 times in parallel and counting the
+outputs that have no `1..N` line.
+
 Which entry a file belongs to is not a matter of taste. Every test that
 loops over ciphersuites loops over `testCiphersuites()` from
 `test/helpers/suite-filter.ts`, never over `ciphersuites` itself, because
@@ -291,6 +294,16 @@ neither `npm test` nor the Linux CI jobs. It builds a Swift executable
 against swift-raae, so it needs a Swift toolchain and only runs on the
 `macos-15` job; see `src/attachment/AGENTS.md` for why the build has to
 be a debug build and why the runner cannot be older.
+
+`npm run bench` (`scripts/bench.ts`, bundled by `scripts/run-bench.mjs`)
+times `createCommit`, `processMessage` and `joinGroup` at 64, 256 and
+1024 members, and runs nowhere but by hand. It takes about twenty
+seconds. It is typechecked by `tsconfig.scripts.json` like every
+`.ts` under `scripts/`, and it may import only `src/index.ts` and
+`test/helpers/`, so it measures what a consumer can call. A benchmark
+task reuses one input state on every iteration, which works because
+states are values -- except for `joinGroup`'s `initPrivateKey`, which
+it zeroizes, so each join is passed a `.slice()`.
 
 A test whose cost is out of proportion to what a second ciphersuite would
 tell it loops over `sampleCiphersuites()` instead, which is the sample
@@ -317,6 +330,13 @@ npx esbuild test/<file>.ts --bundle --platform=node --format=cjs \
 
 esbuild only strips types, so a bundled run says nothing about whether
 the code typechecks. Run both.
+
+tapzero's `equal` and `notEqual` JSON-serialize the actual value when an
+assertion fails. A decoded message holds a bigint `epoch`, so a failing
+comparison against one throws and ends the run rather than reporting.
+For a decode-succeeds or decode-refused check, assert a boolean with
+`t.ok(decodeX(...) !== undefined)`; it also keeps a large input out of
+the failure output.
 
 Never assert on rendered HTML text. Components are asserted on by calling
 them as plain functions and reading the returned vnode, which means a
@@ -354,6 +374,91 @@ input corrupts a live state rather than reclaiming forward secrecy. Where
 a function cannot tell, the ownership is passed in explicitly (see the
 `ownsSecret` parameter in `src/secret-tree.ts`). A secret that is merely
 being dropped from a record goes to the garbage collector untouched.
+It is still reported, though: every result that carries a new state
+also carries `consumed`, computed by `consumedSecrets` in
+`src/consumed.ts` as a difference of the two states' secret fields, so
+the application can wipe it after persisting. A new secret field in
+`ClientState` has to be added to that walk.
+`test/validation/consumed-buffers.ts` defines "secret" by exclusion
+(everything outside the public record), so a field the walk misses
+fails it. A new public field has to be added to that test's
+`publicRecord` instead.
+`ClientState.pendingUpdateKeys` (`src/pending-update-keys.ts`) holds the
+private keys of the member's own Update proposals for one epoch, and is
+absent when there are none. Every transition that leaves the epoch
+drops it: the receive path spreads `withoutPendingUpdateKeys(state)`,
+and `createCommit` builds a fresh state literal that leaves it out. A
+new epoch transition that spreads `...state` has to do the same, or a
+key outlives the proposal reference it was stored under. The one
+commit that installs a key is one listing that reference, and
+`processCommit` puts the key into the private path before path
+decryption, since the committer encrypted to it. An Update whose
+`LeafNodePatch` rotates the signature key also holds the new
+`signaturePrivateKey` there; it becomes `state.signaturePrivateKey`
+only in that installing commit's new state, so the proposer signs
+with the key in the tree until then. The old key is then dropped, and
+`consumed` lists it when it is bytes. The lifecycle in
+`test/validation/consumed-buffers.ts` later branches with each
+member's original signing key, so a rotation there belongs on an
+Update that is dropped, not one that is installed.
+
+The same rule is why two builders may write into an array in place:
+`createUpdatePath` (`src/update-path.ts`) copies the input tree once
+and `createSecretTree` allocates its own, and each then replaces slots
+of that array with new nodes rather than copying it per node. Writing
+a slot is safe; mutating a node object is not, because the copy still
+shares every untouched node with the caller's state. `createUpdatePath`
+also returns the new tree's hash, and the receive path's
+`applyTreeUpdate` likewise, so a commit hashes its tree once; a new
+commit path takes the hash from there instead of calling
+`treeHashRoot` again.
+
+Writing a slot has a second rule, as easy to break silently as the
+first. `treeHash` and `treeHashRoot` (`src/tree-hash.ts`) cache every
+subtree hash they compute in a module-private `WeakMap` keyed by the
+tree array, and trust it on the next call with the same array. So
+**no node of a tree array is written after a cached hash covers it**
+-- the node's own hash or any ancestor's. A breach does not throw: it
+produces or accepts a wrong tree hash, and the group forks. Hashing
+covers more than `treeHashRoot` calls: `calculateParentHash` and
+`verifyParentHashes` hash sibling subtrees through the same cache.
+The in-place write sites today:
+
+- `createUpdatePath`'s copy (`applyInitialTreeUpdate`,
+  `insertParentHashes`, then the committer's leaf) and
+  `applyUpdatePath`'s `copy` (the sender's leaf, then the filtered
+  direct path, root first). Both seed the copy from the input tree
+  through `carryTreeHashes`, minus the sender's leaf and direct path,
+  right after the `slice()`, and both call `calculateParentHash`
+  between writes, which reads or caches the hash of a copath
+  subtree. That subtree holds no node on the sender's direct path
+  and not the sender's leaf, which are the only nodes either
+  function writes, so the cached and written sets never overlap.
+  The seed has to come before the first parent hash: the sibling
+  of the node under the root is half the tree, and a cold copy
+  rehashes it on every commit. A change that writes any other node
+  there, or hashes a subtree that contains the direct path before
+  writing it, breaks the rule.
+- The mutation helpers in `src/ratchet-tree.ts` (`addLeafNode`,
+  `updateLeafNode`, `removeLeafNode`, `removeLeaves`,
+  `extendRatchetTree`) write into their own fresh `slice()` and hash
+  nothing before returning it. `addLeafNode` (into a blank leaf),
+  `updateLeafNode` and `removeLeafNode` then seed the new array's
+  cache from the old one's through `carryTreeHashes`, minus the
+  changed leaf and its direct path. That is the only way a cache
+  reaches a fresh array, and its changed-leaf list has to
+  cover every node the helper wrote: a node written off those paths
+  keeps its old hash. A helper that cannot name that set, or changes
+  the width, does not call it and leaves the array cold.
+
+A new write site follows the same shape: write into an array this
+call allocated, and either hash nothing until the last write or hash
+only subtrees it will not write. A tree array the application hands
+in is copied on entry (`joinGroupWithGroupInfo`, `joinGroupExternal`),
+because the application may change its own array and pass it again.
+The cache is also keyed by the `Hash` object, and `getCipherSuite`
+mints a new one per call, so a state used with a fresh impl starts
+cold -- correct, only slower.
 
 The epoch's `encryptionSecret` is not on `KeySchedule`. The derivation
 (`initializeEpoch`, `deriveKeySchedule`, `deriveEpochKeys`) returns it
@@ -399,6 +504,14 @@ checked by `checkPendingCapacity` in both places a proposal enters it
 same call. Applications reach the set through `listPendingProposals`
 and `discardPendingProposal`, not the record itself.
 
+`generateKeyPackage` keeps two extension lists. Its `extensions`
+argument is the KeyPackage's own and never reaches the ratchet tree;
+the leaf node's list is the `leafExtensions` option, empty by default.
+A test that needs an extension on a member's leaf -- to exercise the
+rule that a leaf extension must be listed in its capabilities, say --
+passes it through the option. Passing it as the argument instead
+leaves the leaf bare, so the refusal the test expects never happens.
+
 Credential-type support in `validateLeafNodeCommon`
 (`src/client-state.ts`) is a pairwise rule from RFC 9420 7.3, and both
 halves have to hold: every member's `capabilities.credentials` must list
@@ -417,12 +530,44 @@ leave a tree `joinGroup` refuses. `validateLeafNodeUpdateOrCommit` is
 also called by `validateRatchetTree` on leaves already in the tree, so a
 check that compares a leaf with the one it replaces (an Update must
 rotate its key) belongs in the Update loop, not in that function.
+`validateRatchetTree` validates every leaf of a joined tree, so a check
+in `validateLeafNodeCommon` that scans the tree makes joining quadratic
+in group size. That function reads the rest of the tree through a
+`LeafSummary` (`summarizeLeaves`), built once per tree; a new check that
+compares a leaf with the other leaves adds a field there instead of
+calling `tree.some`. Likewise `verifyParentHashes` and `treeHashRoot`
+share the subtree hashes cached against the tree array (see the
+write-before-cache rule above), so validating a joined tree warms the
+array the new state goes on to hold.
+The credential rule is pairwise, so no tree breaks one direction alone
+and a join-time test cannot tell them apart;
+`test/validation/credential-capability-floor.ts` isolates the second
+direction through an Update and an Add.
 Every leaf replacement shows the `AuthenticationService` the credential
 it replaces as `priorCredential`. `validateLeafNodeUpdateOrCommit` reads
 it from the tree by default, which is wrong for an external resync: its
 Remove has already blanked the leaf, so the removed credential travels on
 the `externalCommit` result and is passed in explicitly. A new path that
 removes a leaf before validating its replacement has to do the same.
+The group context those checks see is not the epoch's: RFC 9420 applies
+a commit's GroupContextExtensions proposal first, so `applyProposals`
+derives the post-GCE context once (`groupContextAfterExtensions`) and
+returns it on the `memberCommit` result as `groupContext`. Every leaf
+the commit introduces -- Adds, Updates, the committer's UpdatePath leaf
+on both the send and receive side -- is validated against that one
+value; a new leaf check takes it from there rather than rebuilding it
+from `state.groupContext`.
+
+A commit that rotates the committer's signature key
+(`CreateCommitOptions.leafNodePatch`) is signed by two keys. The
+FramedContent is signed with the *old* key, because receivers verify it
+against their pre-commit tree; the UpdatePath leaf, the Welcome's
+GroupInfo and everything after use the new one. `createCommit` checks a
+patched leaf with its own `validateLeafNodeUpdateOrCommit`, the call a
+receiver makes, only when a patch is given: an unpatched commit leaf is
+not checked by its sender, and
+`test/scenario/gce-committer-leaf-validation.ts` depends on that to
+build a commit only the receiver refuses.
 
 `validateExternalSenders` (`src/client-state.ts`) has three callers, and a
 new way of entering a group needs a fourth: `createGroup` checks the
@@ -432,6 +577,12 @@ commits against. A commit that carries a `group_context_extensions`
 proposal reaches it through `validateProposals`. Skipping it anywhere
 lets a client accept an external signer its own `authService` would
 refuse.
+
+`joinGroup` is a thin wrapper: the Welcome join lives in
+`joinGroupWithGroupInfo`, which returns the verified GroupInfo beside
+the state, and `joinGroup` drops the GroupInfo. A new join-time check
+belongs in `joinGroupWithGroupInfo`, or one of the two entry points
+skips it.
 
 A branch Welcome (`joinGroupFromBranch`) is accepted only when every
 leaf of the new group matches a leaf of the old one, compared by
@@ -467,6 +618,13 @@ A third pass runs at commit time: `filterPendingProposals`
 re-running the receipt check against the tree the kept Removes leave,
 so a new receipt check is also a new commit-time filter. By-value
 `extraProposals` bypass the filter on purpose and still throw.
+Required capabilities are the third receipt example: a
+GroupContextExtensions proposal in the same epoch can replace them, so
+receipt checks an Add or Update against the context with
+`required_capabilities` stripped, and the filter instead holds each kept
+Add and Update to the requirement the commit being built sets (its GCE,
+pending or by value). A rule that a GCE can change is enforced there,
+not on receipt.
 
 Frontend state is `@preact/signals`. Sequential writes go inside
 `batch()`, and component-local state is `useSignal`, never `useState`.
@@ -482,6 +640,13 @@ same signatures, or a group mixing them forks. Noble's EdDSA verify is
 called with `zip215: false` and both providers refuse small-order keys
 via `src/crypto/small-order.ts`; a new signature provider or algorithm
 needs the same treatment and a case in `test/crypto/signature-interop.ts`.
+Both providers' noble signer is one file: `noble/make-noble-signature-impl.ts`
+re-exports `default/`'s, so a change there reaches both. noble 2.x refuses a
+P-curve private key shorter than the field length, which is what a source
+that trims leading zero bytes produces, so `sign` goes through
+`withFieldLengthKey` to left-pad a copy it owns and wipes. A new P-curve
+needs the same wrapper and a row in the `pCurves` table in
+`test/crypto/signature.ts`.
 Leaf validation checks the key before the signature, so a small-order key
 fails as a `ValidationError` rather than a `CryptoVerificationError`.
 The same module holds the KEM counterpart, `isLowOrderKemPublicKey`,
@@ -501,14 +666,24 @@ or in a received tree do not yet.
 A receive-side check needs a test with an input that the sending code
 already refuses, so the input has to be forged. Mutating the result
 does not work: every leaf is hashed into the tree, the GroupContext
-and the confirmation tag. `test/validation/leaf-key-dishonest-committer.ts`
-has the two forging shapes. `forgeAddCommit` builds an Add-only commit
-and its Welcome from the exported pieces (`createContentCommitSignature`,
-`nextEpochContext`, `initializeEpoch`, `createGroupInfoWithRatchetTree`,
-`encryptGroupSecrets`); with no path and no PSK, both secrets are
-all-zero. `withCommitLeafKey` wraps a `CiphersuiteImpl` so that
-`createCommit` itself emits a chosen UpdatePath leaf key, and every
-hash and signature then agrees with that key. A forgery that has
+and the confirmation tag. There are three forging shapes.
+`forgeAddCommit` (`test/helpers/forge-commit.ts`, beside `withLeafKey`)
+builds an Add-only commit and its Welcome from the exported pieces
+(`createContentCommitSignature`, `nextEpochContext`, `initializeEpoch`,
+`createGroupInfoWithRatchetTree`, `encryptGroupSecrets`); with no path
+and no PSK, both secrets are all-zero. `withCommitLeafKey`
+(`test/validation/leaf-key-dishonest-committer.ts`) wraps a
+`CiphersuiteImpl` so that `createCommit` itself emits a chosen
+UpdatePath leaf key, and every hash and signature then agrees with
+that key. `forgeWelcome` (`test/validation/join-tree-forgeries.ts`)
+wraps any ratchet tree in a Welcome a member signs, for a join-time
+rule; there the joiner never sees a transcript, so the epoch secrets
+can be fresh. Two things it taught: replacing a leaf under a non-blank
+parent breaks that parent's hash, which covers the original sibling
+subtree, so put a forged leaf in a new slot; and `Hash` has no `size`
+(use `kdf.size`). tsc says so, but an esbuild run builds
+`new Uint8Array(hash.size)` as an empty array, which equals an empty
+parent hash, so the "tampered" tree is accepted. A forgery that has
 drifted (a stale tree hash, a wrong transcript input) is still
 refused, often as a `ValidationError`, so a refusal case that checks
 only the error class cannot tell the two apart. Every forging helper
@@ -521,6 +696,9 @@ A test that relies on a self-signed Add (`proposeAddExternal`) being
 accepted has to pass `acceptAll` explicitly. `ProposalWithSender`
 carries `senderType`, so anything that builds one -- including a test
 calling `addUnappliedProposal` directly -- has to supply it.
+The callback's `commit` argument carries `committer`, computed before
+the callback runs; a new commit path that calls the callback has to
+build it first, the external-commit case from the joiner's new leaf.
 
 The error type is part of the contract. `InternalError` means "this
 library has a bug"; anything an attacker or a peer can trigger by sending
@@ -538,6 +716,28 @@ and WebCrypto's `DataError` is pre-empted by a length check. Match the
 dependency's class with `instanceof`, not by `name`, which a consumer's
 minifier can rename. `test/validation/peer-input-errors.ts` is where a
 new case of this belongs.
+
+`Extension.extensionData` is always the extension's wire bytes, so an
+extension whose RFC body is a struct is encoded and decoded at its use
+site. `external_pub` is `opaque<V>`: written with `encodeVarLenData`,
+read only through `decodeExternalPub` (`src/create-commit.ts`), which
+refuses trailing bytes and maps the codec's throw to a
+`ValidationError`. Two copies of this package agree on any framing,
+so only a test that builds the bytes by hand to the RFC catches a
+framing bug. A test that edits a GroupInfo extension re-signs it with
+`signGroupInfo` and the signer's `signaturePrivateKey`, so the refusal
+it sees is the extension's and not the signature's
+(`test/validation/external-pub-length-prefix.ts`).
+A code point a peer only *advertises* is decoded openly; one the
+package has to *act on* is decoded strictly. Every list in
+`Capabilities` (versions, ciphersuites, credential types) goes through
+the open-enum helpers, so a leaf listing a value this package does not
+know still decodes and re-encodes to the same bytes -- its signature
+covers them. The version fields of `MLSMessage`, KeyPackage and
+GroupContext use the strict `decodeProtocolVersion` instead, and the
+capabilities list has its own type and codec,
+`CapabilityProtocolVersion` in `src/protocol-version.ts`. Do not widen
+the strict one to make a capabilities case pass.
 
 The receive side has two state guards in `src/process-messages.ts`, and
 a new receive path needs both. `throwIfRemovedFromGroup` refuses
@@ -562,6 +762,18 @@ in place, so decrypting the GroupSecrets in the test afterwards (or
 joining twice) silently uses a zero key. See
 `test/validation/welcome-path-secret-required.ts` for the
 decrypt-edit-re-encrypt shape.
+
+The post-quantum ciphersuite code points in `src/crypto/ciphersuite.ts`
+(`0xf007` to `0xf012`) are ts-mls 2.x's, not this package's to choose:
+they are what lets a post-quantum group mix the two implementations,
+so never renumber them independently. Both tables in that file (name
+to code point, code point to implementation) change together, and
+`test/helpers/ciphersuite-code-points.ts` pins every code point by
+hand as the interop contract; a new suite needs a line there too, or
+`test/ciphersuite.ts` fails. `ATTACHMENT_COMPONENT_ID` is also
+`0xF001`, but it is a component id in another registry and unrelated.
+`GroupContext` encodes the suite's code point, so renumbering one
+breaks every existing group under it, not only stored KeyPackages.
 
 TypeScript lines stay within 80 columns. Markdown and comments use `--`
 and `->`, never an em dash or an arrow character.

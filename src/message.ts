@@ -113,6 +113,13 @@ const decodeMlsMessageLoose:Decoder<MLSMessage> = mapDecoders(
 )
 
 /**
+ * The largest input, in bytes, that `decodeMlsMessage` will parse. A
+ * peer chooses the size of what it sends, so anything longer is refused
+ * before any parsing, the same way a malformed message is refused.
+ */
+export const MAX_MLS_MESSAGE_SIZE = 64 * 1024 * 1024
+
+/**
  * Top-level entry point for decoding an MLSMessage. Unlike a decoder
  * embedded inside a larger structure, a full MLSMessage is never itself
  * followed by more of another structure on the wire -- so any bytes left
@@ -120,6 +127,7 @@ const decodeMlsMessageLoose:Decoder<MLSMessage> = mapDecoders(
  * are rejected rather than silently ignored.
  */
 export const decodeMlsMessage:Decoder<MLSMessage> = (b, offset) => {
+    if (b.length - offset > MAX_MLS_MESSAGE_SIZE) return undefined
     const result = decodeMlsMessageLoose(b, offset)
     if (result === undefined) return undefined
     const [message, length] = result

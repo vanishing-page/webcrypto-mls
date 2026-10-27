@@ -17,6 +17,7 @@ export { type RatchetTree } from './ratchet-tree.js'
 export {
     acceptAll,
     defaultIncomingMessageCallback,
+    type IncomingMessage,
     type IncomingMessageCallback,
     type IncomingMessageAction
 } from './incoming-message-action.js'
@@ -69,6 +70,8 @@ export {
     createGroup,
     makePskIndex,
     joinGroup,
+    joinGroupWithGroupInfo,
+    type JoinGroupResult,
     type ClientState,
     type GroupActiveState,
     type EpochReceiverData,
@@ -76,8 +79,18 @@ export {
 } from './client-state.js'
 
 export {
+    getGroupMembers,
+    getOwnLeafNode,
+    type GroupMember,
+} from './group-members.js'
+
+export { type GroupInfo } from './group-info.js'
+
+export {
     createApplicationMessage,
-    createProposal
+    createProposal,
+    createUpdateProposal,
+    type CreateUpdateProposalOptions,
 } from './create-message.js'
 
 export {
@@ -86,7 +99,13 @@ export {
     createGroupInfoWithExternalPub,
     createGroupInfoWithExternalPubAndRatchetTree,
     type CreateCommitResult,
+    type CreateCommitOptions,
 } from './create-commit.js'
+
+export {
+    type LeafNodePatch,
+    type SignatureKeyPair,
+} from './leaf-node-patch.js'
 
 export {
     processPrivateMessage,
@@ -106,13 +125,23 @@ export {
     reinitGroup,
     joinGroupFromBranch,
     branchGroup,
+    type ResumptionOptions,
 } from './resumption.js'
 
 export { type Credential } from './credential.js'
 
 export { type Proposal } from './proposal.js'
 
-export { UsageError } from './mls-error.js'
+export {
+    MlsError,
+    ValidationError,
+    CodecError,
+    UsageError,
+    DependencyError,
+    CryptoVerificationError,
+    CryptoError,
+    InternalError,
+} from './mls-error.js'
 
 export {
     type ClientConfig,
@@ -147,7 +176,12 @@ export {
     defaultCryptoProvider
 } from './crypto/implementation/default/provider.js'
 
-export { bytesToBase64, bytesToBase64url } from './util/byte-array.js'
+export {
+    bytesToBase64,
+    bytesToBase64url,
+    base64ToBytes,
+    base64urlToBytes,
+} from './util/byte-array.js'
 
 export {
     decodeMlsMessage,

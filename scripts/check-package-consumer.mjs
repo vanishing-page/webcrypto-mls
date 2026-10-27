@@ -16,7 +16,11 @@
 //   From CommonJS, a real library error (the fail-closed authentication
 //   service) is `instanceof` `UsageError` from the root and from the
 //   `mls-error` subpath, and every export name shared by two of the
-//   required entry points is the same value from each.
+//   required entry points is the same value from each. Every error
+//   class and both base64 decoders import from the root, the decoders
+//   invert the encoders, and an error a public operation throws on bad
+//   peer input is `instanceof` `ValidationError` and `MlsError` from
+//   the root.
 //
 //   The same from ESM.
 //
@@ -60,6 +64,22 @@ const ENTRIES = [
     '/crypto/ciphersuite',
 ]
 
+// The error classes and byte helpers a consumer imports from the root.
+// The error type is part of the contract, so every class must be
+// reachable for `instanceof` without knowing the subpath.
+const ROOT_EXPORTS = [
+    'MlsError',
+    'ValidationError',
+    'CodecError',
+    'UsageError',
+    'DependencyError',
+    'CryptoVerificationError',
+    'CryptoError',
+    'InternalError',
+    'base64ToBytes',
+    'base64urlToBytes',
+]
+
 const failures = []
 
 function walk (dir) {
@@ -86,6 +106,7 @@ function checkNoRelativeJs () {
 const consumerBody = `
 const PKG = ${JSON.stringify(PKG)}
 const ENTRIES = ${JSON.stringify(ENTRIES)}
+const ROOT_EXPORTS = ${JSON.stringify(ROOT_EXPORTS)}
 
 async function run (load) {
     const mods = {}
@@ -113,6 +134,47 @@ async function run (load) {
             }
         }
         if (!errors.UsageError) failures.push('mls-error has no UsageError')
+    }
+
+    for (const name of ROOT_EXPORTS) {
+        if (typeof root[name] !== 'function') {
+            failures.push('package root does not export ' + name)
+        }
+    }
+
+    // A peer's GroupInfo with no external_senders extension is bad peer
+    // input, refused before any crypto runs.
+    let invalid
+    try {
+        await root.proposeExternal(
+            { groupContext: { extensions: [] } },
+            { proposalType: 'remove', remove: { removed: 0 } },
+            new Uint8Array(),
+            new Uint8Array(),
+            undefined
+        )
+    } catch (err) {
+        invalid = err
+    }
+    for (const cls of ['ValidationError', 'MlsError']) {
+        if (typeof root[cls] !== 'function') continue
+        if (!(invalid instanceof root[cls])) {
+            failures.push('bad peer input did not throw an instance of ' +
+                cls + ' from the root: ' + invalid)
+        }
+    }
+
+    if (root.base64ToBytes && root.base64urlToBytes) {
+        const bytes = new Uint8Array(256).map((_, i) => i)
+        const same = (a, b) => a.length === b.length &&
+            a.every((x, i) => x === b[i])
+        if (!same(root.base64ToBytes(root.bytesToBase64(bytes)), bytes)) {
+            failures.push('base64ToBytes does not invert bytesToBase64')
+        }
+        const url = root.bytesToBase64url(bytes)
+        if (!same(root.base64urlToBytes(url), bytes)) {
+            failures.push('base64urlToBytes does not invert bytesToBase64url')
+        }
     }
 
     // Any export name that two entry points both expose is meant to be

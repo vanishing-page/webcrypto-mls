@@ -125,3 +125,83 @@ test('MLSMessage roundtrip group info message', (t) => {
         },
     }, 'should roundtrip group info message')
 })
+
+test('decodeMlsMessage refuses input over the 64 MiB cap', (t) => {
+    // A PrivateMessage whose ciphertext fills the input to exactly the
+    // cap. Both inputs below are well-formed messages, so the only thing
+    // that can refuse the longer one is its length.
+    const cap = 64 * 1024 * 1024
+    const privateMessage = (ciphertext:Uint8Array) => encodeMlsMessage({
+        version: 'mls10',
+        wireformat: 'mls_private_message',
+        privateMessage: {
+            contentType: 'application',
+            groupId: new Uint8Array([1]),
+            epoch: 0n,
+            authenticatedData: new Uint8Array([]),
+            encryptedSenderData: new Uint8Array([2]),
+            ciphertext,
+        },
+    })
+    const overhead = privateMessage(new Uint8Array(16384)).length - 16384
+    const atCap = privateMessage(new Uint8Array(cap - overhead))
+    t.equal(atCap.length, cap, 'should build an input of exactly 64 MiB')
+    t.ok(
+        decodeMlsMessage(atCap, 0) !== undefined,
+        'should decode a valid message at the cap',
+    )
+
+    const overCap = privateMessage(new Uint8Array(cap - overhead + 1))
+    t.equal(overCap.length, cap + 1, 'should build an input one byte over')
+    t.ok(
+        decodeMlsMessage(overCap, 0) === undefined,
+        'should refuse a valid message one byte over the cap',
+    )
+})
+
+test('MLSMessage and KeyPackage version fields stay strict', (t) => {
+    const bytes = encodeMlsMessage({
+        version: 'mls10',
+        wireformat: 'mls_key_package',
+        keyPackage: {
+            version: 'mls10',
+            cipherSuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+            initKey: new Uint8Array([1]),
+            leafNode: {
+                hpkePublicKey: new Uint8Array([2]),
+                signaturePublicKey: new Uint8Array([3]),
+                credential: {
+                    credentialType: 'basic',
+                    identity: new Uint8Array([4]),
+                },
+                capabilities: {
+                    // only the capabilities list is open
+                    versions: ['mls10', '2'],
+                    ciphersuites: [],
+                    extensions: [],
+                    proposals: [],
+                    credentials: [],
+                },
+                leafNodeSource: 'key_package',
+                lifetime: { notBefore: 0n, notAfter: 0n },
+                extensions: [],
+                signature: new Uint8Array([5]),
+            },
+            extensions: [],
+            signature: new Uint8Array([6]),
+        },
+    })
+    t.ok(decodeMlsMessage(bytes, 0), 'control: the message decodes')
+
+    // MLSMessage.version is the first uint16
+    const unknownTop = bytes.slice()
+    unknownTop[1] = 2
+    t.equal(decodeMlsMessage(unknownTop, 0), undefined,
+        'an unknown MLSMessage version is refused')
+
+    // KeyPackage.version follows the uint16 wire format
+    const unknownKp = bytes.slice()
+    unknownKp[5] = 2
+    t.equal(decodeMlsMessage(unknownKp, 0), undefined,
+        'an unknown KeyPackage version is refused')
+})

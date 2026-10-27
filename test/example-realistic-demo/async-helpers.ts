@@ -40,3 +40,25 @@ export function deferred ():Deferred {
 export function longEnoughToHaveFinished ():Promise<void> {
     return new Promise(resolve => { setTimeout(resolve, 200) })
 }
+
+/**
+ * Resolve once `condition` holds, checking on every macrotask. For a
+ * wait on something that *will* happen, where a fixed sleep is a race
+ * the test loses under load: the operation it is waiting for runs MLS
+ * crypto, which a busy machine can push past any margin. Rejects after
+ * `timeoutMs`, so a condition that never comes fails the test rather
+ * than leaving it hanging with its plan unprinted.
+ */
+export async function until (
+    condition:() => boolean,
+    what:string,
+    timeoutMs = 10_000
+):Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (!condition()) {
+        if (Date.now() > deadline) {
+            throw new Error('timed out waiting until ' + what)
+        }
+        await new Promise(resolve => { setTimeout(resolve, 5) })
+    }
+}

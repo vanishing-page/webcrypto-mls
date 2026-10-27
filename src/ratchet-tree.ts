@@ -29,6 +29,7 @@ import {
 import type { LeafNode } from './leaf-node.js'
 import { encodeLeafNode, decodeLeafNode } from './leaf-node.js'
 import { constantTimeEqual } from './util/constant-time-compare.js'
+import { carryTreeHashes } from './tree-hash.js'
 import { InternalError, ValidationError } from './mls-error.js'
 
 // Type definitions used before defined - moved to top
@@ -198,6 +199,8 @@ export function addLeafNode (tree:RatchetTree, leafNode:LeafNode):[RatchetTree, 
     }
 
     copy[blankLeaf] = { nodeType: 'leaf', leaf: leafNode }
+    // the unmergedLeaves written above are on the new leaf's direct path
+    carryTreeHashes(tree, copy, [insertedLeafIndex])
 
     return [copy, blankLeaf]
 }
@@ -215,6 +218,7 @@ export function updateLeafNode (tree:RatchetTree, leafNode:LeafNode, leafIndex:L
         }
     }
     copy[leafNodeIndex] = { nodeType: 'leaf', leaf: leafNode }
+    carryTreeHashes(tree, copy, [leafIndex])
 
     return copy
 }
@@ -233,7 +237,11 @@ export function removeLeafNode (tree:RatchetTree, removedLeafIndex:LeafIndex) {
     }
     copy[leafNodeIndex] = undefined
 
-    return condenseRatchetTreeAfterRemove(copy)
+    // a Remove that narrows the tree changes its width, and the carry
+    // then leaves the condensed tree cold
+    const condensed = condenseRatchetTreeAfterRemove(copy)
+    carryTreeHashes(tree, condensed, [removedLeafIndex])
+    return condensed
 }
 
 /**
@@ -309,8 +317,9 @@ export function filteredDirectPathAndCopathResolution (
 
 export function removeLeaves (tree:RatchetTree, leafIndices:LeafIndex[]) {
     const copy = tree.slice()
+    const removed = new Set<number>(leafIndices)
     function shouldBeRemoved (leafIndex:number):boolean {
-        return leafIndices.find((x) => leafIndex === x) !== undefined
+        return removed.has(leafIndex)
     }
     for (const [i, n] of tree.entries()) {
         if (n !== undefined) {

@@ -13,6 +13,7 @@ import {
     validateLeafNodeUpdateOrCommit,
 } from './client-state.js'
 import { applyUpdatePathSecret } from './create-commit.js'
+import { consumedSecrets } from './consumed.js'
 import type { ContentTypeName } from './content-type.js'
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
 import type { Kdf } from './crypto/kdf.js'
@@ -20,6 +21,7 @@ import { deriveSecret } from './crypto/kdf.js'
 import { verifyConfirmationTag } from './framed-content.js'
 import type { GroupContext } from './group-context.js'
 import type {
+    AuthenticatedSender,
     IncomingMessageAction,
     IncomingMessageCallback
 } from './incoming-message-action.js'
@@ -37,14 +39,23 @@ import {
 } from './mls-error.js'
 import { pathSecretsAlongFilteredPath, zeroPathSecrets } from './path-secrets.js'
 import type { PrivateKeyPath } from './private-key-path.js'
-import { mergePrivateKeyPaths, pruneBlankedNodes, toPrivateKeyPath } from './private-key-path.js'
+import {
+    mergePrivateKeyPaths,
+    pruneBlankedNodes,
+    toPrivateKeyPath,
+    updateLeafKey,
+} from './private-key-path.js'
+import {
+    appliedPendingUpdateKey,
+    withoutPendingUpdateKeys,
+} from './pending-update-keys.js'
 import type { PrivateMessage } from './private-message.js'
 import type { PskIndex } from './psk-index.js'
 import type { PublicMessage } from './public-message.js'
 import type { RatchetTree } from './ratchet-tree.js'
 import { findBlankLeafNodeIndex, addLeafNode } from './ratchet-tree.js'
 import { createSecretTree } from './secret-tree.js'
-import type { Sender, SenderTypeName } from './sender.js'
+import type { Sender } from './sender.js'
 import { getSenderLeafNodeIndex } from './sender.js'
 import { treeHashRoot } from './tree-hash.js'
 import type {
@@ -64,17 +75,13 @@ import { addToMap } from './util/add-to-map.js'
 import { constantTimeEqual } from './util/constant-time-compare.js'
 import type { WireformatName } from './wireformat.js'
 
-/**
- * The sender MLS authenticated for a processed message. `leafIndex` is the
- * sender's leaf in the ratchet tree: for a `member` it is the signing leaf,
- * for a `new_member_commit` it is the leaf the joiner was placed in. It is
- * absent for sender types that have no leaf.
- */
-export interface AuthenticatedSender {
-    senderType:SenderTypeName
-    leafIndex?:number
-}
+export type { AuthenticatedSender }
 
+/**
+ * `consumed`, on every branch, holds the secret buffers the input state
+ * references and `newState` does not. Wipe them once `newState` is
+ * persisted; the input state is unusable afterwards.
+ */
 export type ProcessMessageResult =
   | {
       kind:'newState'
@@ -82,6 +89,7 @@ export type ProcessMessageResult =
       actionTaken:IncomingMessageAction
       /** Set when the message was a commit that was accepted. */
       committer?:AuthenticatedSender
+      consumed:Uint8Array[]
   }
   | {
       kind:'applicationMessage'
@@ -89,7 +97,17 @@ export type ProcessMessageResult =
       newState:ClientState
       sender:AuthenticatedSender
       authenticatedData:Uint8Array
+      consumed:Uint8Array[]
   }
+
+type UnconsumedResult<T> = T extends unknown ? Omit<T, 'consumed'> : never
+
+function withConsumed<T extends { newState:ClientState }> (
+    state:ClientState,
+    result:T,
+):T & { consumed:Uint8Array[] } {
+    return { ...result, consumed: consumedSecrets(state, result.newState) }
+}
 
 function memberSender (sender:Sender):AuthenticatedSender {
     return sender.senderType === 'member' ?
@@ -149,6 +167,19 @@ export async function processPrivateMessage (
     cs:CiphersuiteImpl,
     onMessage:IncomingMessageCallback = defaultIncomingMessageCallback,
 ):Promise<ProcessMessageResult> {
+    return withConsumed(
+        state,
+        await privateMessageResult(state, pm, pskSearch, cs, onMessage),
+    )
+}
+
+async function privateMessageResult (
+    state:ClientState,
+    pm:PrivateMessage,
+    pskSearch:PskIndex,
+    cs:CiphersuiteImpl,
+    onMessage:IncomingMessageCallback,
+):Promise<UnconsumedResult<ProcessMessageResult>> {
     throwIfRemovedFromGroup(state)
 
     if (!constantTimeEqual(pm.groupId, state.groupContext.groupId)) {
@@ -282,6 +313,8 @@ export interface NewStateWithActionTaken {
     actionTaken:IncomingMessageAction
     /** Set when the message was a commit that was accepted. */
     committer?:AuthenticatedSender
+    /** As on `ProcessMessageResult`. */
+    consumed:Uint8Array[]
 }
 
 export async function processPublicMessage (
@@ -291,6 +324,19 @@ export async function processPublicMessage (
     cs:CiphersuiteImpl,
     onMessage:IncomingMessageCallback = defaultIncomingMessageCallback,
 ):Promise<NewStateWithActionTaken> {
+    return withConsumed(
+        state,
+        await publicMessageResult(state, pm, pskSearch, cs, onMessage),
+    )
+}
+
+async function publicMessageResult (
+    state:ClientState,
+    pm:PublicMessage,
+    pskSearch:PskIndex,
+    cs:CiphersuiteImpl,
+    onMessage:IncomingMessageCallback,
+):Promise<UnconsumedResult<NewStateWithActionTaken>> {
     throwIfRemovedFromGroup(state)
 
     if (!constantTimeEqual(pm.content.groupId, state.groupContext.groupId)) {
@@ -358,7 +404,7 @@ async function processCommit (
     pskSearch:PskIndex,
     onMessage:IncomingMessageCallback,
     cs:CiphersuiteImpl,
-):Promise<NewStateWithActionTaken> {
+):Promise<UnconsumedResult<NewStateWithActionTaken>> {
     if (content.content.epoch !== state.groupContext.epoch) throw new ValidationError('Could not validate epoch')
 
     const senderLeafIndex =
@@ -375,12 +421,6 @@ async function processCommit (
         content.content.sender.senderType,
     )
 
-    const action = onMessage({ kind: 'commit', proposals: result.allProposals })
-
-    if (action === 'reject') {
-        return { newState: state, actionTaken: action }
-    }
-
     const committer:AuthenticatedSender =
         result.additionalResult.kind === 'externalCommit' ?
             {
@@ -389,10 +429,20 @@ async function processCommit (
             } :
             memberSender(content.content.sender)
 
+    const action = onMessage({
+        kind: 'commit',
+        proposals: result.allProposals,
+        committer,
+    })
+
+    if (action === 'reject') {
+        return { newState: state, actionTaken: action }
+    }
+
     const groupContextWithExtensions =
-        result.additionalResult.kind === 'memberCommit' && result.additionalResult.hasGroupContextExtensionsProposal
-            ? { ...state.groupContext, extensions: result.additionalResult.extensions }
-            : state.groupContext
+        result.additionalResult.kind === 'memberCommit' ?
+            result.additionalResult.groupContext :
+            state.groupContext
 
     if (content.content.commit.path !== undefined) {
         const committerLeafIndex =
@@ -422,7 +472,7 @@ async function processCommit (
     if (result.selfRemoved) {
         return {
             newState: {
-                ...state,
+                ...withoutPendingUpdateKeys(state),
                 unappliedProposals: emptyUnappliedProposals(),
                 groupActiveState: { kind: 'removedFromGroup' },
             },
@@ -431,20 +481,29 @@ async function processCommit (
         }
     }
 
-    const [pathKeys, commitSecret, tree] = await applyTreeUpdate(
+    // a commit that applies this member's own Update encrypts its path
+    // secret to the Update's new leaf key, so that key has to be in the
+    // private path before path decryption
+    const appliedUpdate = appliedPendingUpdateKey(
+        state.pendingUpdateKeys,
+        content.content.commit.proposals,
+    )
+    const ownPath = appliedUpdate === undefined ?
+        state.privatePath :
+        updateLeafKey(state.privatePath, appliedUpdate.hpkePrivateKey)
+
+    const [pathKeys, commitSecret, tree, newTreeHash] = await applyTreeUpdate(
         content.content.commit.path,
         content.content.sender,
         result.tree,
         cs,
-        state,
+        { ...state, privatePath: ownPath },
         groupContextWithExtensions,
         result.additionalResult.kind === 'memberCommit'
             ? result.additionalResult.addedLeafNodes.map((l) => leafToNodeIndex(toLeafIndex(l[0])))
             : [findBlankLeafNodeIndex(result.tree) ?? toNodeIndex(result.tree.length + 1)],
         cs.kdf,
     )
-
-    const newTreeHash = await treeHashRoot(tree, cs.hash)
 
     if (content.auth.contentType !== 'commit') throw new ValidationError('Received content as commit, but not auth') // todo solve this with types?
     const updatedGroupContext = await nextEpochContext(
@@ -477,8 +536,8 @@ async function processCommit (
     // unauthenticated commit reaches the private path before this point
     const pkp = pruneBlankedNodes(
         pathKeys === undefined ?
-            state.privatePath :
-            mergePrivateKeyPaths(state.privatePath, pathKeys),
+            ownPath :
+            mergePrivateKeyPaths(ownPath, pathKeys),
         tree,
     )
 
@@ -499,7 +558,10 @@ async function processCommit (
 
     return {
         newState: {
-            ...state,
+            ...withoutPendingUpdateKeys(state),
+            signaturePrivateKey:
+                appliedUpdate?.signaturePrivateKey ??
+                state.signaturePrivateKey,
             secretTree,
             ratchetTree: tree,
             privatePath: pkp,
@@ -524,39 +586,51 @@ async function applyTreeUpdate (
     groupContext:GroupContext,
     excludeNodes:NodeIndex[],
     kdf:Kdf,
-):Promise<[PrivateKeyPath | undefined, Uint8Array, RatchetTree]> {
+):Promise<[
+    PrivateKeyPath | undefined,
+    Uint8Array,
+    RatchetTree,
+    Uint8Array,
+]> {
     if (path === undefined) {
-        return [undefined, new Uint8Array(kdf.size), tree] as const
+        return [
+            undefined,
+            new Uint8Array(kdf.size),
+            tree,
+            await treeHashRoot(tree, cs.hash),
+        ] as const
     }
     if (sender.senderType === 'member') {
         const updatedTree = await applyUpdatePath(tree, toLeafIndex(sender.leafIndex), path, cs.hash)
+        const treeHash = await treeHashRoot(updatedTree, cs.hash)
 
         const [pathKeys, commitSecret] = await updatePrivateKeyPath(
             updatedTree,
             state,
             toLeafIndex(sender.leafIndex),
-            { ...groupContext, treeHash: await treeHashRoot(updatedTree, cs.hash), epoch: groupContext.epoch + 1n },
+            { ...groupContext, treeHash, epoch: groupContext.epoch + 1n },
             path,
             excludeNodes,
             cs,
         )
-        return [pathKeys, commitSecret, updatedTree] as const
+        return [pathKeys, commitSecret, updatedTree, treeHash] as const
     } else {
         const [treeWithLeafNode, leafNodeIndex] = addLeafNode(tree, path.leafNode)
 
         const senderLeafIndex = nodeToLeafIndex(leafNodeIndex)
         const updatedTree = await applyUpdatePath(treeWithLeafNode, senderLeafIndex, path, cs.hash, true)
+        const treeHash = await treeHashRoot(updatedTree, cs.hash)
 
         const [pathKeys, commitSecret] = await updatePrivateKeyPath(
             updatedTree,
             state,
             senderLeafIndex,
-            { ...groupContext, treeHash: await treeHashRoot(updatedTree, cs.hash), epoch: groupContext.epoch + 1n },
+            { ...groupContext, treeHash, epoch: groupContext.epoch + 1n },
             path,
             excludeNodes,
             cs,
         )
-        return [pathKeys, commitSecret, updatedTree] as const
+        return [pathKeys, commitSecret, updatedTree, treeHash] as const
     }
 }
 

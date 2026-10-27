@@ -4,7 +4,7 @@ import type { Encoder } from './codec/tls-encoder.js'
 import { contramapEncoders } from './codec/tls-encoder.js'
 import { decodeVarLenData, decodeVarLenType, encodeVarLenData, encodeVarLenType } from './codec/variable-length.js'
 import type { CiphersuiteImpl, CiphersuiteName } from './crypto/ciphersuite.js'
-import { decodeCiphersuite, encodeCiphersuite, getCiphersuiteFromName } from './crypto/ciphersuite.js'
+import { decodeCiphersuite, encodeCiphersuite } from './crypto/ciphersuite.js'
 import type { Hash } from './crypto/hash.js'
 import { refhash } from './crypto/hash.js'
 import type { Signature, SignatureSecretKey } from './crypto/signature.js'
@@ -25,7 +25,7 @@ import {
 import type { Capabilities } from './capabilities.js'
 import type { Lifetime } from './lifetime.js'
 import type { Credential } from './credential.js'
-import { UsageError } from './mls-error.js'
+import { resolveSignatureKeyPair } from './leaf-node-patch.js'
 
 type KeyPackageTBS = {
     version:ProtocolVersionName
@@ -108,6 +108,14 @@ export interface PrivateKeyPackage {
 
 export interface GenerateKeyPackageOptions {
     signatureKeyPair?:CryptoKeyPair
+    /**
+     * Extensions for the leaf node, which enters the ratchet tree and
+     * stays there while the member is in the group. Every type listed
+     * here must appear in `capabilities.extensions`. Defaults to none.
+     * The `extensions` argument is the KeyPackage's own list and never
+     * reaches the leaf.
+     */
+    leafExtensions?:Extension[]
 }
 
 export async function generateKeyPackage (
@@ -118,28 +126,10 @@ export async function generateKeyPackage (
     cs:CiphersuiteImpl,
     options?:GenerateKeyPackageOptions,
 ):Promise<{ publicPackage:KeyPackage; privatePackage:PrivateKeyPackage }> {
-    let signaturePublicKey:Uint8Array
-    let signKey:SignatureSecretKey
-    if (options?.signatureKeyPair) {
-        const alg = getCiphersuiteFromName(cs.name).signature
-        if (alg !== 'Ed25519') {
-            throw new UsageError(
-                'signatureKeyPair is only supported for Ed25519 ' +
-                `ciphersuites, not ${alg}`,
-            )
-        }
-        signaturePublicKey = new Uint8Array(
-            await globalThis.crypto.subtle.exportKey(
-                'raw',
-                options.signatureKeyPair.publicKey,
-            ),
-        )
-        signKey = options.signatureKeyPair.privateKey
-    } else {
-        const sigKeys = await cs.signature.keygen()
-        signaturePublicKey = sigKeys.publicKey
-        signKey = sigKeys.signKey
-    }
+    const { publicKey: signaturePublicKey, signKey } =
+        options?.signatureKeyPair ?
+            await resolveSignatureKeyPair(options.signatureKeyPair, cs) :
+            await cs.signature.keygen()
 
     const initKeys = await cs.hpke.generateKeyPair()
     const hpkeKeys = await cs.hpke.generateKeyPair()
@@ -155,7 +145,7 @@ export async function generateKeyPackage (
         hpkePublicKey: await cs.hpke.exportPublicKey(hpkeKeys.publicKey),
         signaturePublicKey,
         info: { leafNodeSource: 'key_package' },
-        extensions,
+        extensions: options?.leafExtensions ?? [],
         credential,
         capabilities,
         lifetime,

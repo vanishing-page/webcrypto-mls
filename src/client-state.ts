@@ -15,6 +15,7 @@ import type { FramedContentCommit } from './framed-content.js'
 import { createConfirmationTag } from './framed-content.js'
 import type { GroupContext } from './group-context.js'
 import { ratchetTreeFromExtension, verifyGroupInfoConfirmationTag, verifyGroupInfoSignature } from './group-info.js'
+import type { GroupInfo } from './group-info.js'
 import type { KeyPackage, PrivateKeyPackage } from './key-package.js'
 import { makeKeyPackageRef, verifyKeyPackage } from './key-package.js'
 import type { KeySchedule } from './key-schedule.js'
@@ -67,6 +68,7 @@ import type {
 import type { PrivateKeyPath } from './private-key-path.js'
 import { deriveWelcomePrivateKeyPath } from './private-key-path.js'
 import type { UnappliedProposals, ProposalWithSender } from './unapplied-proposals.js'
+import type { PendingUpdateKeys } from './pending-update-keys.js'
 import {
     addUnappliedProposal,
     checkPendingCapacity,
@@ -135,6 +137,11 @@ export interface ClientState {
     privatePath:PrivateKeyPath
     signaturePrivateKey:SignatureSecretKey
     unappliedProposals:UnappliedProposals
+    /**
+     * Private keys of this member's own Update proposals in this epoch;
+     * absent when there are none. See `createUpdateProposal`.
+     */
+    pendingUpdateKeys?:PendingUpdateKeys
     confirmationTag:Uint8Array
     historicalReceiverData:Map<bigint, EpochReceiverData>
     groupActiveState:GroupActiveState
@@ -177,6 +184,25 @@ function flattenExtensions (groupContextExtensions:{ proposal:ProposalGroupConte
     }, [] as Extension[])
 }
 
+/**
+ * RFC 9420 12.3 applies a commit's GroupContextExtensions proposal before
+ * its Updates and Adds, so every leaf the commit introduces is checked
+ * against the extensions it installs, not the ones it replaces. An empty
+ * proposal clears the extensions. The sender and receive paths both take
+ * this context from `applyProposals`, so there is one derivation.
+ */
+function groupContextAfterExtensions (
+    groupContext:GroupContext,
+    p:Proposals,
+):GroupContext {
+    if (p.group_context_extensions.length === 0) return groupContext
+
+    return {
+        ...groupContext,
+        extensions: flattenExtensions(p.group_context_extensions),
+    }
+}
+
 function validateNoDuplicatePskIds (psk:{ proposal:ProposalPSK }[]):ValidationError | undefined {
     const multiplePskWithSamePskId = psk.some((a, indexA) =>
         psk.some(
@@ -193,6 +219,7 @@ async function validateProposals (
     p:Proposals,
     committerLeafIndex:number | undefined,
     groupContext:GroupContext,
+    contextAfterExtensions:GroupContext,
     config:KeyPackageEqualityConfig,
     authService:AuthenticationService,
     tree:RatchetTree,
@@ -254,9 +281,7 @@ async function validateProposals (
     // an Add joins the group under the extensions the commit leaves in
     // place: the proposed ones if a GroupContextExtensions proposal is
     // present, otherwise the current ones
-    const extensionsAfterCommit = p.group_context_extensions.length > 0 ?
-        flattenExtensions(p.group_context_extensions) :
-        groupContext.extensions
+    const extensionsAfterCommit = contextAfterExtensions.extensions
 
     const everyLeafSupportsGroupExtensions = p.add.every(({ proposal }) =>
         extensionsSupportedByCapabilities(
@@ -355,6 +380,46 @@ function postMutationLeafCapabilities (tree:RatchetTree, p:Proposals):Capabiliti
     }, [] as Capabilities[])
 }
 
+/**
+ * Whether `leafNode` meets the `required_capabilities` extension among
+ * `extensions`, if there is one.
+ */
+export function requiredCapabilitiesError (
+    leafNode:LeafNode,
+    extensions:Extension[],
+):MlsError | undefined {
+    const required = extensions.find(
+        (e) => e.extensionType === 'required_capabilities')
+    if (required === undefined) return undefined
+
+    const caps = decodeRequiredCapabilities(required.extensionData, 0)
+    if (caps === undefined) {
+        return new CodecError('Could not decode required_capabilities')
+    }
+
+    if (!capabiltiesAreSupported(caps[0], leafNode.capabilities)) {
+        return new ValidationError(
+            'LeafNode does not support required capabilities')
+    }
+}
+
+/**
+ * The context an Add or Update is checked against on receipt. A
+ * GroupContextExtensions proposal in the same epoch may replace the
+ * required capabilities, so they are left to commit time: the receiver
+ * checks them in `applyTreeMutations`, and the committer's
+ * `filterPendingProposals` drops a proposal its own commit would fail.
+ */
+function withoutRequiredCapabilities (
+    groupContext:GroupContext,
+):GroupContext {
+    return {
+        ...groupContext,
+        extensions: groupContext.extensions.filter(
+            (e) => e.extensionType !== 'required_capabilities'),
+    }
+}
+
 function capabiltiesAreSupported (caps:RequiredCapabilities, cs:Capabilities):boolean {
     return (
         caps.credentialTypes.every((c) => cs.credentials.includes(c)) &&
@@ -413,11 +478,18 @@ export async function validateRatchetTree (
 
     if (!treeIsStructurallySound) return new ValidationError('Received Ratchet Tree is not structurally sound')
 
+    // the subtree hashes parent-hash verification computes stay cached
+    // against `tree`, so the tree hash below reuses them, and so does the
+    // state that goes on to hold this same array
     const parentHashesVerified = await verifyParentHashes(tree, cs.hash)
 
     if (!parentHashesVerified) return new CryptoVerificationError('Unable to verify parent hash')
 
-    if (!constantTimeEqual(treeHash, await treeHashRoot(tree, cs.hash))) { return new ValidationError('Unable to verify tree hash') }
+    const computedTreeHash = await treeHashRoot(tree, cs.hash)
+
+    if (!constantTimeEqual(treeHash, computedTreeHash)) {
+        return new ValidationError('Unable to verify tree hash')
+    }
 
     const unmergedLeavesError = validateUnmergedLeaves(tree)
 
@@ -429,9 +501,13 @@ export async function validateRatchetTree (
 
     if (duplicateHpkeKeys) return new ValidationError('Multiple public keys with the same value')
 
+    // read once for every leaf below, rather than once per leaf
+    const leaves = summarizeLeaves(tree)
+
     // validate all leaf nodes
     for (const [index, n] of tree.entries()) {
         if (n?.nodeType === 'leaf') {
+            const leafIndex = nodeToLeafIndex(toNodeIndex(index))
             const err =
                 n.leaf.leafNodeSource === 'key_package'
                     ? await validateLeafNodeKeyPackage(
@@ -441,18 +517,21 @@ export async function validateRatchetTree (
                         false,
                         config,
                         authService,
-                        nodeToLeafIndex(toNodeIndex(index)),
+                        leafIndex,
                         cs.signature,
                         cs.hpke,
+                        leaves,
                     )
                     : await validateLeafNodeUpdateOrCommit(
                         n.leaf,
-                        nodeToLeafIndex(toNodeIndex(index)),
+                        leafIndex,
                         groupContext,
                         tree,
                         authService,
                         cs.signature,
                         cs.hpke,
+                        credentialAtLeaf(tree, leafIndex),
+                        leaves,
                     )
 
             if (err !== undefined) return err
@@ -476,6 +555,74 @@ function hasDuplicateUint8Arrays (byteArrays:(Uint8Array | undefined)[]):boolean
     return false
 }
 
+/**
+ * What `validateLeafNodeCommon` asks of every leaf and parent in a tree,
+ * read in one pass. Validating each leaf of a tree against the others then
+ * costs a lookup per leaf instead of a scan per leaf. Built from one tree
+ * and valid only for it.
+ */
+interface LeafSummary {
+    // the credential types every leaf lists; undefined when no leaf does
+    // anything to narrow it, that is, when the tree has no leaves
+    supportedByAll:Set<string> | undefined
+    // credential type in use -> number of leaves using it
+    credentialTypes:Map<string, number>
+    // base64 key -> number of leaves carrying it
+    leafHpkeKeys:Map<string, number>
+    leafSignatureKeys:Map<string, number>
+    parentHpkeKeys:Set<string>
+}
+
+function summarizeLeaves (tree:RatchetTree):LeafSummary {
+    const summary:LeafSummary = {
+        supportedByAll: undefined,
+        credentialTypes: new Map(),
+        leafHpkeKeys: new Map(),
+        leafSignatureKeys: new Map(),
+        parentHpkeKeys: new Set(),
+    }
+
+    for (const node of tree) {
+        if (node === undefined) continue
+
+        if (node.nodeType === 'parent') {
+            summary.parentHpkeKeys.add(
+                bytesToBase64(node.parent.hpkePublicKey))
+            continue
+        }
+
+        const { leaf } = node
+        const listed = new Set<string>(leaf.capabilities.credentials)
+        summary.supportedByAll = summary.supportedByAll === undefined ?
+            listed :
+            new Set([...summary.supportedByAll].filter((c) => listed.has(c)))
+        increment(summary.credentialTypes, leaf.credential.credentialType)
+        increment(summary.leafHpkeKeys, bytesToBase64(leaf.hpkePublicKey))
+        increment(summary.leafSignatureKeys,
+            bytesToBase64(leaf.signaturePublicKey))
+    }
+
+    return summary
+}
+
+function increment (counts:Map<string, number>, key:string):void {
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+}
+
+/**
+ * How many leaves of the summarized tree carry `key`, not counting the
+ * leaf at `excluded` (the leaf being replaced, when there is one).
+ */
+function countOthers (
+    counts:Map<string, number>,
+    key:string,
+    excluded:LeafNode | undefined,
+    keyOf:(leaf:LeafNode) => string,
+):number {
+    const own = excluded !== undefined && keyOf(excluded) === key ? 1 : 0
+    return (counts.get(key) ?? 0) - own
+}
+
 export async function validateLeafNodeUpdateOrCommit (
     leafNode:LeafNodeCommit | LeafNodeUpdate,
     leafIndex:number,
@@ -487,6 +634,7 @@ export async function validateLeafNodeUpdateOrCommit (
     // overrides the credential read from `tree`, for an external resync
     // whose Remove has already blanked the replaced leaf
     priorCredential:Credential | undefined = credentialAtLeaf(tree, leafIndex),
+    leaves:LeafSummary = summarizeLeaves(tree),
 ):Promise<MlsError | undefined> {
     // Checked before the signature: a small-order key makes a forged
     // signature verify, so it has to fail as a key (audit M4).
@@ -504,6 +652,7 @@ export async function validateLeafNodeUpdateOrCommit (
         tree,
         authService,
         hpke,
+        leaves,
         leafIndex,
         priorCredential,
     )
@@ -542,11 +691,15 @@ function validateUpdateRotatesKey (
  * nothing is being replaced.
  */
 function credentialAtLeaf (tree:RatchetTree, leafIndex:number):Credential | undefined {
+    return leafAt(tree, leafIndex)?.credential
+}
+
+function leafAt (tree:RatchetTree, leafIndex:number):LeafNode | undefined {
     const node = tree[leafToNodeIndex(toLeafIndex(leafIndex))]
 
     if (node === undefined || node.nodeType !== 'leaf') return undefined
 
-    return node.leaf.credential
+    return node.leaf
 }
 
 export function throwIfDefined (err:MlsError | undefined):void {
@@ -567,6 +720,7 @@ async function validateLeafNodeCommon (
     tree:RatchetTree,
     authService:AuthenticationService,
     hpke:Hpke,
+    leaves:LeafSummary,
     leafIndex?:number,
     priorCredential?:Credential,
 ) {
@@ -589,23 +743,21 @@ async function validateLeafNodeCommon (
 
     if (!credentialValid) return new ValidationError('Could not validate credential')
 
-    const requiredCapabilities = groupContext.extensions.find((e) => e.extensionType === 'required_capabilities')
-
-    if (requiredCapabilities !== undefined) {
-        const caps = decodeRequiredCapabilities(requiredCapabilities.extensionData, 0)
-        if (caps === undefined) return new CodecError('Could not decode required_capabilities')
-
-        const leafSupportsCapabilities = capabiltiesAreSupported(caps[0], leafNode.capabilities)
-
-        if (!leafSupportsCapabilities) return new ValidationError('LeafNode does not support required capabilities')
-    }
-
-    const credentialUnsupported = tree.some(
-        (node) =>
-            node !== undefined &&
-      node.nodeType === 'leaf' &&
-      !node.leaf.capabilities.credentials.includes(leafNode.credential.credentialType),
+    const capabilitiesError = requiredCapabilitiesError(
+        leafNode,
+        groupContext.extensions,
     )
+    if (capabilitiesError !== undefined) return capabilitiesError
+
+    // the leaf at this index, when one is being replaced; the checks
+    // below that skip "this leaf" skip it
+    const replaced = leafIndex === undefined ?
+        undefined :
+        leafAt(tree, leafIndex)
+
+    const credentialType = leafNode.credential.credentialType
+    const credentialUnsupported = leaves.supportedByAll !== undefined &&
+        !leaves.supportedByAll.has(credentialType)
 
     if (credentialUnsupported) { return new ValidationError('LeafNode has credential that is not supported by member of the group') }
 
@@ -618,13 +770,12 @@ async function validateLeafNodeCommon (
     // The leaf's own index is skipped because the leaf there is the one being
     // replaced; its own credential type is already covered by the check above,
     // which does not skip it.
-    const inUseCredentialUnsupported = tree.some(
-        (node, nodeIndex) =>
-            node !== undefined &&
-      node.nodeType === 'leaf' &&
-      leafIndex !== nodeToLeafIndex(toNodeIndex(nodeIndex)) &&
-      !leafNode.capabilities.credentials.includes(node.leaf.credential.credentialType),
-    )
+    const listed = new Set<string>(leafNode.capabilities.credentials)
+    const inUseCredentialUnsupported = [...leaves.credentialTypes.keys()]
+        .some((type) =>
+            !listed.has(type) &&
+            countOthers(leaves.credentialTypes, type, replaced,
+                (l) => l.credential.credentialType) > 0)
 
     if (inUseCredentialUnsupported) { return new ValidationError('LeafNode does not support a credential type in use by a member of the group') }
 
@@ -632,14 +783,13 @@ async function validateLeafNodeCommon (
 
     if (!extensionsSupported) return new ValidationError('LeafNode contains extension not listed in capabilities')
 
-    const keysAreNotUnique = tree.some(
-        (node, nodeIndex) =>
-            node !== undefined &&
-      node.nodeType === 'leaf' &&
-      (constantTimeEqual(node.leaf.hpkePublicKey, leafNode.hpkePublicKey) ||
-        constantTimeEqual(node.leaf.signaturePublicKey, leafNode.signaturePublicKey)) &&
-      leafIndex !== nodeToLeafIndex(toNodeIndex(nodeIndex)),
-    )
+    const hpkeKey = bytesToBase64(leafNode.hpkePublicKey)
+    const keysAreNotUnique =
+        countOthers(leaves.leafHpkeKeys, hpkeKey, replaced,
+            (l) => bytesToBase64(l.hpkePublicKey)) > 0 ||
+        countOthers(leaves.leafSignatureKeys,
+            bytesToBase64(leafNode.signaturePublicKey), replaced,
+            (l) => bytesToBase64(l.signaturePublicKey)) > 0
 
     if (keysAreNotUnique) return new ValidationError('hpke and signature keys not unique')
 
@@ -648,12 +798,7 @@ async function validateLeafNodeCommon (
     // duplicate across the whole tree at join time, so accepting a
     // leaf/parent collision here would build a tree this library itself
     // refuses, wedging all future joins.
-    const collidesWithParentKey = tree.some(
-        (node) =>
-            node !== undefined &&
-      node.nodeType === 'parent' &&
-      constantTimeEqual(node.parent.hpkePublicKey, leafNode.hpkePublicKey),
-    )
+    const collidesWithParentKey = leaves.parentHpkeKeys.has(hpkeKey)
 
     if (collidesWithParentKey) return new ValidationError('hpke key matches an existing parent node key')
 }
@@ -668,6 +813,7 @@ async function validateLeafNodeKeyPackage (
     leafIndex:number | undefined,
     s:Signature,
     hpke:Hpke,
+    leaves:LeafSummary = summarizeLeaves(tree),
 ):Promise<MlsError | undefined> {
     // Checked before the signature: a small-order key makes a forged
     // signature verify, so it has to fail as a key (audit M4).
@@ -696,6 +842,7 @@ async function validateLeafNodeKeyPackage (
         tree,
         authService,
         hpke,
+        leaves,
         leafIndex,
     )
 
@@ -751,7 +898,7 @@ async function validateKeyPackage (
  * the provider's own import error is mapped here, since the key is
  * peer input.
  */
-async function validateHpkePublicKey (
+export async function validateHpkePublicKey (
     key:Uint8Array,
     groupContext:GroupContext,
     hpke:Hpke,
@@ -853,8 +1000,10 @@ export type ApplyProposalsData =
   | {
       kind:'memberCommit'
       addedLeafNodes:[LeafIndex, KeyPackage][]
-      extensions:Extension[]
-      hasGroupContextExtensionsProposal:boolean
+      // the epoch's GroupContext with the commit's GroupContextExtensions
+      // proposal applied, or unchanged if it carries none: what the
+      // Updates, Adds and the committer's own leaf are validated against
+      groupContext:GroupContext
   }
   | {
       kind:'externalCommit'
@@ -946,23 +1095,27 @@ export async function applyProposals (
             }
         }
 
+        const contextAfterExtensions = groupContextAfterExtensions(
+            state.groupContext,
+            grouped,
+        )
+
         throwIfDefined(
             await validateProposals(
                 grouped,
                 committerLeafIndex,
                 state.groupContext,
+                contextAfterExtensions,
                 state.clientConfig.keyPackageEqualityConfig,
                 state.clientConfig.authService,
                 state.ratchetTree,
             ),
         )
 
-        const newExtensions = flattenExtensions(grouped.group_context_extensions)
-
         const [mutatedTree, addedLeafNodes] = await applyTreeMutations(
             state.ratchetTree,
             grouped,
-            state.groupContext,
+            contextAfterExtensions,
             sentByClient,
             state.clientConfig.authService,
             state.clientConfig.lifetimeConfig,
@@ -999,8 +1152,7 @@ export async function applyProposals (
             additionalResult: {
                 kind: 'memberCommit' as const,
                 addedLeafNodes,
-                extensions: newExtensions,
-                hasGroupContextExtensionsProposal: grouped.group_context_extensions.length > 0,
+                groupContext: contextAfterExtensions,
             },
             pskIds,
             needsUpdatePath,
@@ -1196,6 +1348,45 @@ export async function joinGroup (
     clientConfig:ClientConfig = defaultClientConfig,
     expectedResumption?:ExpectedResumption,
 ):Promise<ClientState> {
+    const { state } = await joinGroupWithGroupInfo(
+        welcome,
+        keyPackage,
+        privateKeys,
+        pskSearch,
+        cs,
+        ratchetTree,
+        resumingFromState,
+        clientConfig,
+        expectedResumption,
+    )
+    return state
+}
+
+export interface JoinGroupResult {
+    state:ClientState
+    /**
+     * The GroupInfo the Welcome carried, after its signature and
+     * confirmation tag have been verified. Its `extensions` are the
+     * GroupInfo extensions, which reach a joiner nowhere else.
+     */
+    groupInfo:GroupInfo
+}
+
+/**
+ * `joinGroup`, returning the verified GroupInfo beside the new state.
+ * Takes the same arguments and consumes `initPrivateKey` the same way.
+ */
+export async function joinGroupWithGroupInfo (
+    welcome:Welcome,
+    keyPackage:KeyPackage,
+    privateKeys:PrivateKeyPackage,
+    pskSearch:PskIndex,
+    cs:CiphersuiteImpl,
+    ratchetTree?:RatchetTree,
+    resumingFromState?:ClientState,
+    clientConfig:ClientConfig = defaultClientConfig,
+    expectedResumption?:ExpectedResumption,
+):Promise<JoinGroupResult> {
     if (expectedResumption !== undefined && resumingFromState === undefined) {
         throw new UsageError(
             `A ${expectedResumption} join needs the prior state`,
@@ -1298,7 +1489,11 @@ export async function joinGroup (
         ),
     )
 
-    const tree = ratchetTreeFromExtension(gi) ?? ratchetTree
+    // validation caches hashes against the array it reads, and the state
+    // goes on to hold it, so it has to be one this package owns: the
+    // caller could change its own array after a refused join and pass it
+    // again. A decoded tree already is.
+    const tree = ratchetTreeFromExtension(gi) ?? ratchetTree?.slice()
 
     if (tree === undefined) throw new UsageError('No RatchetTree passed and no ratchet_tree extension')
 
@@ -1398,7 +1593,7 @@ export async function joinGroup (
 
     privateKeys.initPrivateKey.fill(0)
 
-    return {
+    const state:ClientState = {
         groupContext: gi.groupContext,
         ratchetTree: tree,
         privatePath: updatedPkp,
@@ -1411,6 +1606,7 @@ export async function joinGroup (
         groupActiveState: { kind: 'active' },
         clientConfig,
     }
+    return { state, groupInfo: gi }
 }
 
 export async function createGroup (
@@ -1607,7 +1803,7 @@ export async function validateProposalOnReceipt (
             )
             return asValidationError(await validateKeyPackage(
                 kp,
-                state.groupContext,
+                withoutRequiredCapabilities(state.groupContext),
                 tree,
                 sentByClient,
                 lifetimeConfig,
@@ -1629,7 +1825,7 @@ export async function validateProposalOnReceipt (
             ) ?? asValidationError(await validateLeafNodeUpdateOrCommit(
                 proposal.update.leafNode,
                 senderLeafIndex,
-                state.groupContext,
+                withoutRequiredCapabilities(state.groupContext),
                 state.ratchetTree,
                 authService,
                 cs.signature,

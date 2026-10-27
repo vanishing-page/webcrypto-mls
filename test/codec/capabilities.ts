@@ -34,3 +34,20 @@ test('capabilities roundtrip nontrivial', (t) => {
     }
     roundtrip(t, c, 'should roundtrip nontrivial capabilities')
 })
+
+test('capabilities with an unknown protocol version round-trip', (t) => {
+    // versions<V> = [mls10 (1), 2], then four empty lists
+    const bytes = new Uint8Array([
+        0x04, 0x00, 0x01, 0x00, 0x02,
+        0x00, 0x00, 0x00, 0x00,
+    ])
+    const decoded = decodeCapabilities(bytes, 0)
+    t.ok(decoded, 'decodes a version newer than MLS 1.0')
+    if (!decoded) return
+    t.equal(decoded[1], bytes.length, 'consumes every byte')
+    t.deepEqual(
+        encodeCapabilities(decoded[0]),
+        bytes,
+        're-encodes to the same bytes'
+    )
+})

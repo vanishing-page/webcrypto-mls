@@ -7,7 +7,10 @@ import {
 import {
     makeSignatureImpl
 } from '../../src/crypto/implementation/default/make-signature-impl.js'
-import { ValidationError } from '../../src/mls-error.js'
+import {
+    makeNobleSignatureImpl as makeNobleProviderSignatureImpl
+} from '../../src/crypto/implementation/noble/make-noble-signature-impl.js'
+import { UsageError, ValidationError } from '../../src/mls-error.js'
 
 const p521Vector = vectors.find((vector) => vector.cipher_suite === 5)!
 
@@ -124,3 +127,70 @@ test('WebCrypto Ed25519 importSignatureKey rejects a non-32-byte seed',
                 'throws ValidationError for a short seed')
         }
     })
+
+const pCurves = [
+    { alg: 'P256', fieldLength: 32 },
+    { alg: 'P384', fieldLength: 48 },
+    { alg: 'P521', fieldLength: 66 },
+] as const
+
+const providers = [
+    { name: 'default', make: makeSignatureImpl },
+    { name: 'noble', make: makeNobleProviderSignatureImpl },
+] as const
+
+// A valid scalar whose first byte is zero: 0x00 followed by 0x01 bytes is
+// well below the group order of every P-curve.
+function fullLengthKeyWithLeadingZero (fieldLength:number):Uint8Array {
+    const key = new Uint8Array(fieldLength).fill(1)
+    key[0] = 0
+    return key
+}
+
+async function nistCurve (alg:'P256'|'P384'|'P521') {
+    const { p256, p384, p521 } = await import('@noble/curves/nist.js')
+    return alg === 'P256' ? p256 : alg === 'P384' ? p384 : p521
+}
+
+for (const { alg, fieldLength } of pCurves) {
+    for (const provider of providers) {
+        test(`${alg} (${provider.name}) signs with a key trimmed of its ` +
+            'leading zero', async (t) => {
+            const s = await provider.make(alg)
+            const full = fullLengthKeyWithLeadingZero(fieldLength)
+            const publicKey = (await nistCurve(alg)).getPublicKey(full)
+            const short = full.slice(1)
+            const before = short.slice()
+            const message = new TextEncoder().encode('short key')
+
+            const signed = await s.sign(short, message)
+
+            t.ok(await s.verify(publicKey, message, signed),
+                'signature verifies under the full-length public key')
+            t.deepEqual(short, before, "caller's key bytes are unchanged")
+        })
+
+        test(`${alg} (${provider.name}) refuses a key longer than the ` +
+            'field length', async (t) => {
+            const s = await provider.make(alg)
+            const long = new Uint8Array(fieldLength + 1).fill(1)
+            try {
+                await s.sign(long, new TextEncoder().encode('long key'))
+                t.fail('should have thrown for an over-long key')
+            } catch (err) {
+                t.ok(err instanceof UsageError,
+                    'throws UsageError for an over-long key')
+            }
+        })
+
+        test(`${alg} (${provider.name}) full-length keys sign and verify`,
+            async (t) => {
+                const s = await provider.make(alg)
+                const { signKey, publicKey } = await s.keygen()
+                const message = new TextEncoder().encode('full key')
+                const signed = await s.sign(signKey, message)
+                t.ok(await s.verify(publicKey, message, signed),
+                    'signature verifies')
+            })
+    }
+}

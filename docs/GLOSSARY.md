@@ -459,10 +459,13 @@ baseline and the best bet for interop.
 
 **Private-use ciphersuite** -- The experimental post-quantum suites this
 package adds in the `0xF000`-`0xFFFF` range. Not IANA-registered, so they can
-never collide with a future standard allocation, and not interoperable with
-other MLS implementations.
+never collide with a future standard allocation. Their code points,
+`0xf007`-`0xf012`, follow ts-mls 2.x, so they interoperate with it and with
+no other MLS implementation. Earlier releases numbered them
+`0xF001`-`0xF00C`; a post-quantum group created before the upgrade has to be
+recreated.
 ([`src/crypto/ciphersuite.ts`](../src/crypto/ciphersuite.ts),
-[README](../README.md#defaults))
+[README](../README.md#post-quantum-ciphersuites))
 
 **HPKE** -- Hybrid Public Key Encryption (RFC 9180), the public-key
 encryption used for every tree secret and for `GroupSecrets`.

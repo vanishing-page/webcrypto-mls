@@ -61,7 +61,8 @@
     "preversion": "npm run lint",
     "version": "npm run toc && auto-changelog -p --template keepachangelog --breaking-pattern 'BREAKING CHANGE:' && git add CHANGELOG.md README.md",
     "postversion": "git push --follow-tags && npm publish",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "bench": "node scripts/run-bench.mjs"
   },
   "dependencies": {
     "@hpke/chacha20poly1305": "1.8.0",
@@ -119,6 +120,7 @@
     "preact": "^10.27.0",
     "route-event": "^8.1.2",
     "simple-hpke": "^0.3.1",
+    "tinybench": "^6.2.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.1",
     "wrangler": "^4.114.0"

@@ -12,7 +12,8 @@ import {
 } from '../../src/client-state.js'
 import {
     createGroupInfoWithExternalPubAndRatchetTree,
-    createCommit
+    createCommit,
+    decodeExternalPub
 } from '../../src/create-commit.js'
 import { processPublicMessage } from '../../src/process-messages.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
@@ -86,7 +87,9 @@ async function forgeExternalCommitWithRemove (
     const externalPub = groupInfo.extensions.find((ex) => ex.extensionType === 'external_pub')
     if (externalPub === undefined) throw new UsageError('Could not find external_pub extension')
 
-    const { enc, secret: initSecret } = await exportSecret(externalPub.extensionData, cs)
+    const { enc, secret: initSecret } = await exportSecret(
+        decodeExternalPub(externalPub.extensionData), cs,
+    )
 
     const ratchetTree = ratchetTreeFromExtension(groupInfo)
     if (ratchetTree === undefined) throw new UsageError('No ratchet_tree extension')

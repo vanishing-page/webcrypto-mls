@@ -24,7 +24,13 @@ import {
     createGroupInfoWithExternalPubAndRatchetTree,
     joinGroupExternal,
 } from '../../src/create-commit.js'
-import { processPublicMessage } from '../../src/process-messages.js'
+import { createUpdateProposal } from '../../src/create-message.js'
+import {
+    processPrivateMessage,
+    processPublicMessage,
+} from '../../src/process-messages.js'
+import type { MLSMessage } from '../../src/message.js'
+import type { PrivateMessage } from '../../src/private-message.js'
 import { emptyPskIndex } from '../../src/psk-index.js'
 import type {
     CiphersuiteImpl,
@@ -145,7 +151,7 @@ async function scenario (t:any, cipherSuite:CiphersuiteName) {
         undefined,
         testClientConfig
     )
-    const charlieGroup = external.newState
+    let charlieGroup = external.newState
     t.ok(!(await regeneratesSecretTree(charlieGroup, impl)),
         'joinGroupExternal state does not regenerate the secret tree')
 
@@ -164,8 +170,57 @@ async function scenario (t:any, cipherSuite:CiphersuiteName) {
     t.ok(!(await regeneratesSecretTree(aliceGroup, impl)),
         'processed-commit state does not regenerate the secret tree')
 
+    // a pending Update key is a secret of its own, held across the epoch;
+    // this Update also rotates bob's signature key, so the state holds a
+    // pending signature key and then installs it
+    const proposed = await createUpdateProposal(bobGroup, false, impl, {
+        leafNodePatch: { signatureKeyPair: await impl.signature.keygen() },
+    })
+    bobGroup = proposed.newState
+    t.ok(!(await regeneratesSecretTree(bobGroup, impl)),
+        'a state holding a pending Update key does not regenerate the ' +
+        'secret tree')
+    aliceGroup = (await processPrivateMessage(
+        aliceGroup,
+        privateMessageOf(proposed.message),
+        makePskIndex(aliceGroup, {}),
+        impl
+    )).newState
+    charlieGroup = (await processPrivateMessage(
+        charlieGroup,
+        privateMessageOf(proposed.message),
+        makePskIndex(charlieGroup, {}),
+        impl
+    )).newState
+
+    const commitUpdate = await createCommit(
+        { state: aliceGroup, cipherSuite: impl })
+    aliceGroup = commitUpdate.newState
+    bobGroup = (await processPrivateMessage(
+        bobGroup,
+        privateMessageOf(commitUpdate.commit),
+        makePskIndex(bobGroup, {}),
+        impl
+    )).newState
+    t.ok(!(await regeneratesSecretTree(bobGroup, impl)),
+        'a state that installed its Update key does not regenerate the ' +
+        'secret tree')
+    charlieGroup = (await processPrivateMessage(
+        charlieGroup,
+        privateMessageOf(commitUpdate.commit),
+        makePskIndex(charlieGroup, {}),
+        impl
+    )).newState
+
     await testEveryoneCanMessageEveryone(
         [aliceGroup, bobGroup, charlieGroup], impl, t)
+}
+
+function privateMessageOf (message:MLSMessage):PrivateMessage {
+    if (message.wireformat !== 'mls_private_message') {
+        throw new Error('Expected a private message')
+    }
+    return message.privateMessage
 }
 
 for (const cs of sampleCiphersuites()) {

@@ -24,19 +24,21 @@ export const ciphersuites = {
     MLS_256_DHKEMP384_AES256GCM_SHA384_P384: 7,
     // Experimental/non-standard suites. These are not IANA-registered and
     // use the private-use range (0xF000-0xFFFF) so they can never collide
-    // with a future standard allocation.
-    MLS_128_MLKEM512_AES128GCM_SHA256_Ed25519: 0xF001,
-    MLS_128_MLKEM512_CHACHA20POLY1305_SHA256_Ed25519: 0xF002,
-    MLS_256_MLKEM768_AES256GCM_SHA384_Ed25519: 0xF003,
-    MLS_256_MLKEM768_CHACHA20POLY1305_SHA384_Ed25519: 0xF004,
-    MLS_256_MLKEM1024_AES256GCM_SHA512_Ed25519: 0xF005,
-    MLS_256_MLKEM1024_CHACHA20POLY1305_SHA512_Ed25519: 0xF006,
-    MLS_256_XWING_AES256GCM_SHA512_Ed25519: 0xF007,
-    MLS_256_XWING_CHACHA20POLY1305_SHA512_Ed25519: 0xF008,
-    MLS_256_MLKEM1024_AES256GCM_SHA512_MLDSA87: 0xF009,
-    MLS_256_MLKEM1024_CHACHA20POLY1305_SHA512_MLDSA87: 0xF00A,
-    MLS_256_XWING_AES256GCM_SHA512_MLDSA87: 0xF00B,
-    MLS_256_XWING_CHACHA20POLY1305_SHA512_MLDSA87: 0xF00C,
+    // with a future standard allocation. The code points follow ts-mls
+    // 2.x (0xf007-0xf012, in this order) so post-quantum groups
+    // interoperate with it; do not renumber them independently.
+    MLS_128_MLKEM512_AES128GCM_SHA256_Ed25519: 0xf007,
+    MLS_128_MLKEM512_CHACHA20POLY1305_SHA256_Ed25519: 0xf008,
+    MLS_256_MLKEM768_AES256GCM_SHA384_Ed25519: 0xf009,
+    MLS_256_MLKEM768_CHACHA20POLY1305_SHA384_Ed25519: 0xf00a,
+    MLS_256_MLKEM1024_AES256GCM_SHA512_Ed25519: 0xf00b,
+    MLS_256_MLKEM1024_CHACHA20POLY1305_SHA512_Ed25519: 0xf00c,
+    MLS_256_XWING_AES256GCM_SHA512_Ed25519: 0xf00d,
+    MLS_256_XWING_CHACHA20POLY1305_SHA512_Ed25519: 0xf00e,
+    MLS_256_MLKEM1024_AES256GCM_SHA512_MLDSA87: 0xf00f,
+    MLS_256_MLKEM1024_CHACHA20POLY1305_SHA512_MLDSA87: 0xf010,
+    MLS_256_XWING_AES256GCM_SHA512_MLDSA87: 0xf011,
+    MLS_256_XWING_CHACHA20POLY1305_SHA512_MLDSA87: 0xf012,
 } as const
 
 export type CiphersuiteName = keyof typeof ciphersuites
@@ -159,7 +161,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
     // consistency, the suite's hash -- must be HKDF-SHA512/SHA-512 for
     // every ML-KEM-based suite, even where the suite's name references
     // a shorter digest.
-    0xF001: {
+    0xf007: {
         hash: 'SHA-512',
         hpke: {
             kem: 'ML-KEM-512',
@@ -169,7 +171,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'Ed25519',
         name: 'MLS_128_MLKEM512_AES128GCM_SHA256_Ed25519',
     },
-    0xF002: {
+    0xf008: {
         hash: 'SHA-512',
         hpke: {
             kem: 'ML-KEM-512',
@@ -179,7 +181,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'Ed25519',
         name: 'MLS_128_MLKEM512_CHACHA20POLY1305_SHA256_Ed25519',
     },
-    0xF003: {
+    0xf009: {
         hash: 'SHA-512',
         hpke: {
             kem: 'ML-KEM-768',
@@ -189,7 +191,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'Ed25519',
         name: 'MLS_256_MLKEM768_AES256GCM_SHA384_Ed25519',
     },
-    0xF004: {
+    0xf00a: {
         hash: 'SHA-512',
         hpke: {
             kem: 'ML-KEM-768',
@@ -199,7 +201,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'Ed25519',
         name: 'MLS_256_MLKEM768_CHACHA20POLY1305_SHA384_Ed25519',
     },
-    0xF005: {
+    0xf00b: {
         hash: 'SHA-512',
         hpke: {
             kem: 'ML-KEM-1024',
@@ -209,7 +211,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'Ed25519',
         name: 'MLS_256_MLKEM1024_AES256GCM_SHA512_Ed25519',
     },
-    0xF006: {
+    0xf00c: {
         hash: 'SHA-512',
         hpke: {
             kem: 'ML-KEM-1024',
@@ -219,7 +221,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'Ed25519',
         name: 'MLS_256_MLKEM1024_CHACHA20POLY1305_SHA512_Ed25519',
     },
-    0xF007: {
+    0xf00d: {
         hash: 'SHA-512',
         hpke: {
             kem: 'X-Wing',
@@ -229,7 +231,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'Ed25519',
         name: 'MLS_256_XWING_AES256GCM_SHA512_Ed25519',
     },
-    0xF008: {
+    0xf00e: {
         hash: 'SHA-512',
         hpke: {
             kem: 'X-Wing',
@@ -239,7 +241,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'Ed25519',
         name: 'MLS_256_XWING_CHACHA20POLY1305_SHA512_Ed25519',
     },
-    0xF009: {
+    0xf00f: {
         hash: 'SHA-512',
         hpke: {
             kem: 'ML-KEM-1024',
@@ -249,7 +251,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'ML-DSA-87',
         name: 'MLS_256_MLKEM1024_AES256GCM_SHA512_MLDSA87',
     },
-    0xF00A: {
+    0xf010: {
         hash: 'SHA-512',
         hpke: {
             kem: 'ML-KEM-1024',
@@ -259,7 +261,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'ML-DSA-87',
         name: 'MLS_256_MLKEM1024_CHACHA20POLY1305_SHA512_MLDSA87',
     },
-    0xF00B: {
+    0xf011: {
         hash: 'SHA-512',
         hpke: {
             kem: 'X-Wing',
@@ -269,7 +271,7 @@ const ciphersuiteValues:Record<CiphersuiteId, Ciphersuite> = {
         signature: 'ML-DSA-87',
         name: 'MLS_256_XWING_AES256GCM_SHA512_MLDSA87',
     },
-    0xF00C: {
+    0xf012: {
         hash: 'SHA-512',
         hpke: {
             kem: 'X-Wing',

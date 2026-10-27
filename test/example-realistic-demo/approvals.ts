@@ -39,7 +39,11 @@ import {
 import { createGroupLock, type GroupLock } from
     '../../example-realistic-demo/client/group-lock.js'
 import type { DemoUser } from '../../example-shared/demo-user.js'
-import { deferred, longEnoughToHaveFinished } from './async-helpers.js'
+import {
+    deferred,
+    longEnoughToHaveFinished,
+    until
+} from './async-helpers.js'
 
 let cs:CiphersuiteImpl
 
@@ -1175,12 +1179,14 @@ test('approvals - a room gone mid-approval refuses it and frees the lock',
         const before = h.state.group.value
         h.room.gone = true
 
-        // Raced rather than awaited: an approval that never settles has
-        // to fail here, not end the file with its plan unprinted.
+        // Waited on with a deadline rather than awaited: an approval
+        // that never settles has to fail here, not end the file with its
+        // plan unprinted.
         let settled = false
-        const approving = h.approvals.approve(requestFrom(bob))
+        h.approvals.approve(requestFrom(bob))
             .then(() => { settled = true })
-        await Promise.race([approving, longEnoughToHaveFinished()])
+        await until(() => settled, 'the approval settles')
+            .catch(() => {})
         t.ok(settled, 'the approval settles')
 
         t.deepEqual(
@@ -1194,10 +1200,9 @@ test('approvals - a room gone mid-approval refuses it and frees the lock',
         )
 
         let ran = false
-        await Promise.race([
-            h.lock.run(async () => { ran = true }),
-            longEnoughToHaveFinished()
-        ])
+        h.lock.run(async () => { ran = true })
+        await until(() => ran, 'the lock runs the next task')
+            .catch(() => {})
         t.ok(ran, 'and the group lock is free for whatever comes next')
     })
 
@@ -1497,6 +1502,8 @@ test('approvals - a dropped commit the room logged finishes the approval',
         h.room.dropOnCommit = 'logged'
 
         const approving = h.approvals.approve(requestFrom(bob))
+        await until(() => h.room.dropOnCommit === null,
+            'the commit has gone out and the socket dropped')
         await longEnoughToHaveFinished()
 
         t.deepEqual(h.sent.map(msg => msg.type), ['mls'],
@@ -1528,7 +1535,8 @@ test('approvals - a dropped commit the room never logged changes nothing',
         h.room.dropOnCommit = 'unlogged'
 
         const approving = h.approvals.approve(requestFrom(bob))
-        await longEnoughToHaveFinished()
+        await until(() => h.room.dropOnCommit === null,
+            'the commit has gone out and the socket dropped')
         h.reconnect()
         await replayAll(h)
         await approving
@@ -1563,6 +1571,8 @@ test('approvals - a dropped removal the room logged finishes the removal',
         h.room.dropOnCommit = 'logged'
 
         const removing = h.approvals.remove(bobMember)
+        await until(() => h.room.dropOnCommit === null,
+            'the commit has gone out and the socket dropped')
         await longEnoughToHaveFinished()
         t.deepEqual(h.room.removals, [],
             'no removed frame while the commit\'s fate is unknown')
@@ -1601,7 +1611,8 @@ test('approvals - a dropped removal the room never logged changes nothing',
         h.room.dropOnCommit = 'unlogged'
 
         const removing = h.approvals.remove(bobMember)
-        await longEnoughToHaveFinished()
+        await until(() => h.room.dropOnCommit === null,
+            'the commit has gone out and the socket dropped')
         h.reconnect()
         await replayAll(h)
         await removing
@@ -1633,7 +1644,8 @@ test('approvals - a paged replay settles a dropped commit on its last page',
         h.sent.length = 0
 
         const approving = h.approvals.approve(requestFrom(dave))
-        await longEnoughToHaveFinished()
+        await until(() => h.room.dropOnCommit === null,
+            'the commit has gone out and the socket dropped')
         h.reconnect()
 
         // One entry a page: the dropped commit is alone on the last.

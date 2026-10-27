@@ -42,12 +42,19 @@ export interface ConsumeRatchetResult {
     newTree:SecretTree
 }
 
-function scaffoldSecretTree (leafWidth:number, encryptionSecret:Uint8Array, kdf:Kdf):Promise<Uint8Array[]> {
+async function scaffoldSecretTree (
+    leafWidth:number,
+    encryptionSecret:Uint8Array,
+    kdf:Kdf,
+):Promise<Uint8Array[]> {
     const tree = new Array<Uint8Array>(nodeWidth(leafWidth))
     const rootIndex = root(leafWidth)
 
-    const parentInhabited = updateArray(tree, rootIndex, encryptionSecret)
-    return deriveChildren(parentInhabited, rootIndex, kdf)
+    // the array is this call's own, so deriveChildren writes into it
+    // rather than copying it once per node
+    tree[rootIndex] = encryptionSecret
+    await deriveChildren(tree, rootIndex, kdf)
+    return tree
 }
 
 export async function createSecretTree (leafWidth:number, encryptionSecret:Uint8Array, kdf:Kdf):Promise<SecretTree> {
@@ -120,8 +127,14 @@ export function zeroHandshakeRatchets (tree:SecretTree):void {
     }
 }
 
-async function deriveChildren (tree:Uint8Array[], nodeIndex:NodeIndex, kdf:Kdf):Promise<Uint8Array[]> {
-    if (isLeaf(nodeIndex)) return tree
+// Writes the secrets below `nodeIndex` into `tree`, which must be an
+// array the caller owns.
+async function deriveChildren (
+    tree:Uint8Array[],
+    nodeIndex:NodeIndex,
+    kdf:Kdf,
+):Promise<void> {
+    if (isLeaf(nodeIndex)) return
     const l = left(nodeIndex)
 
     const r = right(nodeIndex)
@@ -132,9 +145,11 @@ async function deriveChildren (tree:Uint8Array[], nodeIndex:NodeIndex, kdf:Kdf):
 
     const rightSecret = await expandWithLabel(parentSecret, 'tree', new TextEncoder().encode('right'), kdf.size, kdf)
 
-    const currentTree = updateArray(updateArray(tree, l, leftSecret), r, rightSecret)
+    tree[l] = leftSecret
+    tree[r] = rightSecret
 
-    return deriveChildren(await deriveChildren(currentTree, l, kdf), r, kdf)
+    await deriveChildren(tree, l, kdf)
+    await deriveChildren(tree, r, kdf)
 }
 
 export async function deriveNonce (secret:Uint8Array, generation:number, cs:CiphersuiteImpl):Promise<Uint8Array> {

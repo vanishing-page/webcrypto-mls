@@ -26,7 +26,14 @@ import {
     createGroupInfoWithExternalPubAndRatchetTree,
     joinGroupExternal
 } from '../../src/create-commit.js'
-import { createApplicationMessage } from '../../src/create-message.js'
+import {
+    createApplicationMessage,
+    createUpdateProposal,
+} from '../../src/create-message.js'
+import {
+    discardPendingProposal,
+    listPendingProposals,
+} from '../../src/unapplied-proposals.js'
 import {
     processMessage,
     processPrivateMessage
@@ -172,6 +179,33 @@ for (const cs of sampleCiphersuites()) {
         }
     })
 
+    test('wiping what a commit consumed leaves the next commit, ' +
+        'through the key it superseded, readable ' + cs, async (t) => {
+        try {
+            await wipedStateFollowsNextCommit(t, cs as CiphersuiteName)
+        } catch (error:any) {
+            if (skippable(error)) {
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
+                return
+            }
+            throw error
+        }
+    })
+
+    test('a state that held a pending Update key still follows the ' +
+        'commit of that Update after another commit dropped it ' + cs,
+    async (t) => {
+        try {
+            await pendingUpdateKeySurvivesReuse(t, cs as CiphersuiteName)
+        } catch (error:any) {
+            if (skippable(error)) {
+                t.comment(`Skipping ${cs}: ${skipReason(error)}`)
+                return
+            }
+            throw error
+        }
+    })
+
     test('a failed decrypt leaves the receiver able to send and receive ' + cs, async (t) => {
         try {
             await failedDecryptLeavesStateUsable(t, cs as CiphersuiteName)
@@ -209,6 +243,7 @@ async function makeTwoMemberGroup (cipherSuite:CiphersuiteName) {
     }
 
     const commit = await createCommit({ state: created, cipherSuite: impl }, { extraProposals: [addBob] })
+    wipe(commit.consumed)
 
     if (commit.welcome === undefined) throw new Error('Expected a welcome for bob')
 
@@ -374,6 +409,37 @@ async function process (
 }
 
 /**
+ * `process` for a step whose input state is dropped: wipes what the
+ * result consumed, as an application does once it has persisted the
+ * new state. Only for states nothing below reuses.
+ */
+async function advance (
+    state:ClientState,
+    message:MLSMessage,
+    impl:any,
+):Promise<ClientState> {
+    if (
+        message.wireformat !== 'mls_public_message' &&
+        message.wireformat !== 'mls_private_message'
+    ) {
+        throw new Error('Expected a handshake message')
+    }
+    const result = await processMessage(
+        message as MlsPublicMessage | MlsPrivateMessage,
+        state,
+        makePskIndex(state, {}),
+        accept,
+        impl,
+    )
+    wipe(result.consumed)
+    return result.newState
+}
+
+function wipe (consumed:Uint8Array[]):void {
+    for (const buffer of consumed) buffer.fill(0)
+}
+
+/**
  * alice, bob, charlie and dave at leaves 0 to 3, after charlie has
  * committed a path. charlie then holds the private key for node 5, his
  * parent, and any later commit from alice or bob is encrypted to it:
@@ -407,6 +473,7 @@ async function makeFourMemberGroup (cipherSuite:CiphersuiteName) {
         { state: created, cipherSuite: impl },
         { extraProposals: adds, ratchetTreeExtension: true }
     )
+    wipe(addAll.consumed)
     const welcome = addAll.welcome
     if (welcome === undefined) throw new Error('Expected a welcome')
 
@@ -425,14 +492,15 @@ async function makeFourMemberGroup (cipherSuite:CiphersuiteName) {
         state: await join(charlie),
         cipherSuite: impl,
     })
+    wipe(charlieCommit.consumed)
 
     return {
         impl,
         dave,
-        alice: await process(addAll.newState, charlieCommit.commit, impl),
-        bob: await process(await join(bob), charlieCommit.commit, impl),
+        alice: await advance(addAll.newState, charlieCommit.commit, impl),
+        bob: await advance(await join(bob), charlieCommit.commit, impl),
         charlie: charlieCommit.newState,
-        daveGroup: await process(await join(dave), charlieCommit.commit, impl),
+        daveGroup: await advance(await join(dave), charlieCommit.commit, impl),
     }
 }
 
@@ -887,4 +955,114 @@ async function committedStateCanBeReused (
         epoch + 1n,
         'charlie should follow alice after the second commit'
     )
+}
+
+/**
+ * The forward counterpart of the reuse cases above. charlie processes
+ * dave's commit, which rotates node 5, and wipes everything the result
+ * lists as consumed -- the node 5 key it superseded among them. alice's
+ * next commit reaches charlie only through node 5, so it needs the key
+ * that replaced the wiped one, and every member stays in step.
+ */
+async function wipedStateFollowsNextCommit (
+    t:any,
+    cipherSuite:CiphersuiteName
+) {
+    const { impl, alice, bob, charlie, daveGroup } =
+        await makeFourMemberGroup(cipherSuite)
+    const node5 = charlie.privatePath.privateKeys[5]
+
+    const fromDave = await createCommit({ state: daveGroup, cipherSuite: impl })
+    wipe(fromDave.consumed)
+    const charlieResult = await processMessage(
+        fromDave.commit as MlsPrivateMessage,
+        charlie,
+        makePskIndex(charlie, {}),
+        accept,
+        impl,
+    )
+    t.ok(node5 !== undefined && charlieResult.consumed.includes(node5),
+        'sanity: dave\'s commit consumes charlie\'s node 5 key')
+    wipe(charlieResult.consumed)
+    const charlieNext = charlieResult.newState
+    const aliceNext = await advance(alice, fromDave.commit, impl)
+    const bobNext = await advance(bob, fromDave.commit, impl)
+
+    const fromAlice = await createCommit({
+        state: aliceNext,
+        cipherSuite: impl,
+    })
+    wipe(fromAlice.consumed)
+    const charlieLater = await advance(charlieNext, fromAlice.commit, impl)
+    const bobLater = await advance(bobNext, fromAlice.commit, impl)
+    const daveLater = await advance(
+        fromDave.newState, fromAlice.commit, impl)
+
+    const epoch = fromAlice.newState.groupContext.epoch
+    t.equal(charlieLater.groupContext.epoch, epoch,
+        'charlie should follow alice after wiping')
+    t.equal(bobLater.groupContext.epoch, epoch, 'bob should follow')
+    t.equal(daveLater.groupContext.epoch, epoch, 'dave should follow')
+
+    const hello = new TextEncoder().encode('after the wipe')
+    const sent = await createApplicationMessage(charlieLater, hello, impl)
+    const read = await receive(fromAlice.newState, sent.privateMessage, impl)
+    t.deepEqual(read.message, hello, 'alice should read charlie')
+}
+
+/**
+ * charlie proposes an Update and keeps the state that holds its pending
+ * key. alice commits without the Update, and charlie follows her from
+ * that state; the result drops the pending key. dave's competing commit
+ * applies the Update and reaches charlie only through his new leaf key
+ * (charlie's leaf is the copath of dave's node 5), so following dave
+ * from the same retained state needs the key the first result dropped.
+ */
+async function pendingUpdateKeySurvivesReuse (
+    t:any,
+    cipherSuite:CiphersuiteName
+) {
+    const { impl, alice, charlie, daveGroup } =
+        await makeFourMemberGroup(cipherSuite)
+
+    const proposed = await createUpdateProposal(charlie, false, impl)
+    const charlieProposed = proposed.newState
+    const pendingKeys = Object.values(charlieProposed.pendingUpdateKeys ?? {})
+        .map((k) => k.hpkePrivateKey)
+    const aliceProposed = await process(alice, proposed.message, impl)
+    const daveProposed = await process(daveGroup, proposed.message, impl)
+
+    const [pending] = listPendingProposals(aliceProposed)
+    const fromAlice = await createCommit({
+        state: discardPendingProposal(aliceProposed, pending!.ref),
+        cipherSuite: impl,
+    })
+    const afterAlice = await processMessage(
+        fromAlice.commit as MlsPrivateMessage,
+        charlieProposed,
+        makePskIndex(charlieProposed, {}),
+        accept,
+        impl,
+    )
+    t.ok(pendingKeys.length === 1 &&
+        afterAlice.consumed.includes(pendingKeys[0]!),
+    'sanity: alice\'s commit drops charlie\'s pending Update key')
+
+    const fromDave = await createCommit({
+        state: daveProposed,
+        cipherSuite: impl,
+    })
+    const charlieAfterDave = await process(
+        charlieProposed, fromDave.commit, impl)
+    t.equal(
+        charlieAfterDave.groupContext.epoch,
+        fromDave.newState.groupContext.epoch,
+        'charlie should follow dave\'s commit of his Update from the ' +
+        'state he held before'
+    )
+
+    const hello = new TextEncoder().encode('after my Update')
+    const sent = await createApplicationMessage(charlieAfterDave, hello, impl)
+    const read = await receive(fromDave.newState, sent.privateMessage, impl)
+    t.deepEqual(read.message, hello, 'dave should read charlie')
 }
