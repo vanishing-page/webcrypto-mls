@@ -150,5 +150,11 @@
     "url": "git+https://github.com/vanishing-page/webcrypto-mls.git"
   },
   "author": "nichoth <nichoth@nichoth.com> (https://nichoth.com)",
-  "license": "SEE LICENSE IN LICENSE"
+  "license": "SEE LICENSE IN LICENSE",
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.2": true,
+    "fsevents@2.3.3": true,
+    "workerd@1.20261006.1": true
+  }
 }
