@@ -477,8 +477,11 @@ async function everyoneMessagesEveryone (run:Run):Promise<string[]> {
             privateMessage,
         }
 
-        const receivers:{ name:string; get:() => ClientState;
-            set:(s:ClientState) => void }[] = run.members
+        const receivers:{
+            name:string;
+            get:() => ClientState;
+            set:(s:ClientState) => void
+        }[] = run.members
             .filter((m) => m !== sender)
             .map((m) => ({
                 name: m.name,

@@ -38,14 +38,12 @@ export type CapabilityProtocolVersion = ProtocolVersionName | `${number}`
 const openProtocolVersions:Record<CapabilityProtocolVersion, number> =
     protocolVersions
 
-export const encodeCapabilityProtocolVersion:
-    Encoder<CapabilityProtocolVersion> = contramapEncoder(
-        encodeUint16,
-        openEnumNumberEncoder(openProtocolVersions),
-    )
+export const encodeCapabilityProtocolVersion:Encoder<CapabilityProtocolVersion> = contramapEncoder(
+    encodeUint16,
+    openEnumNumberEncoder(openProtocolVersions),
+)
 
-export const decodeCapabilityProtocolVersion:
-    Decoder<CapabilityProtocolVersion> = mapDecoderOption(
-        decodeUint16,
-        openEnumNumberToKey(openProtocolVersions),
-    )
+export const decodeCapabilityProtocolVersion:Decoder<CapabilityProtocolVersion> = mapDecoderOption(
+    decodeUint16,
+    openEnumNumberToKey(openProtocolVersions),
+)
